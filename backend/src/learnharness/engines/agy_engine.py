@@ -111,6 +111,13 @@ def parse_event(event):
     return "event", event
 
 
+EFFORT_SUFFIXES = ("-low", "-medium", "-high", "-xhigh", "-max")
+
+
+def model_pins_effort(model_id: str) -> bool:
+    return model_id.strip().lower().endswith(EFFORT_SUFFIXES)
+
+
 class TextAssembler:
     """Turn ``text_delta`` updates into new text, tolerating cumulative repeats.
 
@@ -258,9 +265,12 @@ class AgyStreamEngine(GeminiHeadlessEngine):
         ]
         model = slot.model_id if slot else self.default_model
         effort = slot.effort if slot else self.default_effort
-        if model and str(model).strip().lower() not in AUTO_MODELS:
+        explicit_model = bool(model) and str(model).strip().lower() not in AUTO_MODELS
+        if explicit_model:
             command += ["--model", str(model)]
-        if effort:
+        # `agy models` ids already pin the effort ("gemini-3.8-flash-low"); agy rejects
+        # --effort alongside them, so the slot effort only applies to "auto" model selection.
+        if effort and not (explicit_model and model_pins_effort(str(model))):
             command += ["--effort", str(effort)]
         return command
 

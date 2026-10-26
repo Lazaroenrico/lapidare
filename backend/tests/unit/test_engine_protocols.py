@@ -206,3 +206,14 @@ def test_discovery_does_not_claim_authentication(monkeypatch):
 
     monkeypatch.setattr(detector, "_find_executable", lambda *args: "/fake/bin")
     assert all(not item.authenticated and not item.models for item in detector.detect_connectors())
+
+
+def test_agy_model_ids_with_effort_suffix_skip_effort_flag():
+    from learnharness.core.contracts.config import EngineKind, ModelSlotConfig
+    from learnharness.engines.agy_engine import AgyStreamEngine
+
+    engine = AgyStreamEngine(binary_path="/bin/true")
+    pinned = engine._base_command(ModelSlotConfig(engine=EngineKind.AGY, model_id="gemini-3.8-flash-low", effort="medium"))
+    assert "--effort" not in pinned and pinned[pinned.index("--model") + 1] == "gemini-3.8-flash-low"
+    auto = engine._base_command(ModelSlotConfig(engine=EngineKind.AGY, model_id="auto", effort="high"))
+    assert "--model" not in auto and auto[auto.index("--effort") + 1] == "high"
