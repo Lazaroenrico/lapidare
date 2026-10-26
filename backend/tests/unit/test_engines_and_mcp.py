@@ -1,10 +1,12 @@
-"""Unit tests for Google ecosystem engines, FastMCP server, PendingDock, and pedagogical prompts."""
+"""Unit tests for Google ecosystem engines, runtime MCP session tools and pedagogical prompts."""
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from learnharness.api.state import AppState
 from learnharness.core.contracts.config import (
     ConnectorStatus,
     EffortLevel,
@@ -14,18 +16,14 @@ from learnharness.core.contracts.config import (
 from learnharness.core.contracts.quiz import QuizSubmission
 from learnharness.engines import GeminiAcpEngine, GenAiSdkEngine, get_engine
 from learnharness.engines.detector import detect_connectors
-from learnharness.mcp.pending_dock import PendingDockRegistry
-from learnharness.mcp.server import (
-    get_active_plan,
-    plan_advance,
-    plan_init,
-    pose_quiz,
-)
+from learnharness.mcp.runtime_server import session_tools
 from learnharness.prompts.loader import build_system_prompt
+from learnharness.services.sessions import SessionConflict
+from tests.conftest import FakeEngine, wait_until
 
 
 def test_detect_connectors() -> None:
-    """Verifies scanner inspects agy, gemini-cli, and genai-sdk with supported model lists."""
+    """Discovery inspects agy, gemini-cli and genai-sdk without probing auth or listing models."""
     statuses = detect_connectors()
     assert isinstance(statuses, list)
     assert len(statuses) == 3
@@ -35,151 +33,169 @@ def test_detect_connectors() -> None:
 
     for status in statuses:
         assert isinstance(status, ConnectorStatus)
-        if status.available:
-            assert len(status.models) > 0
-            assert "gemini-4-argon-medium" in status.models
+        assert isinstance(status.available, bool)
+        # Discovery never spends quota: auth is unverified and models are user-supplied.
+        assert status.authenticated is False
+        assert status.models == []
+        assert status.detail
+        if status.engine != EngineKind.GENAI_SDK:
+            assert bool(status.binary_path) == status.available
+            assert ("installed" in status.detail) == status.available
 
 
-@pytest.mark.asyncio
-async def test_pending_dock_registry_calibrated_mastery() -> None:
-    """Verifies QuestionDock pause and resolution with calibrated mastery (Correct + High Conf)."""
-    registry = PendingDockRegistry()
-    session_id = "test-session-mastery"
+@pytest.fixture
+async def runtime(app_state: AppState, fake_engine: FakeEngine):
+    """A real AppState on a configured tmp Vault with one idle TEACH session."""
+    session = await app_state.sessions.create(mode="TEACH", topic="Self-Attention", start=False)
+    try:
+        yield app_state, session.id, {t.__name__: t for t in session_tools(app_state, session.id)}
+    finally:
+        await app_state.close()
 
-    choices = [
-        {"value": "a", "label": "Output dimension is independent of query dimension"},
-        {"value": "b", "label": "Output dimension matches value dimension $d_v$"},
-        {"value": "c", "label": "Output dimension matches key dimension $d_k$"},
-    ]
 
-    async def _run_agent_turn() -> dict[str, Any]:
-        return await pose_quiz(
-            session_id=session_id,
-            mode="CHECK",
-            topic="self-attention-output-dimension",
-            question="What determines the final feature dimension of scaled dot-product attention?",
-            choices=choices,
-            correct_index=1,
-            explanation=r"Attention multiplies attention weights $(N \times N)$ by Value matrix $(N \times d_v)$, yielding $(N \times d_v)$.",
-            registry=registry,
-        )
-
-    task = asyncio.create_task(_run_agent_turn())
-    await asyncio.sleep(0.01)
-
-    # Agent must be suspended waiting for QuestionDock
+async def _pose_and_answer(state: AppState, session_id: str, tools: dict[str, Any], quiz: dict[str, Any],
+                           *, chosen_index: int, confidence: int, thinking: str) -> tuple[Any, dict[str, Any]]:
+    task = asyncio.create_task(tools["pose_quiz"](**quiz))
+    pending = await wait_until(lambda: state.sessions.get(session_id).pending_quiz)
+    # The agent turn stays suspended until the learner answers.
     assert not task.done()
-    pending = registry.get_pending_quiz(session_id)
-    assert pending is not None
-    assert pending.mode == "CHECK"
+    assert pending.mode == quiz["mode"]
+    result = await state.sessions.answer(QuizSubmission(
+        quiz_id=pending.quiz_id, session_id=session_id, chosen_index=chosen_index,
+        confidence=confidence, learner_thinking=thinking,
+    ))
+    agent_output = await asyncio.wait_for(task, 3)
+    return result, agent_output
 
-    # Learner submits correct answer with high confidence (85%)
-    submission = QuizSubmission(
-        quiz_id=pending.quiz_id,
-        session_id=session_id,
-        chosen_index=1,
-        confidence=85,
-        learner_thinking="Value matrix projected rows define the token representation space.",
+
+async def test_pose_quiz_blocks_until_calibrated_mastery(runtime) -> None:
+    """pose_quiz suspends the agent until the answer; correct + high confidence is calibrated mastery."""
+    state, session_id, tools = runtime
+    quiz = {
+        "mode": "CHECK",
+        "topic": "self-attention-output-dimension",
+        "question": "What determines the final feature dimension of scaled dot-product attention?",
+        "choices": [
+            {"value": "a", "label": "Output dimension is independent of query dimension"},
+            {"value": "b", "label": "Output dimension matches value dimension $d_v$"},
+            {"value": "c", "label": "Output dimension matches key dimension $d_k$"},
+        ],
+        "correct_index": 1,
+        "explanation": r"Attention multiplies weights $(N \times N)$ by values $(N \times d_v)$.",
+    }
+    result, agent_output = await _pose_and_answer(
+        state, session_id, tools, quiz, chosen_index=1, confidence=85,
+        thinking="Value matrix projected rows define the token representation space.",
     )
-    result = registry.resolve_dock(session_id, submission)
     assert result.calibration_band == "calibrated_mastery"
     assert result.correct is True
     assert result.confidence == 85
 
-    # Agent resumes and receives result payload
-    agent_output = await task
     assert agent_output["calibration_band"] == "calibrated_mastery"
     assert agent_output["correct"] is True
     assert "advance to next node" in agent_output["pedagogical_directive"].lower()
 
+    session = state.sessions.get(session_id)
+    assert session.pending_quiz is None
+    assert result.quiz_id in session.answers
+    log = (Path(state.vault_path) / ".harness/quiz-log.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(log) == 1
 
-@pytest.mark.asyncio
-async def test_pending_dock_registry_illusion_of_competence() -> None:
-    """Verifies high-priority alert when learner is wrong with high confidence."""
-    registry = PendingDockRegistry()
-    session_id = "test-session-illusion"
 
-    choices = [
-        {"value": "a", "label": r"Softmax temperature $\sqrt{d_k}$ speeds up training convergence"},
-        {"value": "b", "label": r"Softmax temperature $\sqrt{d_k}$ prevents vanishing gradients"},
-        {"value": "c", "label": r"Softmax temperature $\sqrt{d_k}$ normalizes sequence length $N$"},
-    ]
-
-    task = asyncio.create_task(
-        pose_quiz(
-            session_id=session_id,
-            mode="PREDICTION",
-            topic="attention-scaling-factor",
-            question=r"Why divide the dot products $Q K^T$ by $\sqrt{d_k}$?",
-            choices=choices,
-            correct_index=1,
-            explanation="Large dot products push softmax into regions with near-zero gradients.",
-            registry=registry,
-        )
+async def test_pose_quiz_illusion_of_competence(runtime) -> None:
+    """Wrong answer with high confidence is flagged as illusion of competence."""
+    state, session_id, tools = runtime
+    quiz = {
+        "mode": "PREDICTION",
+        "topic": "attention-scaling-factor",
+        "question": r"Why divide the dot products $Q K^T$ by $\sqrt{d_k}$?",
+        "choices": [
+            {"value": "a", "label": r"Softmax temperature $\sqrt{d_k}$ speeds up training convergence"},
+            {"value": "b", "label": r"Softmax temperature $\sqrt{d_k}$ prevents vanishing gradients"},
+            {"value": "c", "label": r"Softmax temperature $\sqrt{d_k}$ normalizes sequence length $N$"},
+        ],
+        "correct_index": 1,
+        "explanation": "Large dot products push softmax into regions with near-zero gradients.",
+    }
+    result, agent_output = await _pose_and_answer(
+        state, session_id, tools, quiz, chosen_index=0, confidence=90,
+        thinking="I remember dividing by root dimension made the loss drop faster.",
     )
-    await asyncio.sleep(0.01)
-
-    pending = registry.get_pending_quiz(session_id)
-    assert pending is not None
-
-    # Learner picks option 0 with 90% confidence (Illusion of competence)
-    submission = QuizSubmission(
-        quiz_id=pending.quiz_id,
-        session_id=session_id,
-        chosen_index=0,
-        confidence=90,
-        learner_thinking="I remember dividing by root dimension made the loss drop faster.",
-    )
-    result = registry.resolve_dock(session_id, submission)
     assert result.calibration_band == "illusion_of_competence"
     assert result.correct is False
     assert "counterexample" in result.pedagogical_directive.lower()
-
-    agent_output = await task
     assert agent_output["calibration_band"] == "illusion_of_competence"
 
 
-@pytest.mark.asyncio
-async def test_plan_init_and_advance() -> None:
-    """Verifies PlanDag initialization and live node status progression."""
-    session_id = "test-session-plan"
-    approach = "Establish dot product as similarity measure before matrix formulation."
-    nodes = [
-        {
-            "id": "node-truth",
-            "label": "Inner product measures directional alignment",
-            "kind": "unconditional_truth",
-            "depends_on": [],
-        },
-        {
-            "id": "node-attn",
-            "label": "Softmax maps similarities to convex combination weights",
-            "kind": "derived_step",
-            "depends_on": ["node-truth"],
-        },
-        {
-            "id": "node-goal",
-            "label": "Self-attention layer equation",
-            "kind": "goal",
-            "depends_on": ["node-attn"],
-        },
-    ]
+INNER_PRODUCT_CHECK = {
+    "topic": "inner-product", "question": "What does a large positive inner product indicate?",
+    "choices": [{"label": "Orthogonal vectors"}, {"label": "Aligned directions"}],
+    "correct_index": 1, "explanation": "cos(theta) near 1.", "node_id": "node-truth",
+}
 
-    res_init = await plan_init(session_id, approach, nodes)
+PLAN_NODES = [
+    {"id": "node-truth", "label": "Inner product measures directional alignment",
+     "kind": "unconditional_truth", "depends_on": []},
+    {"id": "node-attn", "label": "Softmax maps similarities to convex combination weights",
+     "kind": "derived_step", "depends_on": ["node-truth"]},
+    {"id": "node-goal", "label": "Self-attention layer equation", "kind": "goal",
+     "depends_on": ["node-attn"]},
+]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Bug in services/sessions.py::advance: CalibrationResult does not record the quiz mode, "
+    "so a calibrated PREDICTION answer is accepted as mastery evidence instead of a CHECK."))
+async def test_prediction_answer_is_not_mastery_evidence(runtime) -> None:
+    state, session_id, tools = runtime
+    await tools["plan_init"]("Approach", PLAN_NODES)
+    await _pose_and_answer(state, session_id, tools, {"mode": "PREDICTION", **INNER_PRODUCT_CHECK},
+                           chosen_index=1, confidence=90, thinking="Cosine similarity.")
+    with pytest.raises(SessionConflict, match="calibrated check"):
+        await tools["plan_advance"]("node-truth", "mastered")
+
+
+async def test_plan_init_and_advance_requires_calibrated_check(runtime) -> None:
+    """Plan DAG initializes once; mastery requires prerequisites and a calibrated CHECK with node_id."""
+    state, session_id, tools = runtime
+    approach = "Establish dot product as similarity measure before matrix formulation."
+    nodes = PLAN_NODES
+
+    res_init = await tools["plan_init"](approach, nodes)
     assert len(res_init["nodes"]) == 3
     assert res_init["approach_prose"] == approach
+    # An initialized plan cannot be silently replaced.
+    with pytest.raises(SessionConflict):
+        await tools["plan_init"]("Another approach", nodes[:1])
 
-    # Advance node-truth to current then mastered
-    res_adv1 = await plan_advance(session_id, "node-truth", "current")
+    res_adv1 = await tools["plan_advance"]("node-truth", "current")
     assert res_adv1["nodes"][0]["status"] == "current"
 
-    res_adv2 = await plan_advance(session_id, "node-truth", "mastered")
-    assert res_adv2["nodes"][0]["status"] == "mastered"
+    # Prerequisites gate progression.
+    with pytest.raises(SessionConflict, match="Prerequisites"):
+        await tools["plan_advance"]("node-attn", "current")
 
-    # Verify global active plan query
-    plan = get_active_plan(session_id)
-    assert plan is not None
-    assert plan.nodes[0].status == "mastered"
+    # Without a calibrated CHECK answer bound to this node, mastery is refused.
+    with pytest.raises(SessionConflict, match="calibrated check"):
+        await tools["plan_advance"]("node-truth", "mastered")
+
+    # A calibrated answer to a CHECK bound to a different node is not evidence for this one.
+    await _pose_and_answer(state, session_id, tools, {"mode": "CHECK", **INNER_PRODUCT_CHECK, "node_id": "node-goal"},
+                           chosen_index=1, confidence=90, thinking="Cosine similarity.")
+    with pytest.raises(SessionConflict, match="calibrated check"):
+        await tools["plan_advance"]("node-truth", "mastered")
+
+    result, _ = await _pose_and_answer(
+        state, session_id, tools,
+        {"mode": "CHECK", **INNER_PRODUCT_CHECK, "question": "Check: " + INNER_PRODUCT_CHECK["question"]},
+        chosen_index=1, confidence=90, thinking="Aligned vectors.")
+    assert result.calibration_band == "calibrated_mastery"
+
+    res_adv2 = await tools["plan_advance"]("node-truth", "mastered")
+    assert res_adv2["nodes"][0]["status"] == "mastered"
+    assert state.sessions.get(session_id).plan.nodes[0].status == "mastered"
+    # Mastery enqueues the extraction job for the node.
+    assert any(job["kind"] == "extraction" for job in state.active_jobs.values())
 
 
 def test_build_system_prompt() -> None:
