@@ -129,3 +129,28 @@ async def complete_setup(payload: SetupCompletePayload, request: Request):
     state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"vault_path": str(target)})
     state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
     return {"success": True, "config": _serialize_config_for_frontend(config)}
+
+
+class AgyPermissionPayload(BaseModel):
+    consent: bool = False
+
+
+@setup_router.get("/agy-permission")
+async def get_agy_permission():
+    """Whether the user's global agy settings allow the harness MCP tools."""
+    from learnharness.services import agy_permissions
+
+    return agy_permissions.status()
+
+
+@setup_router.post("/agy-permission")
+async def grant_agy_permission(payload: AgyPermissionPayload):
+    """Add ``mcp(harness/*)`` to the global agy allow-list, only with explicit consent."""
+    from learnharness.services import agy_permissions
+
+    if not payload.consent:
+        raise ValueError("Explicit consent is required to edit the agy settings")
+    try:
+        return agy_permissions.grant()
+    except agy_permissions.AgySettingsError as exc:
+        raise ValueError(str(exc)) from exc
