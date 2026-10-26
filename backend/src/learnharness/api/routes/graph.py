@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from learnharness.api.state import get_app_state
 from learnharness.vault.jsonl_store import build_graph_snapshot
+from learnharness.vault.markdown_ast import scan_all_concepts
+from learnharness.vault.safety import folder_map, safe_path
 
 graph_router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -81,3 +83,18 @@ async def get_graph(request: Request) -> dict[str, Any]:
         "chains": enriched_chains,
         "updated_at": snapshot.updated_at,
     }
+
+
+@graph_router.get("/concepts/{concept_id}/note")
+async def get_concept_note(concept_id: str, request: Request) -> dict[str, Any]:
+    """Read-only markdown of a concept note (for the in-app "Abrir Nota" pane)."""
+    state = get_app_state(request.app)
+    node = next((n for n in scan_all_concepts(state.vault_path) if n.id == concept_id), None)
+    if node is None or not node.vault_rel_path:
+        raise HTTPException(status_code=404, detail=f"Concept '{concept_id}' has no note")
+    note = safe_path(state.vault_path, node.vault_rel_path)
+    concepts_root = safe_path(state.vault_path, folder_map(state.vault_path).concepts_dir)
+    # Only concept notes are served, never arbitrary vault files.
+    if not note.is_file() or not note.resolve().is_relative_to(concepts_root.resolve()):
+        raise HTTPException(status_code=404, detail=f"Concept '{concept_id}' has no note")
+    return {"path": node.vault_rel_path, "markdown": note.read_text(encoding="utf-8")}
