@@ -136,6 +136,19 @@ export async function submitQuizAnswer(
   );
 }
 
+export async function resumeChat(
+  id: string,
+  restartDiagnostic = false
+): Promise<SessionRecord> {
+  return fetchJson<SessionRecord>(
+    `/api/chats/${encodeURIComponent(id)}/resume`,
+    {
+      method: "POST",
+      body: JSON.stringify({ restart_diagnostic: restartDiagnostic }),
+    }
+  );
+}
+
 // --- Sources & Citations ---
 
 export async function getSourceParagraph(
@@ -268,4 +281,25 @@ export async function submitPracticeAttempt(
 
 export async function getBackgroundJobs(): Promise<BackgroundJobStatus[]> {
   return fetchJson<BackgroundJobStatus[]>("/api/jobs");
+}
+
+export async function retryJob(id: string): Promise<BackgroundJobStatus> {
+  return fetchJson<BackgroundJobStatus>(
+    `/api/jobs/${encodeURIComponent(id)}/retry`,
+    { method: "POST" }
+  );
+}
+
+// --- Interactive Demos ---
+
+export async function createDemo(payload: {
+  title: string;
+  topic: string;
+  description?: string;
+  lesson_rel_path?: string;
+}): Promise<{ slug: string; html: string }> {
+  return fetchJson<{ slug: string; html: string }>("/api/demos", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

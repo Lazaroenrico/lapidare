@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronRight,
   Compass,
@@ -15,13 +16,16 @@ import {
   Loader2,
   Mic,
   MicOff,
+  RotateCcw,
   Send,
   Sparkles,
 } from "lucide-react";
 import type { CalibrationResult, SessionRecord } from "@/lib/types";
 import {
+  createDemo,
   createDrawing,
   getChat,
+  resumeChat,
   sendChatMessage,
 } from "@/lib/api";
 import { useEventSubscription } from "@/components/server-events";
@@ -37,7 +41,7 @@ interface ChatPageProps {
 }
 
 export default function ChatPage({ params }: ChatPageProps) {
-  const {locale} = useLocale();
+  const {locale, t} = useLocale();
   const { id } = React.use(params);
   const router = useRouter();
 
@@ -48,6 +52,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   // Message input state
   const [inputMessage, setInputMessage] = useState<string>("");
   const [isSending, setIsSending] = useState<boolean>(false);
+  // Inline feedback for failed actions (send / demo / resume) — never alert()
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isResuming, setIsResuming] = useState<boolean>(false);
 
   // Speech recognition dictation for bottom composer
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -67,24 +74,18 @@ export default function ChatPage({ params }: ChatPageProps) {
   const handleSpawnDemo = async () => {
     if (!session) return;
     setIsSpawningDemo(true);
+    setActionError(null);
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const res = await fetch(`${apiBase}/api/demos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: `Simulador: ${session.title || session.topic}`,
-          topic: session.title || session.topic,
-          description: `Simulador interativo para explorar os parâmetros de ${session.title || session.topic}.`,
-        }),
+      const data = await createDemo({
+        title: `Simulador: ${session.title || session.topic}`,
+        topic: session.title || session.topic,
+        description: `Simulador interativo para explorar os parâmetros de ${session.title || session.topic}.`,
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDemoHtml(data.html);
-        setShowDemo(true);
-      }
-    } catch (err) {
+      setDemoHtml(data.html);
+      setShowDemo(true);
+    } catch (err: any) {
       console.error("Failed to spawn demo:", err);
+      setActionError(`${t.demoFailed} ${err?.message ?? ""}`.trim());
     } finally {
       setIsSpawningDemo(false);
     }
@@ -199,6 +200,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     const textToSend = inputMessage.trim();
     setInputMessage("");
     setIsSending(true);
+    setActionError(null);
 
     try {
       const res = await sendChatMessage(id, textToSend);
@@ -209,9 +211,27 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
     } catch (err: any) {
       console.error("Failed to send message:", err);
-      alert(err?.message || "Erro ao enviar mensagem.");
+      // Restore the draft so the learner doesn't lose it, and explain inline.
+      setInputMessage((prev) => prev || textToSend);
+      setActionError(`${t.sendFailed} ${err?.message ?? ""}`.trim());
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // Resume a failed/interrupted run (POST /api/chats/{id}/resume). The SSE
+  // `session:updated` notification triggers any follow-up fetch.
+  const handleResume = async (restartDiagnostic: boolean) => {
+    if (!id || isResuming) return;
+    setIsResuming(true);
+    setActionError(null);
+    try {
+      setSession(await resumeChat(id, restartDiagnostic));
+    } catch (err: any) {
+      console.error("Failed to resume session:", err);
+      setActionError(err?.message || t.sessionFailed);
+    } finally {
+      setIsResuming(false);
     }
   };
 
@@ -313,6 +333,10 @@ export default function ChatPage({ params }: ChatPageProps) {
   }
 
   const isWaitingQuiz = session.status === "waiting_quiz" && session.pending_quiz;
+  const execStatus = session.execution_status;
+  const needsRecovery =
+    session.recovery_required || execStatus === "failed" || execStatus === "interrupted";
+  const isTeaching = execStatus === "queued" || execStatus === "running";
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#141414] relative">
@@ -464,7 +488,97 @@ export default function ChatPage({ params }: ChatPageProps) {
       </div>
       )}
 
-      {/* 4. Bottom Follow-up Input Bar */}
+      {/* 4a. Run-state strip: recovery banner / teaching indicator / inline errors */}
+      {(needsRecovery || isTeaching || actionError) && (
+        <div className="px-4 pt-3 bg-[#141414] shrink-0 z-20">
+          <div className="max-w-4xl mx-auto flex flex-col gap-2">
+            {needsRecovery && (
+              <div
+                role="alert"
+                className="flex flex-wrap items-start gap-3 p-3 rounded border border-[#f87171]/50 bg-[#1c1c1c]"
+              >
+                <AlertTriangle className="w-4 h-4 text-[#f87171] shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  <span className="font-ui text-[12.5px] text-[#e6e6e6]">
+                    {session.recovery_required
+                      ? t.sessionRecovery
+                      : execStatus === "interrupted"
+                      ? t.sessionInterrupted
+                      : t.sessionFailed}
+                  </span>
+                  {session.error && (
+                    <code className="font-ui text-[11px] text-[#8d8d8d] break-words whitespace-pre-wrap">
+                      {session.error}
+                    </code>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!session.recovery_required && (
+                    <button
+                      type="button"
+                      onClick={() => void handleResume(false)}
+                      disabled={isResuming}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2a2a2a] hover:bg-[#434343] border border-[#434343] text-[#e6e6e6] text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-[#8d8d8d]"
+                    >
+                      {isResuming ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isResuming ? t.resuming : t.resume}</span>
+                    </button>
+                  )}
+                  {session.recovery_required && (
+                    <button
+                      type="button"
+                      onClick={() => void handleResume(true)}
+                      disabled={isResuming}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2a2a2a] hover:bg-[#434343] border border-[#434343] text-[#e6e6e6] text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-[#8d8d8d]"
+                    >
+                      {isResuming ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Compass className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isResuming ? t.resuming : t.restartDiagnostic}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isTeaching && !needsRecovery && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-2 font-ui text-[11px] text-[#8d8d8d]"
+              >
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>{execStatus === "queued" ? t.queued : t.teaching}</span>
+              </div>
+            )}
+
+            {actionError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 font-ui text-[11px] text-[#f87171]"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                <span className="flex-1 break-words">{actionError}</span>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  className="text-[#8d8d8d] hover:text-[#e6e6e6] underline cursor-pointer shrink-0"
+                >
+                  {t.dismiss}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 4b. Bottom Follow-up Input Bar */}
       <footer className="px-4 py-3 bg-[#141414] border-t border-[#434343] shrink-0 z-20">
         <form
           onSubmit={handleSendMessage}

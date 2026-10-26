@@ -12,13 +12,15 @@ import {
   Edit3,
   Loader2,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   Sparkles,
 } from "lucide-react";
-import type { SessionMode, SessionRecord } from "@/lib/types";
-import { createChat, listChats } from "@/lib/api";
+import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
+import { createChat, listChats, retryJob } from "@/lib/api";
 import { useEventSubscription, useServerEvents } from "./server-events";
+import { useLocale } from "./locale-provider";
 
 type FilterMode = "TEACHING" | "PRACTICE" | "ALL";
 
@@ -31,6 +33,31 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { activeJobs } = useServerEvents();
+  const { t } = useLocale();
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<Record<string, string>>({});
+  // `activeJobs` holds every known job record; only queued/running ones are "busy".
+  const runningJobs = activeJobs.filter(
+    (j) => j.status === "queued" || j.status === "running"
+  );
+
+  // Retry a failed/interrupted job. The backend broadcasts `jobs:updated`,
+  // which refreshes `activeJobs` through the shared SSE channel (notify -> fetch).
+  const handleRetryJob = async (job: BackgroundJobStatus) => {
+    setRetryingJobId(job.job_id);
+    setRetryError((prev) => {
+      const next = { ...prev };
+      delete next[job.job_id];
+      return next;
+    });
+    try {
+      await retryJob(job.job_id);
+    } catch (err: any) {
+      setRetryError((prev) => ({ ...prev, [job.job_id]: err?.message || t.statusFailed }));
+    } finally {
+      setRetryingJobId(null);
+    }
+  };
 
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -97,26 +124,45 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
   };
 
   const getStatusIndicator = (session: SessionRecord) => {
+    const exec = session.execution_status;
+    if (session.recovery_required || exec === "failed" || exec === "interrupted") {
+      const label = exec === "interrupted" ? t.statusInterrupted : t.statusFailed;
+      return (
+        <span
+          className="inline-block w-2 h-2 rounded-full bg-[#f87171] shrink-0"
+          title={session.error ? `${label}: ${session.error}` : label}
+          aria-label={label}
+        />
+      );
+    }
     if (session.status === "waiting_quiz") {
       return (
         <span
           className="inline-block w-2 h-2 rounded-full bg-[#e0a030] animate-pulse shrink-0"
-          title="Waiting for your answer"
+          title={t.statusWaiting}
+        />
+      );
+    }
+    if (exec === "queued" || exec === "running") {
+      return (
+        <span
+          className="inline-block w-2 h-2 rounded-full bg-[#8d8d8d] animate-ping shrink-0"
+          title={t.statusTeaching}
         />
       );
     }
     if (session.status === "active") {
       return (
         <span
-          className="inline-block w-2 h-2 rounded-full bg-[#8d8d8d] animate-ping shrink-0"
-          title="Teaching..."
+          className="inline-block w-2 h-2 rounded-full bg-[#8d8d8d] shrink-0"
+          title={t.statusIdle}
         />
       );
     }
     return (
       <span
         className="inline-block w-2 h-2 rounded-full bg-[#434343] shrink-0"
-        title="Completed"
+        title={t.statusCompleted}
       />
     );
   };
@@ -167,10 +213,10 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         </div>
 
         <div className="flex flex-col items-center gap-3 w-full">
-          {activeJobs.length > 0 && (
+          {runningJobs.length > 0 && (
             <div
               className="p-2 text-[#e0a030] animate-pulse"
-              title={`${activeJobs.length} Background Agent(s) running`}
+              title={`${runningJobs.length} Background Agent(s) running`}
             >
               <Cpu className="w-4 h-4" />
             </div>
@@ -360,9 +406,9 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
               <span className="font-semibold tracking-wider text-[10px]">
                 ~ BACKGROUND AGENTS
               </span>
-              {activeJobs.length > 0 && (
+              {runningJobs.length > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 bg-[#e0a030]/20 text-[#e0a030] text-[9.5px] rounded-full border border-[#e0a030]/40">
-                  {activeJobs.length}
+                  {runningJobs.length}
                 </span>
               )}
             </div>
@@ -377,37 +423,60 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
             <div className="p-2 border-t border-[#434343] flex flex-col gap-1.5 bg-[#141414]">
               {activeJobs.length === 0 ? (
                 <p className="text-[10.5px] text-[#8d8d8d] italic py-1 text-center">
-                  Idle (no active pipelines)
+                  {t.agentsIdle}
                 </p>
               ) : (
-                activeJobs.map((job) => (
-                  <div
-                    key={job.id}
-                    className="p-1.5 bg-[#1c1c1c] border border-[#434343] rounded flex flex-col gap-1 text-[10.5px]"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-[#e6e6e6] truncate">
-                        {job.name}
-                      </span>
-                      <span
-                        className={`text-[9px] px-1 py-0.2 rounded border ${
-                          job.status === "running"
-                            ? "bg-[#e0a030]/10 text-[#e0a030] border-[#e0a030]/30 animate-pulse"
-                            : job.status === "completed"
-                            ? "bg-green-950/40 text-green-400 border-green-800"
-                            : "bg-red-950/40 text-red-400 border-red-800"
-                        }`}
-                      >
-                        {job.status}
-                      </span>
+                activeJobs.map((job) => {
+                  const canRetry = job.status === "failed" || job.status === "interrupted";
+                  const busy = job.status === "queued" || job.status === "running";
+                  const err = retryError[job.job_id] || job.error;
+                  return (
+                    <div
+                      key={job.job_id}
+                      className="p-1.5 bg-[#1c1c1c] border border-[#434343] rounded flex flex-col gap-1 text-[10.5px]"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-medium text-[#e6e6e6] truncate" title={job.kind}>
+                          {job.label || job.kind}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span
+                            className={`text-[9px] px-1 py-0.2 rounded border ${
+                              busy
+                                ? "bg-[#e0a030]/10 text-[#e0a030] border-[#e0a030]/30 animate-pulse"
+                                : canRetry
+                                ? "bg-[#f87171]/10 text-[#f87171] border-[#f87171]/40"
+                                : "bg-[#2a2a2a] text-[#8d8d8d] border-[#434343]"
+                            }`}
+                          >
+                            {job.status}
+                          </span>
+                          {canRetry && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRetryJob(job)}
+                              disabled={retryingJobId === job.job_id}
+                              className="p-0.5 rounded text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] cursor-pointer disabled:cursor-not-allowed transition-colors"
+                              title={retryingJobId === job.job_id ? t.retrying : t.retry}
+                              aria-label={t.retry}
+                            >
+                              {retryingJobId === job.job_id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <RotateCcw className="w-3 h-3" />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {err && canRetry && (
+                        <p className="text-[9.5px] text-[#f87171] break-words line-clamp-3" title={err}>
+                          {err}
+                        </p>
+                      )}
                     </div>
-                    {job.details && (
-                      <p className="text-[9.5px] text-[#8d8d8d] truncate">
-                        {job.details}
-                      </p>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
