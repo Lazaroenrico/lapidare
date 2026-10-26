@@ -84,6 +84,14 @@ class SessionConflict(ValueError):
     """An operation conflicts with the authoritative persisted session."""
 
 
+def opening_request(session):
+    """First-turn request: the session title IS what the learner asked for."""
+    return (
+        f'Begin the session. The learner opened it with: "{session.title}". Treat that as '
+        "their stated goal; ask to clarify only if two readings would lead to different lessons."
+    )
+
+
 class SessionService:
     def __init__(self, state: AppState):
         self.state = state
@@ -628,6 +636,8 @@ class SessionService:
             else:
                 history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
                 prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + TURN_RULES
+                if not session.messages and not handoff:
+                    prompt += "\n\nNOW:\n" + opening_request(session)
                 if handoff:
                     prompt += "\n\nNOW:\n" + handoff
                 stream = engine.stream_turn(prompt, session_id, slot=config.slots.strong, tools=tools)
@@ -691,7 +701,7 @@ class SessionService:
         elif messages:
             body = "Continue the session from where it stopped."
         else:
-            body = "Begin the session."
+            body = opening_request(session)
         return history, f"{body}\n\nCURRENT STATE: {state}"
 
     async def _release_runtime(self, session_id):
