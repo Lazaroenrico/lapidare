@@ -210,6 +210,8 @@ const messages = {
     teacherHarness: 'PROFESSOR HARNESS', phase: (p: string) => `Fase: ${p}`, dictateMessage: 'Ditar mensagem por voz',
     answerQuizFirst: 'Responda ao quiz acima no QuestionDock para avançar a aula...',
     followUpPlaceholder: 'Pergunte, peça um exemplo alternativo ou aprofunde a teoria...', sendMessage: 'Enviar mensagem',
+    setupRecommended: 'Recomendado', setupDetected: 'Detectado', setupNotFound: 'Não encontrado',
+    setupGeminiDeprecation: 'Contas individuais do Gemini Code Assist não são mais aceitas pelo gemini CLI: use o Antigravity (agy).',
   },
   en: {
     teachPrompt: 'What would you like to learn or explore today?', practicePrompt: 'What would you like to practice today?',
@@ -417,6 +419,8 @@ const messages = {
     teacherHarness: 'HARNESS TEACHER', phase: (p: string) => `Phase: ${p}`, dictateMessage: 'Dictate message by voice',
     answerQuizFirst: 'Answer the quiz above in the QuestionDock to move the lesson forward...',
     followUpPlaceholder: 'Ask, request an alternative example or go deeper into the theory...', sendMessage: 'Send message',
+    setupRecommended: 'Recommended', setupDetected: 'Detected', setupNotFound: 'Not found',
+    setupGeminiDeprecation: 'Individual Gemini Code Assist accounts are no longer accepted by the gemini CLI: use Antigravity (agy).',
   },
 };
 type Locale = keyof typeof messages;

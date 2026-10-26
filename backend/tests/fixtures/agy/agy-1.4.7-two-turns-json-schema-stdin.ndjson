@@ -1,0 +1,2 @@
+{"event":"user","message":{"content":"Se houver uma ferramenta MCP chamada ping (servidor harness), chame-a uma vez. Depois responda apenas com ready=true."}}
+{"event":"user","message":{"content":"Agora responda apenas com ready=false."}}

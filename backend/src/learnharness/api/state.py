@@ -82,6 +82,24 @@ class AppState:
         self.tokens[token] = (session_id, execution_id)
         return token
 
+    def session_token(self, session_id, execution_id):
+        """The session's single MCP token, re-bound to ``execution_id``.
+
+        The token lives as long as the session (persistent CLI processes keep it in their
+        MCP config, so re-minting would force a respawn/re-bind every turn), but it only
+        authorizes the *current* execution: ``bound_session`` still rejects it as stale
+        once ``session.execution_id`` moves on without a re-bind.
+        """
+        for token, (bound, _) in self.tokens.items():
+            if bound == session_id:
+                self.tokens[token] = (session_id, execution_id)
+                return token
+        return self.issue_token(session_id, execution_id)
+
+    def revoke_session_tokens(self, session_id):
+        for token in [t for t, (bound, _) in self.tokens.items() if bound == session_id]:
+            del self.tokens[token]
+
     def bound_session(self, token):
         binding = self.tokens.get(token)
         if not binding:

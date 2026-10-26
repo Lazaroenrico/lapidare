@@ -39,6 +39,19 @@ interface SetupDialogProps {
 }
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
+
+// agy model ids are account-specific (`agy models`): "auto" lets the CLI pick its default.
+function defaultSlotsFor(engine: EngineKind): ModelSlots {
+  const strong = engine === "agy" ? "auto" : "gemini-2.5-pro";
+  const fast = engine === "agy" ? "auto" : "gemini-2.5-flash";
+  return {
+    strong: { engine, model: strong, effort: "medium" },
+    fast: { engine, model: fast, effort: "low" },
+    background: { engine, model: fast, effort: "medium" },
+  };
+}
+
+type DetectedConnector = ConnectorStatus & { recommended?: boolean };
 const DEFAULT_REPO_PATH = "";
 
 export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
@@ -49,15 +62,12 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Connectors detected from backend
-  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
+  const [connectors, setConnectors] = useState<DetectedConnector[]>([]);
+  const connector = (engine: EngineKind) => connectors.find((c) => c.engine === engine);
 
   // Step 1: Engines & Model Slots
   const [apiKey, setApiKey] = useState<string>("");
-  const [slots, setSlots] = useState<ModelSlots>({
-    strong: { engine: "agy", model: "gemini-2.5-pro", effort: "high" },
-    fast: { engine: "agy", model: "gemini-2.5-flash", effort: "low" },
-    background: { engine: "agy", model: "gemini-2.5-flash", effort: "medium" },
-  });
+  const [slots, setSlots] = useState<ModelSlots>(defaultSlotsFor("agy"));
 
   // Step 2: Language & Vault
   const [language, setLanguage] = useState<"pt-br" | "en">("pt-br");
@@ -87,37 +97,12 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         if (!mounted) return;
         if (res.connectors && res.connectors.length > 0) {
           setConnectors(res.connectors);
-          // Auto-select preferred available engine
-          const hasAgy = res.connectors.some(
-            (c) => c.engine === "agy" && c.available
-          );
-          const hasGemini = res.connectors.some(
-            (c) => c.engine === "gemini" && c.available
-          );
-
-          const defaultEngine: EngineKind = hasAgy
-            ? "agy"
-            : hasGemini
-            ? "gemini"
-            : "sdk";
-
-          setSlots({
-            strong: {
-              engine: defaultEngine,
-              model: "gemini-2.5-pro",
-              effort: "high",
-            },
-            fast: {
-              engine: defaultEngine,
-              model: "gemini-2.5-flash",
-              effort: "low",
-            },
-            background: {
-              engine: defaultEngine,
-              model: "gemini-2.5-flash",
-              effort: "medium",
-            },
-          });
+          // Preselect the backend recommendation: agy > google-genai (with credentials) > gemini.
+          const detected = res.connectors as DetectedConnector[];
+          const recommended =
+            detected.find((c) => c.recommended)?.engine ??
+            (detected.some((c) => c.engine === "agy" && c.available) ? "agy" : "gemini");
+          setSlots(defaultSlotsFor(recommended));
         }
         if (res.config) {
           if (res.config.language) setLanguage(res.config.language);
@@ -319,10 +304,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 font-ui text-[11px] text-green-400">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Detectado</span>
-                      </div>
+                      <ConnectorBadge status={connector("agy")} t={t} />
                     </div>
 
                     {/* Gemini ACP Engine */}
@@ -341,11 +323,12 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                           <p className="text-[11px] text-[#8d8d8d]">
                             Google One AI Pro, AI Ultra ou Workspace Code Assist
                           </p>
+                          <p className="text-[11px] text-[#8d8d8d] mt-1">
+                            {t.setupGeminiDeprecation}
+                          </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 font-ui text-[11px] text-[#8d8d8d]">
-                        <span>Ativo</span>
-                      </div>
+                      <ConnectorBadge status={connector("gemini")} t={t} />
                     </div>
 
                     {/* GenAI SDK fallback */}
@@ -362,6 +345,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                             </p>
                           </div>
                         </div>
+                        <ConnectorBadge status={connector("sdk")} t={t} />
                       </div>
                       <input
                         type="password"
@@ -800,6 +784,32 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ConnectorBadge({
+  status,
+  t,
+}: {
+  status?: DetectedConnector;
+  t: ReturnType<typeof useLocale>["t"];
+}) {
+  return (
+    <div className="flex items-center gap-1.5 font-ui text-[11px] shrink-0">
+      {status?.recommended && (
+        <span className="px-1.5 bg-[#2a2a2a] border border-[#434343] text-[#e6e6e6] rounded">
+          {t.setupRecommended}
+        </span>
+      )}
+      {status?.available ? (
+        <span className="flex items-center gap-1 text-[#e6e6e6]">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          {t.setupDetected}
+        </span>
+      ) : (
+        <span className="text-[#8d8d8d]">{t.setupNotFound}</span>
+      )}
     </div>
   );
 }
