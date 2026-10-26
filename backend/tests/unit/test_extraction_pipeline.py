@@ -12,9 +12,8 @@ Verifies:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import asyncio
+from pathlib import Path
 
 import pytest
 from langgraph.graph.state import CompiledStateGraph
@@ -26,6 +25,7 @@ from learnharness.pipelines.extraction import (
     build_extraction_graph,
     extractor_node,
     merger_node,
+    parse_structured_markdown,
     run_extraction_pipeline,
 )
 from learnharness.vault.bootstrap import bootstrap_vault
@@ -54,11 +54,17 @@ Durante a fase de decodificação token-a-token, cada novo token precisa calcula
 
 
 class FakeExtractionEngine:
+    """Scripted provider: answers with the concepts explicitly written in the evidence."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
     async def run_structured(self, prompt, schema, **kwargs):
-        parsed = await extractor_node({"session_id":"fixture", "topic":"Attention", "messages_text":SAMPLE_SESSION_TEXT})
+        self.calls.append({"prompt": prompt, "schema": schema, **kwargs})
+        nodes, chains = parse_structured_markdown(SAMPLE_SESSION_TEXT, session_id="fixture", topic="Attention")
         return schema.model_validate({
-            "concepts": [n.model_dump() for n in parsed["candidate_nodes"]],
-            "chains": [c.model_dump() for c in parsed["candidate_chains"]],
+            "concepts": [n.model_dump() for n in nodes],
+            "chains": [c.model_dump() for c in chains],
         })
 
 
@@ -85,20 +91,14 @@ def test_build_extraction_graph_compiles():
 # 2. Node-level Unit Tests
 # ============================================================================
 
-@pytest.mark.asyncio
-async def test_extractor_node_deterministic():
-    """Verify extractor_node extracts candidate concepts and logical chains deterministically."""
-    state: ExtractionState = {
-        "session_id": "test-sess-1",
-        "topic": "Multi-Head Attention e KV Cache",
-        "messages_text": SAMPLE_SESSION_TEXT,
-        "source_ref": "Fontes/Mentoria/aula-04.md#^p12",
-    }
-
-    result = await extractor_node(state)
-
-    candidate_nodes = result["candidate_nodes"]
-    candidate_chains = result["candidate_chains"]
+def test_parse_structured_markdown_reads_explicit_structure():
+    """The pure template parser extracts only explicitly written concepts and chains."""
+    candidate_nodes, candidate_chains = parse_structured_markdown(
+        SAMPLE_SESSION_TEXT,
+        session_id="test-sess-1",
+        topic="Multi-Head Attention e KV Cache",
+        source_ref="Fontes/Mentoria/aula-04.md#^p12",
+    )
 
     # Verify extracted concepts
     node_titles = {n.title: n for n in candidate_nodes}
@@ -418,11 +418,16 @@ Aqui está minha anotação de benchmark: 8 cabeças d_k=64 vs 1 cabeça d_model
 
 async def test_failure_propagates_without_checkpoint_fallback(tmp_path):
     bootstrap_vault(tmp_path, language="pt-BR")
+    calls = []
+
     class BrokenEngine:
         async def run_structured(self, **kwargs):
+            calls.append(kwargs)
             raise RuntimeError("provider failed")
+
     with pytest.raises(RuntimeError, match="provider failed"):
         await asyncio.wait_for(run_extraction_pipeline(tmp_path, "failure", "topic", "evidence", engine=BrokenEngine()), 3)
+    assert len(calls) == 1
     assert not list((tmp_path / "Conceitos").glob("*.md"))
 
 
@@ -435,7 +440,42 @@ async def test_repeat_extraction_deduplicates_chains(tmp_path):
     assert (tmp_path / ".harness/langgraph.sqlite").exists()
 
 
-async def test_no_fabrication_from_topic_without_evidence():
-    result = await extractor_node({"topic":"Made up topic", "messages_text":""})
-    assert result["candidate_nodes"] == []
-    assert result["candidate_chains"] == []
+def test_no_fabrication_from_topic_without_evidence():
+    nodes, chains = parse_structured_markdown("", topic="Made up topic")
+    assert nodes == []
+    assert chains == []
+
+
+async def test_extractor_node_requires_engine_no_deterministic_fallback():
+    state: ExtractionState = {"session_id": "s", "topic": "t", "messages_text": SAMPLE_SESSION_TEXT}
+    with pytest.raises(ValueError, match="configured engine"):
+        await extractor_node(state, {"configurable": {}})
+
+
+async def test_extractor_node_uses_engine_from_config():
+    engine = FakeExtractionEngine()
+    state: ExtractionState = {"session_id": "s", "topic": "Attention", "messages_text": "evidence",
+                              "source_ref": "Fontes/x.md#^p1"}
+    result = await extractor_node(state, {"configurable": {"engine": engine, "slot": "bg"}})
+    assert len(engine.calls) == 1
+    assert engine.calls[0]["slot"] == "bg"
+    assert "evidence" in engine.calls[0]["prompt"]
+    assert {n.title for n in result["candidate_nodes"]} >= {"Multi-Head Attention", "KV Cache"}
+    assert all(n.sources == ["Fontes/x.md#^p1"] for n in result["candidate_nodes"])
+
+
+async def test_pipeline_invokes_engine_on_every_run(tmp_path):
+    """Each job is a fresh run: a finished checkpoint for the session is never resumed."""
+    bootstrap_vault(tmp_path, language="pt-BR")
+    engine = FakeExtractionEngine()
+    for _ in range(2):
+        result = await run_extraction_pipeline(tmp_path, "same-session", "Attention", "evidence", engine=engine)
+        assert result["status"] == "completed"
+        assert result["errors"] == []
+    assert len(engine.calls) == 2
+
+
+async def test_pipeline_requires_engine(tmp_path):
+    bootstrap_vault(tmp_path, language="pt-BR")
+    with pytest.raises(ValueError, match="configured engine"):
+        await run_extraction_pipeline(tmp_path, "s", "t", "evidence", engine=None)

@@ -4,8 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
-from learnharness.core.contracts.practice import PracticeProblem, PracticeAttemptGrade
-from learnharness.pipelines.practice_gen import run_practice_generation_pipeline, grade_practice_attempt
+
+from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeProblem
+from learnharness.pipelines.practice_gen import (
+    grade_practice_attempt,
+    run_practice_generation_pipeline,
+)
 
 
 class FakeEngine:

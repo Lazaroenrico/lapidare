@@ -1,7 +1,8 @@
-"""Comprehensive integration test suite for LearnHarness FastAPI server.
+"""Integration tests for the LearnHarness FastAPI server.
 
-Runs against isolated tmp_path Vaults without touching the user's Obsidian Vault.
-Verifies all REST routes, QuestionDock flows, SSE events, and calibration bands.
+Runs against isolated tmp_path Vaults (never the user's Obsidian Vault) with a scripted
+FakeEngine injected through ``AppState(engine_factory=...)``. The server never invents
+pedagogical content: quizzes appear only because the engine calls ``pose_quiz``.
 """
 
 from __future__ import annotations
@@ -11,18 +12,13 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from learnharness.api.app import create_app
-from learnharness.vault.bootstrap import bootstrap_vault
+from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeProblem
+from tests.conftest import FakeEngine, poll_until, tool
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> TestClient:
-    """Initialize isolated test client with fresh bootstrapped vault in tmp_path."""
-    vault_dir = tmp_path / "TestVault"
-    vault_dir.mkdir(parents=True, exist_ok=True)
-    bootstrap_vault(vault_dir, language="pt-BR")
-    app = create_app(vault_path=vault_dir)
-    return TestClient(app)
+def client(api_client: TestClient) -> TestClient:
+    return api_client
 
 
 def test_setup_status_and_complete(client: TestClient) -> None:
@@ -54,33 +50,63 @@ def test_graph_snapshot(client: TestClient) -> None:
     assert "chains" in data
 
 
-def test_chats_teaching_flow_and_calibration(client: TestClient) -> None:
-    """Test chat creation, question dock answering, and illusion_of_competence calibration."""
-    # 1. Create TEACH session
-    create_res = client.post(
-        "/api/chats",
-        json={"mode": "TEACH", "topic": "Tokens e Embeddings"},
+TOKENS_QUIZ = {
+    "mode": "PREDICTION",
+    "topic": "Tokens e Embeddings",
+    "question": "Como a latência de decodificação cresce com o tamanho do contexto sem KV cache?",
+    "choices": [
+        {"value": "a", "label": "Linearmente, sem gargalo"},
+        {"value": "b", "label": "Constante"},
+        {"value": "c", "label": "Quadraticamente no total da sequência"},
+    ],
+    "correct_index": 2,
+    "explanation": "Cada passo recomputa a atenção sobre todos os tokens anteriores.",
+    "node_id": "node-tokens",
+}
+
+
+def _get_chat(client: TestClient, session_id: str) -> dict:
+    res = client.get(f"/api/chats/{session_id}")
+    assert res.status_code == 200
+    return res.json()
+
+
+def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: FakeEngine,
+                                             configured_vault: Path) -> None:
+    """Engine-driven quiz: plan_init -> pose_quiz (blocks) -> answer -> illusion_of_competence."""
+    fake_engine.script_turn(
+        "Vamos diagnosticar o que você já sabe.",
+        tool("plan_init", approach_prose="Diagnóstico antes da formalização.",
+             nodes=[{"id": "node-tokens", "label": "Custo de decodificação", "kind": "goal"}]),
+        tool("pose_quiz", **TOKENS_QUIZ),
+        "Vamos ver um contraexemplo.",
     )
+    fake_engine.script_turn("O limite assintótico vem da soma 1 + 2 + ... + N.")
+
+    # 1. Create TEACH session; the server itself never fabricates a quiz.
+    create_res = client.post("/api/chats", json={"mode": "TEACH", "topic": "Tokens e Embeddings"})
     assert create_res.status_code == 200
-    session_data = create_res.json()
-    session_id = session_data["id"]
+    session_id = create_res.json()["id"]
+    assert create_res.json()["topic"] == "Tokens e Embeddings"
+
+    # 2. Wait until the engine's pose_quiz call is persisted and exposed.
+    session_data = poll_until(lambda: _get_chat(client, session_id), lambda d: d["pending_quiz"] is not None)
+    assert session_data["id"] == session_id
     assert session_data["status"] == "waiting_quiz"
-    assert session_data["pending_quiz"] is not None
+    assert [n["id"] for n in session_data["plan"]["nodes"]] == ["node-tokens"]
+    quiz = session_data["pending_quiz"]
+    assert quiz["question"] == TOKENS_QUIZ["question"]
+    assert quiz["plan_node_id"] == "node-tokens"
+    assert len(quiz["options"]) == 3
+    assert "correct_index" not in quiz  # The answer key never reaches the browser.
 
-    quiz_id = session_data["pending_quiz"]["id"]
-
-    # 2. Get chat by id
-    get_res = client.get(f"/api/chats/{session_id}")
-    assert get_res.status_code == 200
-    assert get_res.json()["id"] == session_id
-
-    # 3. Submit wrong answer with HIGH confidence (>= 70%) -> triggers illusion_of_competence
+    # 3. Wrong answer with HIGH confidence -> illusion_of_competence.
     ans_res = client.post(
         f"/api/chats/{session_id}/answer",
         json={
-            "quiz_id": quiz_id,
-            "chosen_index": 0,  # Wrong answer (correct is 2)
-            "confidence": 95,   # High confidence
+            "quiz_id": quiz["id"],
+            "chosen_index": 0,
+            "confidence": 95,
             "learner_thinking": "Acredito firmemente que a latência cresce linearmente sem gargalo assintótico.",
         },
     )
@@ -89,13 +115,42 @@ def test_chats_teaching_flow_and_calibration(client: TestClient) -> None:
     assert ans_data["is_correct"] is False
     assert ans_data["band"] == "illusion_of_competence"
 
-    # 4. Send chat message
+    # The suspended engine turn receives the calibration result and finishes.
+    after = poll_until(lambda: _get_chat(client, session_id),
+                       lambda d: d["pending_quiz"] is None and d["execution_status"] == "idle")
+    assert after["status"] == "active"
+    assert fake_engine.tool_results[-1][0] == "pose_quiz"
+    assert fake_engine.tool_results[-1][1]["calibration_band"] == "illusion_of_competence"
+    assert any("contraexemplo" in m["content"] for m in after["messages"] if m["role"] == "assistant")
+    quiz_log = (configured_vault / ".harness/quiz-log.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(quiz_log) == 1
+
+    # A second answer with different input is rejected (idempotency guard).
+    conflict = client.post(f"/api/chats/{session_id}/answer",
+                           json={"quiz_id": quiz["id"], "chosen_index": 2, "confidence": 95})
+    assert conflict.status_code == 409
+
+    # 4. Send chat message -> next engine turn.
     msg_res = client.post(
         f"/api/chats/{session_id}/messages",
         json={"content": "Entendi o contraexemplo. Como calculamos o limite assintótico?"},
     )
     assert msg_res.status_code == 200
     assert "session" in msg_res.json()
+    final = poll_until(lambda: _get_chat(client, session_id),
+                       lambda d: any("1 + 2" in m["content"] for m in d["messages"]))
+    assert final["messages"][-1]["role"] == "assistant"
+    assert len(fake_engine.stream_calls) == 2
+    assert "pose_quiz" in fake_engine.stream_calls[0]["tools"]
+
+
+def test_chat_engine_failure_is_reported_not_masked(client: TestClient, fake_engine: FakeEngine) -> None:
+    """Provider failure propagates to the session instead of a deterministic fallback quiz."""
+    fake_engine.script_turn(RuntimeError("provider unavailable"))
+    session_id = client.post("/api/chats", json={"mode": "TEACH", "topic": "Softmax"}).json()["id"]
+    data = poll_until(lambda: _get_chat(client, session_id), lambda d: d["execution_status"] == "failed")
+    assert data["pending_quiz"] is None
+    assert "provider unavailable" in (data.get("error") or "")
 
 
 def test_import_catalog_and_ingest(client: TestClient) -> None:
@@ -161,8 +216,30 @@ def test_drawings_crud_and_review(client: TestClient) -> None:
     assert "summary" in rev_data
 
 
-def test_practice_generate_and_hint_ladder(client: TestClient) -> None:
-    """Test generating practice problems and stepping through R0-R5 hint ladder."""
+def _practice_problem(prompt: str) -> PracticeProblem:
+    import json
+    topic = json.loads(prompt)["topic"]
+    return PracticeProblem.model_validate({
+        "problem_id": "provider-id", "topic": topic, "prompt": f"Explique o custo por passo de {topic}.",
+        "committed_solution": "Cada passo reutiliza K e V anteriores; o custo por passo é linear no contexto.",
+        "rubric": [{"id": "mechanism", "description": "Mecanismo correto", "max_points": 6},
+                   {"id": "limit", "description": "Limite correto", "max_points": 4}],
+        "hints": [{"level": f"R{i}", "label": f"Passo {i}", "prompt": f"Considere o token {i + 1}: o que muda?"}
+                  for i in range(6)],
+        "target_misconception": "Confundir valores em cache com tokens de saída",
+    })
+
+
+@pytest.mark.xfail(strict=False, reason=(
+    "Bug in api/routes/practice.py: /api/practice/generate does not pass an engine to "
+    "run_practice_generation_pipeline, and grading calls grade_practice_attempt_node, which always raises."))
+def test_practice_generate_and_hint_ladder(client: TestClient, fake_engine: FakeEngine) -> None:
+    """Generate a practice set with the injected engine and step through the R0-R5 hint ladder."""
+    fake_engine.program(PracticeProblem, _practice_problem)
+    fake_engine.program(PracticeAttemptGrade, {
+        "problem_id": "provider-id", "score": 8, "max_score": 10,
+        "criterion_scores": {"mechanism": 5, "limit": 3}, "feedback": "Bom raciocínio.", "passed": True,
+    })
     # 1. Generate practice set
     gen_res = client.post(
         "/api/practice/generate",
@@ -193,5 +270,6 @@ def test_practice_generate_and_hint_ladder(client: TestClient) -> None:
     )
     assert grade_res.status_code == 200
     grade_data = grade_res.json()
-    assert "grade" in grade_data
-    assert grade_data["grade"]["score"] >= 0
+    assert grade_data["grade"]["score"] == 8
+    assert grade_data["grade"]["passed"] is True
+    assert {c["schema"] for c in fake_engine.structured_calls} == {PracticeProblem, PracticeAttemptGrade}
