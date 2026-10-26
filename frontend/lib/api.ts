@@ -5,6 +5,7 @@ import { decodeConfig, decodeSetup, encodeConfig } from "./config-wire";
  */
 
 import type {
+  AgyPermissionStatus,
   BackgroundJobStatus,
   CalibrationResult,
   CatalogLessonItem,
@@ -149,6 +150,18 @@ export async function completeSetup(
   if (result.success) window.dispatchEvent(new Event("harness:config"));
   return {...result, config: decodeConfig(result.config)};
 }
+
+/** Estado da permissão global `mcp(harness/*)` do agy (erros inline, silent). */
+export const getAgyPermission = () =>
+  fetchJson<AgyPermissionStatus>("/api/setup/agy-permission", {}, { silent: true });
+
+/** Concede a regra só com consentimento explícito do usuário (backup + escrita atômica no backend). */
+export const grantAgyPermission = () =>
+  fetchJson<AgyPermissionStatus>(
+    "/api/setup/agy-permission",
+    { method: "POST", body: JSON.stringify({ consent: true }) },
+    { silent: true }
+  );
 
 // --- Knowledge Graph & Chains ---
 

@@ -537,6 +537,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                       {session.error}
                     </code>
                   )}
+                  {session.error?.includes("mcp(harness/*)") && (
+                    <Link href="/settings?tab=connectors" className="font-ui text-[11px] text-foreground underline underline-offset-2">
+                      {t.agyPermOpenSettings}
+                    </Link>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {!session.recovery_required && (

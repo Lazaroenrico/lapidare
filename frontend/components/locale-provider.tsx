@@ -307,6 +307,15 @@ const messages = {
     drawIncorrectEmpty: 'Nenhum erro conceitual foi detectado.',
     drawContinueSession: 'Continuar na sessão',
     drawAdjust: 'Ajustar o desenho',
+    // Permissão agy
+    agyPermTitle: 'Ferramentas do harness no agy',
+    agyPermGranted: (rule: string) => `✓ agy autorizado a usar as ferramentas do harness (${rule}).`,
+    agyPermMissing: 'Sem esta permissão, o agy recusa as ferramentas do harness e as sessões falham.',
+    agyPermChange: (path: string) => `Uma linha será adicionada a ${path}.`,
+    agyPermBackup: 'Antes, uma cópia de segurança com data e hora é feita.',
+    agyPermScope: 'Só as ferramentas pedagógicas do harness são liberadas — nada de shell ou acesso a arquivos.',
+    agyPermButton: 'Permitir ferramentas do harness no agy', agyPermGranting: 'Aplicando…',
+    agyPermOpenSettings: 'Corrigir em Configurações → Conectores',
   },
   en: {
     teachPrompt: 'What would you like to learn or explore today?', practicePrompt: 'What would you like to practice today?',
@@ -611,6 +620,15 @@ const messages = {
     drawIncorrectEmpty: 'No conceptual error was detected.',
     drawContinueSession: 'Continue in the session',
     drawAdjust: 'Adjust the drawing',
+    // agy permission
+    agyPermTitle: 'Harness tools in agy',
+    agyPermGranted: (rule: string) => `✓ agy is allowed to use the harness tools (${rule}).`,
+    agyPermMissing: 'Without this permission, agy refuses the harness tools and sessions fail.',
+    agyPermChange: (path: string) => `One line will be added to ${path}.`,
+    agyPermBackup: 'A timestamped backup is made first.',
+    agyPermScope: "Only the harness's pedagogical tools are allowed — no shell or file access.",
+    agyPermButton: 'Allow harness tools in agy', agyPermGranting: 'Applying…',
+    agyPermOpenSettings: 'Fix in Settings → Connectors',
   },
 };
 type Locale = keyof typeof messages;

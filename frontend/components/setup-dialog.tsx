@@ -31,6 +31,7 @@ import type {
   TrackMode,
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
+import { AgyPermissionCard } from "@/components/agy-permission-card";
 
 interface SetupDialogProps {
   isOpen: boolean;
@@ -357,6 +358,8 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       />
                     </div>
                   </div>
+
+                  {slots.strong.engine === "agy" && <AgyPermissionCard />}
 
                   {/* Model Slots & Reasoning Effort */}
                   <div className="p-3.5 bg-background border border-border rounded space-y-3">

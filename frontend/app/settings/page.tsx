@@ -30,6 +30,7 @@ import type {
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
 import { McpServerManager } from "@/components/mcp-server-manager";
+import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { GithubTrackLinker } from "@/components/github-track-linker";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
@@ -351,6 +352,8 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
+
+                {slots.strong.engine === "agy" && <AgyPermissionCard />}
 
                 {/* API Key Fallback */}
                 <div className="p-4 bg-card border border-border rounded space-y-2.5">

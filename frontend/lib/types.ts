@@ -80,6 +80,14 @@ export interface HarnessConfig {
   content_mcps: McpServerConfig[];
 }
 
+/** GET/POST /api/setup/agy-permission — regra global `mcp(harness/*)` do agy. */
+export interface AgyPermissionStatus {
+  granted: boolean;
+  rule: string;
+  settings_path: string;
+  error: string | null;
+}
+
 export interface SetupStatusResponse {
   initialized: boolean;
   config?: HarnessConfig;
