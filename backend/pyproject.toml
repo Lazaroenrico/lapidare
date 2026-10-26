@@ -4,18 +4,19 @@ version = "0.1.0"
 description = "Local-first, Vault-backed Learning Harness for the Google Ecosystem"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.10.0",
-    "fastmcp>=2.0.0",
-    "langgraph>=0.2.50",
-    "langgraph-checkpoint-sqlite>=2.0.0",
-    "aiosqlite>=0.20.0",
-    "google-genai>=1.0.0",
-    "watchfiles>=1.0.0",
-    "pyyaml>=6.0.2",
+    "fastapi>=0.115.0,<1",
+    "uvicorn[standard]>=0.32.0,<1",
+    "pydantic>=2.10.0,<3",
+    "fastmcp>=4.1,<5",
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3.1,<4",
+    "aiosqlite>=0.20.0,<1",
+    "google-genai>=2.0,<3",
+    "watchfiles>=1.0.0,<2",
+    "pyyaml>=6.0.2,<7",
     "lzstring>=1.0.4",
-    "python-multipart>=0.0.12",
+    "python-multipart>=0.0.12,<1",
+    "mcp>=2.3,<3",
 ]
 
 [dependency-groups]
@@ -41,3 +42,12 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "BLE", "S110", "S112", "UP", "RUF", "SIM"]
+# Line length is enforced by review, not lint, until a formatter pass lands.
+# RUF001: Portuguese prose and math symbols in strings are intentional.
+ignore = ["E501", "RUF001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["BLE001", "S110", "S112", "B017"]
