@@ -313,3 +313,11 @@ def test_engine_factory() -> None:
     )
     sdk_eng = get_engine(sdk_slot)
     assert isinstance(sdk_eng, GenAiSdkEngine)
+
+
+def test_pose_quiz_accepts_the_choice_shapes_models_send():
+    from learnharness.mcp.runtime_server import QuizChoiceIn, _normalize_choices
+
+    options = _normalize_choices(["Um escalar", {"text": "Um vetor"}, {"label": "Uma matriz", "value": "z"},
+                                  QuizChoiceIn(label="Nada")])
+    assert [(o.value, o.label) for o in options] == [("A", "Um escalar"), ("B", "Um vetor"), ("z", "Uma matriz"), ("D", "Nada")]

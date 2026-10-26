@@ -6,16 +6,39 @@ from uuid import uuid4
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
+from pydantic import AliasChoices, BaseModel, Field
 
 from learnharness.core.contracts.quiz import QuizOption, QuizPayload
 from learnharness.core.contracts.session import PlanDag, PlanNode
 from learnharness.services.sessions import now
 
 
+class QuizChoiceIn(BaseModel):
+    """One answer option. ``label`` is the option text (KaTeX allowed)."""
+
+    label: str = Field(validation_alias=AliasChoices("label", "text", "content"))
+    value: str | None = None
+
+
+def _normalize_choices(choices: list[QuizChoiceIn | str | dict[str, Any]]) -> list[QuizOption]:
+    """Accept the shapes models actually send: objects ({label|text|content}) or bare strings.
+
+    A real agy turn first sent options without ``label``; failing loudly there cost a turn.
+    """
+    options = []
+    for i, choice in enumerate(choices):
+        if isinstance(choice, str):
+            choice = QuizChoiceIn(label=choice)
+        elif isinstance(choice, dict):
+            choice = QuizChoiceIn.model_validate(choice)
+        options.append(QuizOption(value=choice.value or chr(65 + i), label=choice.label))
+    return options
+
+
 def session_tools(state, session_id):
-    async def pose_quiz(mode: Literal["PREDICTION", "CHECK"], topic: str, question: str, choices: list[dict[str, str]], correct_index: int, explanation: str, node_id: str | None = None, details: str | None = None) -> dict[str, Any]:
+    async def pose_quiz(mode: Literal["PREDICTION", "CHECK"], topic: str, question: str, choices: list[QuizChoiceIn | str], correct_index: int, explanation: str, node_id: str | None = None, details: str | None = None) -> dict[str, Any]:
         """Present a graded question and await the learner's answer, confidence and thinking."""
-        quiz = QuizPayload(quiz_id=f"quiz-{uuid4().hex}", session_id=session_id, topic=topic, mode=mode, question=question, choices=[QuizOption(value=c.get("value", chr(65+i)), label=c["label"]) for i, c in enumerate(choices)], correct_index=correct_index, explanation=explanation, node_id=node_id, details=details, created_at=now())
+        quiz = QuizPayload(quiz_id=f"quiz-{uuid4().hex}", session_id=session_id, topic=topic, mode=mode, question=question, choices=_normalize_choices(choices), correct_index=correct_index, explanation=explanation, node_id=node_id, details=details, created_at=now())
         return await state.sessions.pose(session_id, quiz)
 
     async def plan_init(approach_prose: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -57,7 +80,7 @@ def create_runtime_mcp(state):
         return state.tool_functions(state.bound_session(authorization[7:]))
 
     @server.tool()
-    async def pose_quiz(mode: Literal["PREDICTION", "CHECK"], topic: str, question: str, choices: list[dict[str, str]], correct_index: int, explanation: str, node_id: str | None = None, details: str | None = None) -> dict[str, Any]:
+    async def pose_quiz(mode: Literal["PREDICTION", "CHECK"], topic: str, question: str, choices: list[QuizChoiceIn | str], correct_index: int, explanation: str, node_id: str | None = None, details: str | None = None) -> dict[str, Any]:
         """Pose a graded question; wait for confidence and learner thinking."""
         return await bound()[0](mode, topic, question, choices, correct_index, explanation, node_id, details)
 
