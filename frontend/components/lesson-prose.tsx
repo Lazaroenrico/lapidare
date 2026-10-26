@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Check, Copy } from "lucide-react";
+import { useLocale } from "./locale-provider";
 
 interface LessonProseProps {
   content: string;
@@ -68,6 +69,7 @@ function CodeBlock({
   children: React.ReactNode;
   className?: string;
 }) {
+  const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   const codeText = React.Children.toArray(children).join("");
 
@@ -82,31 +84,31 @@ function CodeBlock({
   };
 
   return (
-    <div className="relative group my-4 rounded border border-[#434343] bg-[#1c1c1c] overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[#141414] border-b border-[#434343] text-[11px] font-ui text-[#8d8d8d]">
+    <div className="relative group my-4 rounded border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-background border-b border-border text-[11px] font-ui text-muted-foreground">
         <span className="uppercase tracking-wider">
           {className ? className.replace("language-", "") : "code"}
         </span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 hover:text-[#e6e6e6] transition-colors p-1 rounded"
-          title="Copiar código"
+          className="flex items-center gap-1 hover:text-foreground transition-colors p-1 rounded"
+          title={t.copyCode}
         >
           {copied ? (
             <>
-              <Check className="w-3 h-3 text-green-400" />
-              <span className="text-green-400 text-[10px]">Copiado</span>
+              <Check className="w-3 h-3 text-success" />
+              <span className="text-success text-[10px]">{t.copied}</span>
             </>
           ) : (
             <>
               <Copy className="w-3 h-3" />
-              <span className="text-[10px]">Copiar</span>
+              <span className="text-[10px]">{t.copy}</span>
             </>
           )}
         </button>
       </div>
-      <pre className="p-3.5 font-ui text-[12.5px] leading-relaxed text-[#e6e6e6] overflow-x-auto selection:bg-[#383838]">
+      <pre className="p-3.5 font-ui text-[12.5px] leading-relaxed text-foreground overflow-x-auto selection:bg-border">
         <code>{children}</code>
       </pre>
     </div>
@@ -119,80 +121,81 @@ export function LessonProse({
   onSelectCitation,
   className = "",
 }: LessonProseProps) {
+  const { t } = useLocale();
   const processedContent = useMemo(
     () => preprocessCitations(content, sourceName),
     [content, sourceName]
   );
 
   return (
-    <div className={`lesson-prose select-text font-prose text-[16px] text-[#e6e6e6] leading-[1.65] ${className}`}>
+    <div className={`lesson-prose select-text font-prose text-[16px] text-foreground leading-[1.65] ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
           h1: ({ children }) => (
-            <h1 className="font-title font-bold text-2xl md:text-3xl text-[#e6e6e6] mt-7 mb-3 tracking-tight">
+            <h1 className="font-title font-bold text-2xl md:text-3xl text-foreground mt-7 mb-3 tracking-tight">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="font-title font-bold text-xl md:text-2xl text-[#e6e6e6] mt-6 mb-2.5 pb-1 border-b border-[#2a2a2a] tracking-tight">
+            <h2 className="font-title font-bold text-xl md:text-2xl text-foreground mt-6 mb-2.5 pb-1 border-b border-accent tracking-tight">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="font-title font-bold text-lg md:text-xl text-[#e6e6e6] mt-5 mb-2 tracking-tight">
+            <h3 className="font-title font-bold text-lg md:text-xl text-foreground mt-5 mb-2 tracking-tight">
               {children}
             </h3>
           ),
           h4: ({ children }) => (
-            <h4 className="font-title font-bold text-base text-[#e6e6e6] mt-4 mb-1.5 tracking-tight">
+            <h4 className="font-title font-bold text-base text-foreground mt-4 mb-1.5 tracking-tight">
               {children}
             </h4>
           ),
           p: ({ children }) => (
-            <p className="my-3 font-prose text-[16px] leading-[1.65] text-[#e6e6e6]">
+            <p className="my-3 font-prose text-[16px] leading-[1.65] text-foreground">
               {children}
             </p>
           ),
           ul: ({ children }) => (
-            <ul className="my-3 pl-5 list-disc space-y-1 font-prose text-[16px] leading-[1.6] text-[#e6e6e6]">
+            <ul className="my-3 pl-5 list-disc space-y-1 font-prose text-[16px] leading-[1.6] text-foreground">
               {children}
             </ul>
           ),
           ol: ({ children }) => (
-            <ol className="my-3 pl-5 list-decimal space-y-1 font-prose text-[16px] leading-[1.6] text-[#e6e6e6]">
+            <ol className="my-3 pl-5 list-decimal space-y-1 font-prose text-[16px] leading-[1.6] text-foreground">
               {children}
             </ol>
           ),
           li: ({ children }) => (
-            <li className="text-[#e6e6e6] my-0.5">{children}</li>
+            <li className="text-foreground my-0.5">{children}</li>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="my-3 pl-4 border-l-2 border-[#434343] text-[#8d8d8d] italic font-prose">
+            <blockquote className="my-3 pl-4 border-l-2 border-border text-muted-foreground italic font-prose">
               {children}
             </blockquote>
           ),
-          hr: () => <hr className="border-[#2a2a2a] my-6" />,
+          hr: () => <hr className="border-accent my-6" />,
           table: ({ children }) => (
-            <div className="overflow-x-auto my-4 border border-[#434343] rounded bg-[#1c1c1c]">
+            <div className="overflow-x-auto my-4 border border-border rounded bg-card">
               <table className="w-full text-left font-prose border-collapse text-sm">
                 {children}
               </table>
             </div>
           ),
           thead: ({ children }) => (
-            <thead className="bg-[#141414] border-b border-[#434343]">
+            <thead className="bg-background border-b border-border">
               {children}
             </thead>
           ),
           th: ({ children }) => (
-            <th className="px-3 py-2 font-ui text-[11px] font-semibold text-[#8d8d8d] uppercase tracking-wider">
+            <th className="px-3 py-2 font-ui text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="px-3 py-2 border-b border-[#2a2a2a] text-[#e6e6e6] text-[14px]">
+            <td className="px-3 py-2 border-b border-accent text-foreground text-[14px]">
               {children}
             </td>
           ),
@@ -208,7 +211,7 @@ export function LessonProse({
           }) => {
             if (inline) {
               return (
-                <code className="px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#434343] font-ui text-[12px] text-[#e6e6e6] mx-0.5">
+                <code className="px-1.5 py-0.5 rounded bg-card border border-border font-ui text-[12px] text-foreground mx-0.5">
                   {children}
                 </code>
               );
@@ -233,7 +236,7 @@ export function LessonProse({
               const resolvedSource =
                 rawSource && rawSource !== "default"
                   ? decodeURIComponent(rawSource)
-                  : sourceName || "Fonte";
+                  : sourceName || t.sourceFallback;
 
               return (
                 <button
@@ -245,11 +248,11 @@ export function LessonProse({
                       onSelectCitation(resolvedSource, paragraphId);
                     }
                   }}
-                  className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] text-[11px] font-ui transition-colors cursor-pointer select-none align-baseline group active:scale-95"
-                  title={`Ver fonte original: ${resolvedSource} (#^${paragraphId})`}
+                  className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11px] font-ui transition-colors cursor-pointer select-none align-baseline group active:scale-95"
+                  title={t.viewSource(resolvedSource, paragraphId)}
                 >
-                  <span className="text-[#8d8d8d] group-hover:text-[#e6e6e6]">#^</span>
-                  <span className="font-semibold text-[#e6e6e6]">
+                  <span className="text-muted-foreground group-hover:text-foreground">#^</span>
+                  <span className="font-semibold text-foreground">
                     {paragraphId.replace(/^p/, "p")}
                   </span>
                 </button>
@@ -263,8 +266,8 @@ export function LessonProse({
               );
               return (
                 <span
-                  className="inline-block text-[#e6e6e6] underline decoration-dotted decoration-[#434343] hover:decoration-[#e6e6e6] font-medium cursor-help mx-0.5"
-                  title={`Nota do Conceito no Vault: [[${conceptName}]]`}
+                  className="inline-block text-foreground underline decoration-dotted decoration-border hover:decoration-foreground font-medium cursor-help mx-0.5"
+                  title={t.conceptNoteTitle(conceptName)}
                 >
                   {children}
                 </span>
@@ -277,7 +280,7 @@ export function LessonProse({
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[#e6e6e6] underline decoration-[#434343] hover:decoration-[#e6e6e6] transition-colors"
+                className="text-foreground underline decoration-border hover:decoration-foreground transition-colors"
                 {...props}
               >
                 {children}

@@ -111,7 +111,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       setError(null);
     } catch (err: any) {
       console.error("Failed to fetch session:", err);
-      setError(err?.message || "Sessão não encontrada.");
+      setError(err?.message || t.sessionNotFound);
     } finally {
       setLoading(false);
     }
@@ -152,7 +152,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Reconhecimento de voz não suportado neste navegador.");
+      alert(t.speechUnsupported);
       return;
     }
 
@@ -243,7 +243,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       const drawing = await createDrawing({
         title: session.title || session.topic,
         session_id: session.id,
-        prompt: `Desenhe de memória a arquitetura, equações e fluxo lógico aprendido na aula: ${session.title}`,
+        prompt: t.drawLessonPrompt(session.title),
       });
       router.push(`/draw/${drawing.slug}`);
     } catch (err: any) {
@@ -264,8 +264,8 @@ export default function ChatPage({ params }: ChatPageProps) {
 
     if (session.mode === "PRACTICE") {
       return (
-        <span className="px-2 py-0.5 rounded bg-[#2a2a2a] border border-[#434343] font-ui text-[10.5px] text-[#e6e6e6] tracking-wide uppercase font-semibold">
-          ◇ PRACTICE · Hint Ladder R0–R5
+        <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-foreground tracking-wide uppercase font-semibold">
+          {t.badgePractice}
         </span>
       );
     }
@@ -275,9 +275,9 @@ export default function ChatPage({ params }: ChatPageProps) {
       session.source_file
     ) {
       return (
-        <span className="px-2 py-0.5 rounded bg-[#2a2a2a] border border-[#434343] font-ui text-[10.5px] text-[#e6e6e6] tracking-wide uppercase font-semibold flex items-center gap-1">
-          <FileText className="w-3 h-3 text-[#e0a030]" />
-          TEACH · Fonte Densa
+        <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-foreground tracking-wide uppercase font-semibold flex items-center gap-1">
+          <FileText className="w-3 h-3 text-warning" />
+          {t.badgeDense}
         </span>
       );
     }
@@ -287,16 +287,16 @@ export default function ChatPage({ params }: ChatPageProps) {
       session.track_item_id
     ) {
       return (
-        <span className="px-2 py-0.5 rounded bg-[#2a2a2a] border border-[#434343] font-ui text-[10.5px] text-[#e6e6e6] tracking-wide uppercase font-semibold flex items-center gap-1">
-          <Compass className="w-3 h-3 text-[#e0a030]" />
-          TEACH · Trilha 2:1
+        <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-foreground tracking-wide uppercase font-semibold flex items-center gap-1">
+          <Compass className="w-3 h-3 text-warning" />
+          {t.badgeTrack}
         </span>
       );
     }
 
     return (
-      <span className="px-2 py-0.5 rounded bg-[#2a2a2a] border border-[#434343] font-ui text-[10.5px] text-[#8d8d8d] tracking-wide uppercase font-semibold">
-        TEACH · Tópico Livre
+      <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-muted-foreground tracking-wide uppercase font-semibold">
+        {t.badgeFree}
       </span>
     );
   };
@@ -308,10 +308,10 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-3 text-[#8d8d8d]">
-        <Loader2 className="w-6 h-6 animate-spin text-[#e6e6e6]" />
+      <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-3 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin text-foreground" />
         <span className="font-ui text-xs tracking-wider">
-          Carregando Sessão da Sala de Aula...
+          {t.sessionLoading}
         </span>
       </div>
     );
@@ -320,13 +320,13 @@ export default function ChatPage({ params }: ChatPageProps) {
   if (error || !session) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4 p-6 text-center">
-        <p className="text-red-400 font-ui text-sm">{error || "Sessão não encontrada"}</p>
+        <p className="text-danger font-ui text-sm">{error || t.sessionNotFound}</p>
         <Link
           href="/"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] text-xs font-ui text-[#e6e6e6]"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border text-xs font-ui text-foreground"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Voltar para a Home</span>
+          <span>{t.backHome}</span>
         </Link>
       </div>
     );
@@ -339,32 +339,33 @@ export default function ChatPage({ params }: ChatPageProps) {
   const isTeaching = execStatus === "queued" || execStatus === "running";
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#141414] relative">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background relative">
       {/* 1. Top Classroom Bar */}
-      <header className="px-5 py-3 border-b border-[#434343] bg-[#141414] shrink-0 flex flex-wrap items-center justify-between gap-3 z-20">
+      <header className="px-5 py-3 border-b border-border bg-background shrink-0 flex flex-wrap items-center justify-between gap-3 z-20">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/"
-            className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] transition-colors rounded hover:bg-[#1c1c1c]"
-            title="Voltar para a Home"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-card"
+            title={t.backHome}
+            aria-label={t.backHome}
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
 
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="font-title font-bold text-lg md:text-xl text-[#e6e6e6] truncate">
+              <h1 className="font-title font-bold text-lg md:text-xl text-foreground truncate">
                 {session.title || session.topic}
               </h1>
               {renderContextBadge()}
             </div>
 
-            <div className="flex items-center gap-2 text-[11px] font-ui text-[#8d8d8d] mt-0.5">
-              <span>Vault: <code>Aulas/{vaultNoteName}.md</code></span>
+            <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5">
+              <span>{t.vaultLabel} <code>{t.lessonsFolder}/{vaultNoteName}.md</code></span>
               {session.source_file && (
                 <>
                   <span>·</span>
-                  <span className="truncate">Fonte: <code>Fontes/{session.source_file}</code></span>
+                  <span className="truncate">{t.sourceLabel} <code>{t.sourcesFolder}/{session.source_file}</code></span>
                 </>
               )}
             </div>
@@ -377,30 +378,30 @@ export default function ChatPage({ params }: ChatPageProps) {
             type="button"
             onClick={handleSpawnDemo}
             disabled={isSpawningDemo}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
-            title="Gerar simulador interativo HTML5/Canvas em viz/demos/"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
+            title={t.demoButtonTitle}
           >
             {isSpawningDemo ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-[#34d399]" />
+              <Sparkles className="w-3.5 h-3.5 text-success" />
             )}
-            <span>⚡ Simulador</span>
+            <span>{t.demoButton}</span>
           </button>
 
           <button
             type="button"
             onClick={handleOpenDrawing}
             disabled={isCreatingDrawing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
-            title="Criar folha em branco de desenho de memória no Excalidraw"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
+            title={t.drawFromMemoryTitle}
           >
             {isCreatingDrawing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Edit3 className="w-3.5 h-3.5 text-[#e0a030]" />
+              <Edit3 className="w-3.5 h-3.5 text-warning" />
             )}
-            <span>✎ Desenhar de Memória</span>
+            <span>{t.drawFromMemory}</span>
           </button>
         </div>
       </header>
@@ -421,8 +422,8 @@ export default function ChatPage({ params }: ChatPageProps) {
           />
         )}
         {session.messages.length === 0 ? (
-          <div className="py-16 text-center text-[#8d8d8d] font-prose text-base">
-            Iniciando aula... O professor está estruturando a explicação.
+          <div className="py-16 text-center text-muted-foreground font-prose text-base">
+            {t.lessonStarting}
           </div>
         ) : (
           session.messages.map((message) => {
@@ -434,9 +435,9 @@ export default function ChatPage({ params }: ChatPageProps) {
                   key={message.id}
                   className="flex justify-end my-2"
                 >
-                  <div className="max-w-[85%] rounded-lg bg-[#222222] border border-[#434343] p-3.5 text-[#e6e6e6] font-prose text-[15.5px] leading-relaxed shadow-sm">
-                    <span className="font-ui text-[10px] text-[#8d8d8d] uppercase tracking-wider block mb-1">
-                      Você
+                  <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm">
+                    <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
+                      {t.you}
                     </span>
                     {message.content}
                   </div>
@@ -450,13 +451,13 @@ export default function ChatPage({ params }: ChatPageProps) {
                 key={message.id}
                 className="my-3 flex flex-col gap-2"
               >
-                <div className="flex items-center justify-between text-[11px] font-ui text-[#8d8d8d] border-b border-[#222222] pb-1 select-none">
+                <div className="flex items-center justify-between text-[11px] font-ui text-muted-foreground border-b border-accent pb-1 select-none">
                   <span className="tracking-wider uppercase font-semibold">
-                    PROFESSOR HARNESS
+                    {t.teacherHarness}
                   </span>
                   {message.phase && (
-                    <span className="capitalize text-[10px] px-1.5 py-0.2 bg-[#1c1c1c] border border-[#2a2a2a] rounded">
-                      Fase: {message.phase}
+                    <span className="capitalize text-[10px] px-1.5 py-0.2 bg-card border border-accent rounded">
+                      {t.phase(message.phase)}
                     </span>
                   )}
                 </div>
@@ -490,16 +491,16 @@ export default function ChatPage({ params }: ChatPageProps) {
 
       {/* 4a. Run-state strip: recovery banner / teaching indicator / inline errors */}
       {(needsRecovery || isTeaching || actionError) && (
-        <div className="px-4 pt-3 bg-[#141414] shrink-0 z-20">
+        <div className="px-4 pt-3 bg-background shrink-0 z-20">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {needsRecovery && (
               <div
                 role="alert"
-                className="flex flex-wrap items-start gap-3 p-3 rounded border border-[#f87171]/50 bg-[#1c1c1c]"
+                className="flex flex-wrap items-start gap-3 p-3 rounded border border-danger/50 bg-card"
               >
-                <AlertTriangle className="w-4 h-4 text-[#f87171] shrink-0 mt-0.5" />
+                <AlertTriangle className="w-4 h-4 text-danger shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0 flex flex-col gap-1">
-                  <span className="font-ui text-[12.5px] text-[#e6e6e6]">
+                  <span className="font-ui text-[12.5px] text-foreground">
                     {session.recovery_required
                       ? t.sessionRecovery
                       : execStatus === "interrupted"
@@ -507,7 +508,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                       : t.sessionFailed}
                   </span>
                   {session.error && (
-                    <code className="font-ui text-[11px] text-[#8d8d8d] break-words whitespace-pre-wrap">
+                    <code className="font-ui text-[11px] text-muted-foreground break-words whitespace-pre-wrap">
                       {session.error}
                     </code>
                   )}
@@ -518,7 +519,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                       type="button"
                       onClick={() => void handleResume(false)}
                       disabled={isResuming}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2a2a2a] hover:bg-[#434343] border border-[#434343] text-[#e6e6e6] text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-[#8d8d8d]"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent hover:bg-border border border-border text-foreground text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-muted-foreground"
                     >
                       {isResuming ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -533,7 +534,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                       type="button"
                       onClick={() => void handleResume(true)}
                       disabled={isResuming}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#2a2a2a] hover:bg-[#434343] border border-[#434343] text-[#e6e6e6] text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-[#8d8d8d]"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent hover:bg-border border border-border text-foreground text-[11px] font-ui font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-muted-foreground"
                     >
                       {isResuming ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -551,7 +552,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               <div
                 role="status"
                 aria-live="polite"
-                className="flex items-center gap-2 font-ui text-[11px] text-[#8d8d8d]"
+                className="flex items-center gap-2 font-ui text-[11px] text-muted-foreground"
               >
                 <Loader2 className="w-3 h-3 animate-spin" />
                 <span>{execStatus === "queued" ? t.queued : t.teaching}</span>
@@ -561,14 +562,14 @@ export default function ChatPage({ params }: ChatPageProps) {
             {actionError && (
               <div
                 role="alert"
-                className="flex items-start gap-2 font-ui text-[11px] text-[#f87171]"
+                className="flex items-start gap-2 font-ui text-[11px] text-danger"
               >
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
                 <span className="flex-1 break-words">{actionError}</span>
                 <button
                   type="button"
                   onClick={() => setActionError(null)}
-                  className="text-[#8d8d8d] hover:text-[#e6e6e6] underline cursor-pointer shrink-0"
+                  className="text-muted-foreground hover:text-foreground underline cursor-pointer shrink-0"
                 >
                   {t.dismiss}
                 </button>
@@ -579,7 +580,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       )}
 
       {/* 4b. Bottom Follow-up Input Bar */}
-      <footer className="px-4 py-3 bg-[#141414] border-t border-[#434343] shrink-0 z-20">
+      <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
         <form
           onSubmit={handleSendMessage}
           className="max-w-4xl mx-auto flex items-center gap-2"
@@ -590,13 +591,14 @@ export default function ChatPage({ params }: ChatPageProps) {
               onClick={handleToggleDictation}
               className={`p-2.5 rounded border transition-colors cursor-pointer shrink-0 ${
                 isListening
-                  ? "bg-red-950/40 text-red-300 border-red-500 animate-pulse"
-                  : "bg-[#1c1c1c] hover:bg-[#2a2a2a] text-[#8d8d8d] hover:text-[#e6e6e6] border-[#434343]"
+                  ? "bg-danger/10 text-danger border-danger animate-pulse"
+                  : "bg-card hover:bg-accent text-muted-foreground hover:text-foreground border-border"
               }`}
-              title="Ditar mensagem por voz"
+              title={t.dictateMessage}
+              aria-label={t.dictateMessage}
             >
               {isListening ? (
-                <MicOff className="w-4 h-4 text-red-400" />
+                <MicOff className="w-4 h-4 text-danger" />
               ) : (
                 <Mic className="w-4 h-4" />
               )}
@@ -610,11 +612,11 @@ export default function ChatPage({ params }: ChatPageProps) {
               onChange={(e) => setInputMessage(e.target.value)}
               placeholder={
                 isWaitingQuiz
-                  ? "Responda ao quiz acima no QuestionDock para avançar a aula..."
-                  : "Pergunte, peça um exemplo alternativo ou aprofunde a teoria..."
+                  ? t.answerQuizFirst
+                  : t.followUpPlaceholder
               }
               disabled={isSending}
-              className="w-full bg-[#1c1c1c] border border-[#434343] rounded-lg px-4 py-2.5 text-sm font-prose text-[#e6e6e6] placeholder-[#8d8d8d] focus:border-[#e6e6e6] transition-colors"
+              className="w-full bg-card border border-border rounded-lg px-4 py-2.5 text-sm font-prose text-foreground placeholder-muted-foreground focus:border-foreground transition-colors"
             />
           </div>
 
@@ -623,10 +625,11 @@ export default function ChatPage({ params }: ChatPageProps) {
             disabled={!inputMessage.trim() || isSending}
             className={`p-2.5 rounded-lg border font-ui text-xs uppercase tracking-wider font-semibold transition-all cursor-pointer shrink-0 ${
               !inputMessage.trim() || isSending
-                ? "bg-[#1c1c1c] border-[#2a2a2a] text-[#8d8d8d] cursor-not-allowed"
-                : "bg-[#2a2a2a] hover:bg-[#383838] border-[#434343] text-white active:scale-95"
+                ? "bg-card border-accent text-muted-foreground cursor-not-allowed"
+                : "bg-accent hover:bg-border border-border text-foreground active:scale-95"
             }`}
-            title="Enviar mensagem"
+            title={t.sendMessage}
+            aria-label={t.sendMessage}
           >
             {isSending ? (
               <Loader2 className="w-4 h-4 animate-spin" />

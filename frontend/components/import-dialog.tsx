@@ -115,7 +115,7 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -126,25 +126,25 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
         aria-modal="true"
         aria-labelledby="import-dialog-title"
         tabIndex={-1}
-        className="w-full max-w-4xl h-[80vh] flex flex-col rounded-xl border border-[#434343] bg-[#1c1c1c] shadow-2xl font-ui"
+        className="w-full max-w-4xl h-[80vh] flex flex-col rounded-xl border border-border bg-card shadow-2xl font-ui"
       >
-        <header className="flex items-start justify-between gap-4 px-4 py-3 border-b border-[#2a2a2a]">
+        <header className="flex items-start justify-between gap-4 px-4 py-3 border-b border-accent">
           <div className="flex items-start gap-3">
-            <div className="p-2 rounded-md border border-[#434343] bg-[#2a2a2a]">
-              <Upload className="w-4 h-4 text-[#e6e6e6]" aria-hidden />
+            <div className="p-2 rounded-md border border-border bg-accent">
+              <Upload className="w-4 h-4 text-foreground" aria-hidden />
             </div>
             <div>
-              <h2 id="import-dialog-title" className="font-title text-lg font-bold text-[#e6e6e6] leading-6">
+              <h2 id="import-dialog-title" className="font-title text-lg font-bold text-foreground leading-6">
                 {t.impTitle}
               </h2>
-              <p className="text-[11px] text-[#8d8d8d]">{t.impSubtitle}</p>
+              <p className="text-[11px] text-muted-foreground">{t.impSubtitle}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label={t.close}
-            className="p-1 rounded-md text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] focus-visible:text-[#e6e6e6] focus-visible:bg-[#2a2a2a] cursor-pointer"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:text-foreground focus-visible:bg-accent cursor-pointer"
           >
             <X className="w-4 h-4" aria-hidden />
           </button>
@@ -154,7 +154,7 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
           role="tablist"
           aria-label={t.impSources}
           onKeyDown={onTabKey}
-          className="flex items-center gap-1 px-4 border-b border-[#2a2a2a] bg-[#141414]"
+          className="flex items-center gap-1 px-4 border-b border-accent bg-background"
         >
           {TABS.map((id) => {
             const { label, Icon } = tabMeta[id];
@@ -175,14 +175,14 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
                 className={cx(
                   "flex items-center gap-2 px-3 py-2 border-b-2 text-[12.5px] cursor-pointer transition-colors",
                   active
-                    ? "border-[#e6e6e6] text-[#e6e6e6]"
-                    : "border-transparent text-[#8d8d8d] hover:text-[#e6e6e6] focus-visible:text-[#e6e6e6]"
+                    ? "border-foreground text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground focus-visible:text-foreground"
                 )}
               >
                 <Icon className="w-3 h-3" aria-hidden />
                 <span>{label}</span>
                 {id === "mcp" && enabledCount > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-[#34d399]" aria-hidden />
+                  <span className="w-2 h-2 rounded-full bg-success" aria-hidden />
                 )}
               </button>
             );
@@ -196,7 +196,7 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
             </div>
           )}
 
-          {servers === null && <p className="p-4 text-[11px] text-[#8d8d8d]">{t.impLoading}</p>}
+          {servers === null && <p className="p-4 text-[11px] text-muted-foreground">{t.impLoading}</p>}
 
           {visited.has("mcp") && servers !== null && (
             <div

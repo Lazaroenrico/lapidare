@@ -83,9 +83,9 @@ export function McpItemsBrowser({
   };
 
   return (
-    <div className="space-y-3 border-t border-[#2a2a2a] pt-3">
+    <div className="space-y-3 border-t border-accent pt-3">
       <div className="relative">
-        <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-[#8d8d8d]" aria-hidden />
+        <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <label htmlFor="mcp-filter" className="sr-only">
           {t.impFilterLabel}
         </label>
@@ -99,7 +99,7 @@ export function McpItemsBrowser({
         />
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-[#8d8d8d] font-ui">
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground font-ui">
         <span>{t.impSelected(selected.size)}</span>
         <span className="flex gap-1">
           <Btn
@@ -121,14 +121,14 @@ export function McpItemsBrowser({
         role="group"
         aria-label={server.name}
         onKeyDown={handleListKeys}
-        className="max-h-72 overflow-y-auto rounded-md border border-[#2a2a2a] divide-y divide-[#2a2a2a]"
+        className="max-h-72 overflow-y-auto rounded-md border border-accent divide-y divide-accent"
       >
         {loading ? (
-          <p className="p-3 text-[11px] text-[#8d8d8d] font-ui">{t.impLoading}</p>
+          <p className="p-3 text-[11px] text-muted-foreground font-ui">{t.impLoading}</p>
         ) : items.length === 0 ? (
-          <p className="p-3 text-[11px] text-[#8d8d8d] font-ui">{t.impNoItems}</p>
+          <p className="p-3 text-[11px] text-muted-foreground font-ui">{t.impNoItems}</p>
         ) : visible.length === 0 ? (
-          <p className="p-3 text-[11px] text-[#8d8d8d] font-ui">{t.impNoMatch}</p>
+          <p className="p-3 text-[11px] text-muted-foreground font-ui">{t.impNoMatch}</p>
         ) : (
           visible.map((item) => {
             const id = `mcp-item-${item.id}`;
@@ -139,7 +139,7 @@ export function McpItemsBrowser({
                 htmlFor={id}
                 className={cx(
                   "flex items-start gap-2 px-3 py-2 cursor-pointer transition-colors",
-                  isSel ? "bg-[#2a2a2a]" : "hover:bg-[#141414]"
+                  isSel ? "bg-accent" : "hover:bg-background"
                 )}
               >
                 <input
@@ -148,16 +148,16 @@ export function McpItemsBrowser({
                   type="checkbox"
                   checked={isSel}
                   onChange={() => toggle(item.id)}
-                  className="mt-1 accent-[#e6e6e6] cursor-pointer"
+                  className="mt-1 accent-foreground cursor-pointer"
                 />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
-                    <span className="font-ui text-[12.5px] text-[#e6e6e6] truncate">{item.title}</span>
+                    <span className="font-ui text-[12.5px] text-foreground truncate">{item.title}</span>
                     {item.is_new && <Badge tone="new">{t.impNew}</Badge>}
                     {item.kind && <Badge>{item.kind}</Badge>}
                   </span>
                   {item.description && (
-                    <span className="block font-prose text-[12.5px] text-[#8d8d8d] line-clamp-2">
+                    <span className="block font-prose text-[12.5px] text-muted-foreground line-clamp-2">
                       {item.description}
                     </span>
                   )}

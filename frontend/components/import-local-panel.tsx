@@ -87,7 +87,7 @@ export function LocalImportPanel({ onImported }: { onImported: (result: ImportRe
 
   return (
     <div className="space-y-3">
-      <div role="radiogroup" aria-label={t.impSources} className="inline-flex rounded-md border border-[#434343] p-0.5 bg-[#141414]">
+      <div role="radiogroup" aria-label={t.impSources} className="inline-flex rounded-md border border-border p-0.5 bg-background">
         {(["file", "paste"] as Mode[]).map((m) => (
           <button
             key={m}
@@ -101,7 +101,7 @@ export function LocalImportPanel({ onImported }: { onImported: (result: ImportRe
             }}
             className={cx(
               "px-3 py-0.5 rounded font-ui text-[11px] cursor-pointer transition-colors",
-              mode === m ? "bg-[#2a2a2a] text-[#e6e6e6]" : "text-[#8d8d8d] hover:text-[#e6e6e6] focus-visible:text-[#e6e6e6]"
+              mode === m ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground focus-visible:text-foreground"
             )}
           >
             {m === "file" ? t.locModeFile : t.locModePaste}
@@ -109,7 +109,7 @@ export function LocalImportPanel({ onImported }: { onImported: (result: ImportRe
         ))}
       </div>
 
-      <p className="font-ui text-[11px] text-[#8d8d8d]">{t.locReadonly}</p>
+      <p className="font-ui text-[11px] text-muted-foreground">{t.locReadonly}</p>
 
       {mode === "file" ? (
         <form onSubmit={submitFile} className="space-y-3">
@@ -137,23 +137,23 @@ export function LocalImportPanel({ onImported }: { onImported: (result: ImportRe
             className={cx(
               "flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 cursor-pointer transition-colors text-center",
               dragging
-                ? "border-[#e6e6e6] bg-[#2a2a2a]"
-                : "border-[#434343] bg-[#141414] hover:border-[#8d8d8d] focus-visible:border-[#e6e6e6]"
+                ? "border-foreground bg-accent"
+                : "border-border bg-background hover:border-muted-foreground focus-visible:border-foreground"
             )}
           >
             {file ? (
               <>
-                <FileText className="w-5 h-5 text-[#e6e6e6]" aria-hidden />
-                <span className="font-ui text-[12.5px] text-[#e6e6e6]">{file.name}</span>
-                <span className="font-ui text-[11px] text-[#8d8d8d]">
+                <FileText className="w-5 h-5 text-foreground" aria-hidden />
+                <span className="font-ui text-[12.5px] text-foreground">{file.name}</span>
+                <span className="font-ui text-[11px] text-muted-foreground">
                   {(file.size / 1024).toFixed(1)} KB · {t.locChangeFile}
                 </span>
               </>
             ) : (
               <>
-                <Upload className="w-5 h-5 text-[#8d8d8d]" aria-hidden />
-                <span className="font-ui text-[12.5px] text-[#e6e6e6]">{t.locDrop}</span>
-                <span className="font-ui text-[11px] text-[#8d8d8d]">{t.locAccept}</span>
+                <Upload className="w-5 h-5 text-muted-foreground" aria-hidden />
+                <span className="font-ui text-[12.5px] text-foreground">{t.locDrop}</span>
+                <span className="font-ui text-[11px] text-muted-foreground">{t.locAccept}</span>
               </>
             )}
             <input
@@ -209,7 +209,7 @@ export function LocalImportPanel({ onImported }: { onImported: (result: ImportRe
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder={t.locContentPh}
-              className="w-full bg-[#141414] border border-[#434343] focus:border-[#8d8d8d] rounded-md px-3 py-2 font-prose text-base leading-6 text-[#e6e6e6] placeholder-[#8d8d8d] resize-none"
+              className="w-full bg-background border border-border focus:border-muted-foreground rounded-md px-3 py-2 font-prose text-base leading-6 text-foreground placeholder-muted-foreground resize-none"
             />
           </Field>
 

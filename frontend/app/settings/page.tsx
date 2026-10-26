@@ -65,9 +65,7 @@ export default function SettingsPage() {
 
   const [trackMode, setTrackMode] = useState<TrackMode>("free");
   const [trackRepoPath, setTrackRepoPath] = useState<string>(DEFAULT_REPO_PATH);
-  const [goalDescription, setGoalDescription] = useState<string>(
-    "Dominar Engenharia de IA de ponta a ponta: Transformers, RLHF, RAG e Sistemas Multi-Agente."
-  );
+  const [goalDescription, setGoalDescription] = useState<string>(t.defaultGoal);
 
   const loadSettings = async () => {
     setLoading(true);
@@ -91,7 +89,7 @@ export default function SettingsPage() {
       console.error("Failed to load settings:", err);
       setStatusMessage({
         type: "error",
-        text: "Não foi possível carregar a configuração do backend.",
+        text: t.settingsLoadFailed,
       });
     } finally {
       setLoading(false);
@@ -151,18 +149,18 @@ export default function SettingsPage() {
         setApiKey("");
         setStatusMessage({
           type: "success",
-          text: "Configurações gravadas com sucesso no Vault (.harness/config.json).",
+          text: t.settingsSaved,
         });
       } else {
         setStatusMessage({
           type: "error",
-          text: "Erro ao gravar as configurações.",
+          text: t.settingsSaveFailed,
         });
       }
     } catch (err: unknown) {
       setStatusMessage({
         type: "error",
-        text: err instanceof Error ? err.message : "Falha na requisição.",
+        text: err instanceof Error ? err.message : t.requestFailed,
       });
     } finally {
       setSaving(false);
@@ -170,23 +168,24 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex-1 min-h-screen bg-[#141414] text-[#e6e6e6] flex flex-col font-prose overflow-y-auto">
+    <div className="flex-1 min-h-screen bg-background text-foreground flex flex-col font-prose overflow-y-auto">
       {/* Top Bar */}
-      <header className="p-4 border-b border-[#434343] bg-[#141414] flex items-center justify-between sticky top-0 z-20">
+      <header className="p-4 border-b border-border bg-background flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <Link
             href="/"
-            className="p-1.5 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#1c1c1c] rounded transition-colors"
-            title="Voltar para a Home"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-card rounded transition-colors"
+            title={t.backHome}
+            aria-label={t.backHome}
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <div>
-            <h1 className="font-title text-lg font-bold text-white tracking-wide">
+            <h1 className="font-title text-lg font-bold text-foreground tracking-wide">
               {t.settings}
             </h1>
-            <p className="text-[11px] font-ui text-[#8d8d8d]">
-              Conectores Google, Vault Obsidian, Trilha e Servidores MCP
+            <p className="text-[11px] font-ui text-muted-foreground">
+              {t.settingsSubtitle}
             </p>
           </div>
         </div>
@@ -196,8 +195,9 @@ export default function SettingsPage() {
             type="button"
             onClick={loadSettings}
             disabled={loading || saving}
-            className="p-2 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#1c1c1c] rounded border border-[#434343] cursor-pointer transition-colors"
-            title="Recarregar do servidor"
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-card rounded border border-border cursor-pointer transition-colors"
+            title={t.reloadFromServer}
+            aria-label={t.reloadFromServer}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -206,17 +206,17 @@ export default function SettingsPage() {
             type="button"
             onClick={handleSave}
             disabled={saving || loading}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-white text-black font-ui text-xs font-semibold rounded hover:bg-[#e6e6e6] cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-foreground text-background font-ui text-xs font-semibold rounded hover:bg-foreground/90 cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
           >
             {saving ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Gravando...</span>
+                <span>{t.saving}</span>
               </>
             ) : (
               <>
                 <Save className="w-3.5 h-3.5" />
-                <span>Salvar Alterações</span>
+                <span>{t.saveChanges}</span>
               </>
             )}
           </button>
@@ -229,72 +229,72 @@ export default function SettingsPage() {
           <div
             className={`p-3 rounded border text-xs font-ui flex items-center gap-2 ${
               statusMessage.type === "success"
-                ? "bg-green-950/40 border-green-800 text-green-200"
-                : "bg-red-950/40 border-red-800 text-red-200"
+                ? "bg-success/10 border-success/40 text-success"
+                : "bg-danger/10 border-danger/40 text-danger"
             }`}
           >
             {statusMessage.type === "success" ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-green-400" />
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-success" />
             ) : (
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+              <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
             )}
             <span>{statusMessage.text}</span>
           </div>
         )}
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-[#434343] gap-2 font-ui text-xs">
+        <div className="flex border-b border-border gap-2 font-ui text-xs">
           <button
             type="button"
             onClick={() => setActiveTab("connectors")}
             className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
               activeTab === "connectors"
-                ? "border-white text-white"
-                : "border-transparent text-[#8d8d8d] hover:text-[#e6e6e6]"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            Conectores Google & Slots
+            {t.tabConnectors}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("vault")}
             className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
               activeTab === "vault"
-                ? "border-white text-white"
-                : "border-transparent text-[#8d8d8d] hover:text-[#e6e6e6]"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            Idioma & Vault Obsidian
+            {t.tabVault}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("mcp")}
             className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
               activeTab === "mcp"
-                ? "border-white text-white"
-                : "border-transparent text-[#8d8d8d] hover:text-[#e6e6e6]"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            MCP de Conteúdo
+            {t.tabMcp}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("track")}
             className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
               activeTab === "track"
-                ? "border-white text-white"
-                : "border-transparent text-[#8d8d8d] hover:text-[#e6e6e6]"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            Trilha de Aprendizado (Track)
+            {t.tabTrack}
           </button>
         </div>
 
         {/* Tab Content */}
         {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center gap-3 text-[#8d8d8d]">
+          <div className="py-20 flex flex-col items-center justify-center gap-3 text-muted-foreground">
             <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="font-ui text-xs">Carregando configurações...</span>
+            <span className="font-ui text-xs">{t.settingsLoading}</span>
           </div>
         ) : (
           <div className="space-y-6">
@@ -302,32 +302,31 @@ export default function SettingsPage() {
             {activeTab === "connectors" && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="font-title text-base font-bold text-white">
-                    Conectores do Ecossistema Google
+                  <h2 className="font-title text-base font-bold text-foreground">
+                    {t.connectorsHeading}
                   </h2>
-                  <p className="text-xs text-[#8d8d8d] mt-0.5">
-                    Utilize sua assinatura Google oficial (Google One AI Pro, AI
-                    Ultra ou Workspace Code Assist) via CLI ou fallback SDK.
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t.connectorsHint}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* agy */}
-                  <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-2">
+                  <div className="p-4 bg-card border border-border rounded space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Terminal className="w-4 h-4 text-white" />
-                        <span className="font-ui text-xs font-semibold text-white">
+                        <Terminal className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
                           Google Antigravity CLI (agy)
                         </span>
                       </div>
-                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-green-950/40 text-green-400 border border-green-800 rounded">
-                        Detectado
+                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-success/10 text-success border border-success/40 rounded">
+                        {t.detected}
                       </span>
                     </div>
-                    <p className="text-xs text-[#8d8d8d]">
-                      Executa nativamente Gemini 4 Argon e Gemini 3.8 Flash via{" "}
-                      <code className="text-[#e6e6e6] font-ui">
+                    <p className="text-xs text-muted-foreground">
+                      {t.agyDescription}{" "}
+                      <code className="text-foreground font-ui">
                         stream-json
                       </code>
                       .
@@ -335,60 +334,60 @@ export default function SettingsPage() {
                   </div>
 
                   {/* gemini-cli */}
-                  <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-2">
+                  <div className="p-4 bg-card border border-border rounded space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-white" />
-                        <span className="font-ui text-xs font-semibold text-white">
+                        <Cpu className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
                           @google/gemini-cli (ACP)
                         </span>
                       </div>
-                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-[#2a2a2a] text-[#8d8d8d] border border-[#434343] rounded">
+                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-accent text-muted-foreground border border-border rounded">
                         Login with Google
                       </span>
                     </div>
-                    <p className="text-xs text-[#8d8d8d]">
-                      Conexão direta JSON-RPC bidirecional via protocolo ACP.
+                    <p className="text-xs text-muted-foreground">
+                      {t.geminiCliDescription}
                     </p>
                   </div>
                 </div>
 
                 {/* API Key Fallback */}
-                <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-2.5">
+                <div className="p-4 bg-card border border-border rounded space-y-2.5">
                   <div className="flex items-center gap-2">
-                    <Key className="w-4 h-4 text-[#8d8d8d]" />
-                    <span className="font-ui text-xs font-semibold text-white">
+                    <Key className="w-4 h-4 text-muted-foreground" />
+                    <span className="font-ui text-xs font-semibold text-foreground">
                       Google AI Studio / Vertex AI (SDK Fallback)
                     </span>
                   </div>
-                  <p className="text-xs text-[#8d8d8d]">
-                    Caso os CLIs não estejam instalados, você pode fornecer uma chave
-                    de API para fallback direto com{" "}
-                    <code className="text-[#e6e6e6] font-ui">google-genai</code>.
+                  <p className="text-xs text-muted-foreground">
+                    {t.apiKeyHint}{" "}
+                    <code className="text-foreground font-ui">google-genai</code>.
                   </p>
                   <input
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Cole sua GEMINI_API_KEY aqui..."
-                    className="w-full bg-[#141414] border border-[#434343] rounded px-3 py-2 font-ui text-xs text-[#e6e6e6] placeholder-[#8d8d8d]"
+                    placeholder={t.apiKeyPlaceholder}
+                    aria-label={t.apiKeyPlaceholder}
+                    className="w-full bg-background border border-border rounded px-3 py-2 font-ui text-xs text-foreground placeholder-muted-foreground"
                   />
                 </div>
 
                 {/* Model Slot Configuration */}
-                <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-3">
-                  <span className="font-ui text-xs font-semibold text-white block uppercase tracking-wider">
-                    Alocação dos 3 Slots de Modelo
+                <div className="p-4 bg-card border border-border rounded space-y-3">
+                  <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
+                    {t.slotsHeading}
                   </span>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-ui text-xs">
                     {/* Strong Slot */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded space-y-2">
+                    <div className="p-3 bg-background border border-border rounded space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white">
+                        <span className="font-semibold text-foreground">
                           Strong Slot
                         </span>
-                        <span className="text-[9px] text-[#8d8d8d]">
+                        <span className="text-[9px] text-muted-foreground">
                           Teacher / Practice
                         </span>
                       </div>
@@ -403,14 +402,14 @@ export default function SettingsPage() {
                             },
                           }))
                         }
-                        className="w-full bg-[#1c1c1c] border border-[#434343] rounded p-1.5 text-xs text-[#e6e6e6]"
+                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
                       >
                         <option value="agy">agy (Argon)</option>
                         <option value="gemini">gemini-cli (ACP)</option>
                         <option value="sdk">google-genai SDK</option>
                       </select>
-                      <div className="flex items-center justify-between text-[11px] text-[#8d8d8d] pt-1">
-                        <span>Effort:</span>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                        <span>{t.effort}</span>
                         <select
                           value={slots.strong.effort || "high"}
                           onChange={(e) =>
@@ -422,7 +421,7 @@ export default function SettingsPage() {
                               },
                             }))
                           }
-                          className="bg-[#1c1c1c] border border-[#434343] rounded px-2 py-0.5 text-xs text-[#e6e6e6]"
+                          className="bg-card border border-border rounded px-2 py-0.5 text-xs text-foreground"
                         >
                           <option value="low">low</option>
                           <option value="medium">medium</option>
@@ -432,13 +431,13 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Fast Slot */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded space-y-2">
+                    <div className="p-3 bg-background border border-border rounded space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white">
+                        <span className="font-semibold text-foreground">
                           Fast Slot
                         </span>
-                        <span className="text-[9px] text-[#8d8d8d]">
-                          Títulos / Prober
+                        <span className="text-[9px] text-muted-foreground">
+                          {t.fastSlotRole}
                         </span>
                       </div>
                       <select
@@ -452,7 +451,7 @@ export default function SettingsPage() {
                             },
                           }))
                         }
-                        className="w-full bg-[#1c1c1c] border border-[#434343] rounded p-1.5 text-xs text-[#e6e6e6]"
+                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
                       >
                         <option value="agy">agy (Flash)</option>
                         <option value="gemini">gemini-cli (ACP)</option>
@@ -461,12 +460,12 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Background Slot */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded space-y-2">
+                    <div className="p-3 bg-background border border-border rounded space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white">
+                        <span className="font-semibold text-foreground">
                           Background Slot
                         </span>
-                        <span className="text-[9px] text-[#8d8d8d]">
+                        <span className="text-[9px] text-muted-foreground">
                           LangGraph Pipelines
                         </span>
                       </div>
@@ -481,7 +480,7 @@ export default function SettingsPage() {
                             },
                           }))
                         }
-                        className="w-full bg-[#1c1c1c] border border-[#434343] rounded p-1.5 text-xs text-[#e6e6e6]"
+                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
                       >
                         <option value="agy">agy (Flash)</option>
                         <option value="gemini">gemini-cli (ACP)</option>
@@ -497,20 +496,19 @@ export default function SettingsPage() {
             {activeTab === "vault" && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="font-title text-base font-bold text-white">
-                    Sincronização com o Vault Obsidian (UI ⇄ Vault)
+                  <h2 className="font-title text-base font-bold text-foreground">
+                    {t.vaultHeading}
                   </h2>
-                  <p className="text-xs text-[#8d8d8d] mt-0.5">
-                    Garantia de integridade absoluta: suas notas manuscritas e
-                    desenhos nunca são alterados ou sobrescritos.
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t.vaultHint}
                   </p>
                 </div>
 
                 {/* Language Switcher */}
-                <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-2.5">
-                  <label className="font-ui text-xs font-semibold text-white flex items-center gap-2">
-                    <Globe className="w-3.5 h-3.5 text-[#8d8d8d]" />
-                    Idioma do Sistema
+                <div className="p-4 bg-card border border-border rounded space-y-2.5">
+                  <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+                    <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                    {t.systemLanguage}
                   </label>
                   <div className="grid grid-cols-2 gap-3 font-ui text-xs">
                     <button
@@ -518,12 +516,12 @@ export default function SettingsPage() {
                       onClick={() => setLanguage("pt-br")}
                       className={`p-3 rounded border text-left cursor-pointer transition-colors ${
                         language === "pt-br"
-                          ? "bg-[#2a2a2a] border-white text-white"
-                          : "bg-[#141414] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6]"
+                          ? "bg-accent border-foreground text-foreground"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       <div className="font-semibold">Português (PT-BR)</div>
-                      <div className="text-[10px] text-[#8d8d8d] mt-0.5">
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
                         Aulas/, Conceitos/, Fontes/, 00 Mapa.md
                       </div>
                     </button>
@@ -533,12 +531,12 @@ export default function SettingsPage() {
                       onClick={() => setLanguage("en")}
                       className={`p-3 rounded border text-left cursor-pointer transition-colors ${
                         language === "en"
-                          ? "bg-[#2a2a2a] border-white text-white"
-                          : "bg-[#141414] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6]"
+                          ? "bg-accent border-foreground text-foreground"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       <div className="font-semibold">English (EN)</div>
-                      <div className="text-[10px] text-[#8d8d8d] mt-0.5">
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
                         Lessons/, Concepts/, Sources/, 00 Map.md
                       </div>
                     </button>
@@ -546,37 +544,37 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Vault Directory */}
-                <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-3">
-                  <label className="font-ui text-xs font-semibold text-white flex items-center gap-2">
-                    <FolderOpen className="w-3.5 h-3.5 text-[#8d8d8d]" />
-                    Diretório do Vault no Disco Local
+                <div className="p-4 bg-card border border-border rounded space-y-3">
+                  <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+                    <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                    {t.vaultDirectory}
                   </label>
                   <input
                     type="text"
                     value={vaultPath}
                     onChange={(e) => setVaultPath(e.target.value)}
-                    className="w-full bg-[#141414] border border-[#434343] rounded px-3 py-2 font-ui text-xs text-[#e6e6e6]"
+                    className="w-full bg-background border border-border rounded px-3 py-2 font-ui text-xs text-foreground"
                   />
 
                   {/* Folder Mapping Spec */}
-                  <div className="p-3 bg-[#141414] border border-[#434343] rounded font-ui text-[11px] space-y-1">
-                    <div className="text-[#8d8d8d] uppercase text-[10px] tracking-wider mb-1">
-                      Mapeamento de Pastas Ativo:
+                  <div className="p-3 bg-background border border-border rounded font-ui text-[11px] space-y-1">
+                    <div className="text-muted-foreground uppercase text-[10px] tracking-wider mb-1">
+                      {t.folderMapping}
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[#e6e6e6]">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-foreground">
                       <div>
-                        Aulas: <span className="text-[#8d8d8d]">Aulas/</span>
+                        {t.folderLessons} <span className="text-muted-foreground">{language === "pt-br" ? "Aulas/" : "Lessons/"}</span>
                       </div>
                       <div>
-                        Conceitos:{" "}
-                        <span className="text-[#8d8d8d]">Conceitos/</span>
+                        {t.folderConcepts}{" "}
+                        <span className="text-muted-foreground">{language === "pt-br" ? "Conceitos/" : "Concepts/"}</span>
                       </div>
                       <div>
-                        Fontes: <span className="text-[#8d8d8d]">Fontes/</span>
+                        {t.folderSources} <span className="text-muted-foreground">{language === "pt-br" ? "Fontes/" : "Sources/"}</span>
                       </div>
                       <div>
-                        Desenhos:{" "}
-                        <span className="text-[#8d8d8d]">Desenhos/</span>
+                        {t.folderDrawings}{" "}
+                        <span className="text-muted-foreground">{language === "pt-br" ? "Desenhos/" : "Drawings/"}</span>
                       </div>
                     </div>
                   </div>
@@ -588,13 +586,13 @@ export default function SettingsPage() {
             {activeTab === "mcp" && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="font-title text-base font-bold text-white">
+                  <h2 className="font-title text-base font-bold text-foreground">
                     {t.mcpSettingsTitle}
                   </h2>
-                  <p className="text-xs text-[#8d8d8d] mt-0.5">{t.mcpSettingsHint}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{t.mcpSettingsHint}</p>
                 </div>
                 <McpServerManager
-                  className="bg-[#1c1c1c] border border-[#434343] rounded min-h-[320px]"
+                  className="bg-card border border-border rounded min-h-[320px]"
                   selected={selectedMcp}
                   onSelect={setSelectedMcp}
                 />
@@ -605,12 +603,11 @@ export default function SettingsPage() {
             {activeTab === "track" && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="font-title text-base font-bold text-white">
-                    Trilha Pedagógica Conduzida (Track)
+                  <h2 className="font-title text-base font-bold text-foreground">
+                    {t.trackHeading}
                   </h2>
-                  <p className="text-xs text-[#8d8d8d] mt-0.5">
-                    A Trilha vive no Setup e guia os estudos através de um chip
-                    discreto na Home, conduzindo o roteiro no ritmo 2:1.
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t.trackHint}
                   </p>
                 </div>
 
@@ -620,42 +617,42 @@ export default function SettingsPage() {
                     onClick={() => setTrackMode("repo_binary")}
                     className={`p-4 rounded border cursor-pointer transition-all ${
                       trackMode === "repo_binary"
-                        ? "bg-[#2a2a2a] border-white"
-                        : "bg-[#1c1c1c] border-[#434343] hover:border-[#8d8d8d]"
+                        ? "bg-accent border-foreground"
+                        : "bg-card border-border hover:border-muted-foreground"
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <Route className="w-4 h-4 text-white" />
-                      <span className="font-ui text-xs font-semibold text-white">
-                        Opção 1 — Repositório Local + Nivelamento Adaptativo
+                      <Route className="w-4 h-4 text-foreground" />
+                      <span className="font-ui text-xs font-semibold text-foreground">
+                        {t.trackOption1}
                       </span>
                     </div>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      Sincroniza com as semanas do curso e o arquivo{" "}
-                      <code className="text-[#e6e6e6] font-ui">
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.trackOption1Before}{" "}
+                      <code className="text-foreground font-ui">
                         00 Mapa.md / LEARNING.md
                       </code>
-                      , integrando mentoria e teoria no ritmo 2:1.
+                      {t.trackOption1After}
                     </p>
                     {trackMode === "repo_binary" && (
                       <div
-                        className="mt-3 pt-3 border-t border-[#434343]"
+                        className="mt-3 pt-3 border-t border-border"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <GithubTrackLinker onLinked={() => void refreshTrack()} />
                       </div>
                     )}
                     {trackMode === "repo_binary" && (
-                      <div className="mt-3 pt-2.5 border-t border-[#434343]">
-                        <label className="font-ui text-[10.5px] text-[#8d8d8d] block mb-1">
-                          Diretório do Curso / Repositório
+                      <div className="mt-3 pt-2.5 border-t border-border">
+                        <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                          {t.courseDirectory}
                         </label>
                         <input
                           type="text"
                           value={trackRepoPath}
                           onChange={(e) => setTrackRepoPath(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full bg-[#141414] border border-[#434343] rounded px-3 py-1.5 font-ui text-xs text-[#e6e6e6]"
+                          className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground"
                         />
                       </div>
                     )}
@@ -666,31 +663,30 @@ export default function SettingsPage() {
                     onClick={() => setTrackMode("goal_generated")}
                     className={`p-4 rounded border cursor-pointer transition-all ${
                       trackMode === "goal_generated"
-                        ? "bg-[#2a2a2a] border-white"
-                        : "bg-[#1c1c1c] border-[#434343] hover:border-[#8d8d8d]"
+                        ? "bg-accent border-foreground"
+                        : "bg-card border-border hover:border-muted-foreground"
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-white" />
-                      <span className="font-ui text-xs font-semibold text-white">
-                        Opção 2 — Trilha Gerada por Objetivo
+                      <Layers className="w-4 h-4 text-foreground" />
+                      <span className="font-ui text-xs font-semibold text-foreground">
+                        {t.trackOption2}
                       </span>
                     </div>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      O Harness decompõe um objetivo complexo ou ementa colada em
-                      etapas pedagógicas com pré-requisitos explícitos.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.trackOption2Hint}
                     </p>
                     {trackMode === "goal_generated" && (
-                      <div className="mt-3 pt-2.5 border-t border-[#434343]">
-                        <label className="font-ui text-[10.5px] text-[#8d8d8d] block mb-1">
-                          Descrição do Objetivo
+                      <div className="mt-3 pt-2.5 border-t border-border">
+                        <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                          {t.goalDescription}
                         </label>
                         <textarea
                           value={goalDescription}
                           onChange={(e) => setGoalDescription(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                           rows={3}
-                          className="w-full bg-[#141414] border border-[#434343] rounded px-3 py-1.5 font-ui text-xs text-[#e6e6e6] resize-none"
+                          className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground resize-none"
                         />
                       </div>
                     )}
@@ -701,19 +697,18 @@ export default function SettingsPage() {
                     onClick={() => setTrackMode("free")}
                     className={`p-4 rounded border cursor-pointer transition-all ${
                       trackMode === "free"
-                        ? "bg-[#2a2a2a] border-white"
-                        : "bg-[#1c1c1c] border-[#434343] hover:border-[#8d8d8d]"
+                        ? "bg-accent border-foreground"
+                        : "bg-card border-border hover:border-muted-foreground"
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <HardDrive className="w-4 h-4 text-white" />
-                      <span className="font-ui text-xs font-semibold text-white">
-                        Opção 3 — Sem Trilha Fixa (Modo Livre)
+                      <HardDrive className="w-4 h-4 text-foreground" />
+                      <span className="font-ui text-xs font-semibold text-foreground">
+                        {t.trackOption3}
                       </span>
                     </div>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      Estudo orientado exclusivamente por tópicos livres no
-                      composer ou fontes importadas avulsas.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.trackOption3Hint}
                     </p>
                   </div>
                 </div>

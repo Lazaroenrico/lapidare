@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { getSourceParagraph } from "@/lib/api";
+import { useLocale } from "./locale-provider";
 
 interface SourceCitationPaneProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export function SourceCitationPane({
   paragraphId,
   className = "",
 }: SourceCitationPaneProps) {
+  const { t } = useLocale();
   const [loading, setLoading] = useState<boolean>(false);
   const [data, setData] = useState<SourceData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,8 +77,7 @@ export function SourceCitationPane({
         if (isMounted) {
           console.error("Failed to fetch source paragraph:", err);
           setError(
-            err?.message ||
-              `Não foi possível carregar o parágrafo ^${cleanPid} de ${sourceName}.`
+            err?.message || t.paragraphLoadFailed(cleanPid, sourceName)
           );
         }
       })
@@ -108,7 +109,7 @@ export function SourceCitationPane({
   const displayParagraphId = (paragraphId || "").replace(/^\^/, "p");
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-fade-in">
+    <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-xs transition-opacity animate-fade-in">
       {/* Backdrop overlay to close */}
       <div
         className="fixed inset-0 cursor-pointer"
@@ -118,28 +119,29 @@ export function SourceCitationPane({
 
       {/* Slide-over panel */}
       <aside
-        className={`relative w-full max-w-lg md:max-w-xl h-full bg-[#1c1c1c] border-l border-[#434343] shadow-2xl flex flex-col font-ui text-xs z-10 select-text ${className}`}
-        aria-label="Source Citation Drawer"
+        className={`relative w-full max-w-lg md:max-w-xl h-full bg-card border-l border-border shadow-2xl flex flex-col font-ui text-xs z-10 select-text ${className}`}
+        aria-label={t.sourcePaneAria}
       >
         {/* Header */}
-        <div className="p-4 bg-[#141414] border-b border-[#434343] flex flex-col gap-2 select-none">
+        <div className="p-4 bg-background border-b border-border flex flex-col gap-2 select-none">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-[#8d8d8d]" />
-              <span className="font-title font-bold text-sm text-[#e6e6e6]">
-                Fonte Original
+              <BookOpen className="w-4 h-4 text-muted-foreground" />
+              <span className="font-title font-bold text-sm text-foreground">
+                {t.originalSource}
               </span>
-              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#434343] text-[10px] text-[#8d8d8d]">
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-card border border-border text-[10px] text-muted-foreground">
                 <Lock className="w-2.5 h-2.5" />
-                SOMENTE-LEITURA · VAULT
+                {t.readOnlyVault}
               </span>
             </div>
 
             <button
               type="button"
               onClick={onClose}
-              className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded cursor-pointer transition-colors"
-              title="Fechar painel (Esc)"
+              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded cursor-pointer transition-colors"
+              title={t.closePaneEsc}
+              aria-label={t.closePaneEsc}
             >
               <X className="w-4 h-4" />
             </button>
@@ -148,13 +150,13 @@ export function SourceCitationPane({
           {/* Source Details & Anchor Badge */}
           <div className="flex items-center justify-between gap-2 mt-1">
             <div className="flex items-center gap-1.5 truncate">
-              <FileText className="w-3.5 h-3.5 text-[#8d8d8d] shrink-0" />
-              <span className="text-[12px] font-prose font-semibold text-[#e6e6e6] truncate">
-                Fontes/{sourceName}
+              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <span className="text-[12px] font-prose font-semibold text-foreground truncate">
+                {t.sourcesFolder}/{sourceName}
               </span>
             </div>
 
-            <span className="px-2 py-0.5 rounded bg-[#2a2a2a] border border-[#434343] font-ui text-[11px] text-[#e0a030] font-bold shrink-0">
+            <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[11px] text-warning font-bold shrink-0">
               #^{displayParagraphId}
             </span>
           </div>
@@ -163,91 +165,91 @@ export function SourceCitationPane({
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-[#8d8d8d] gap-2">
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
               <span className="font-ui text-xs">
-                Localizando parágrafo #{displayParagraphId} na fonte...
+                {t.locatingParagraph(displayParagraphId)}
               </span>
             </div>
           ) : error ? (
-            <div className="p-4 rounded bg-[#141414] border border-amber-900/40 text-amber-300 font-prose text-sm flex flex-col gap-2">
-              <p className="font-semibold font-ui text-xs">Parágrafo não indexado</p>
-              <p className="text-[13px] text-[#8d8d8d]">{error}</p>
-              <p className="text-[12px] text-[#8d8d8d] mt-1">
-                Verifique se o arquivo original em <code>Fontes/{sourceName}</code> contém a âncora <code>^{displayParagraphId}</code>.
+            <div className="p-4 rounded bg-background border border-warning/40 text-warning font-prose text-sm flex flex-col gap-2">
+              <p className="font-semibold font-ui text-xs">{t.paragraphNotIndexed}</p>
+              <p className="text-[13px] text-muted-foreground">{error}</p>
+              <p className="text-[12px] text-muted-foreground mt-1">
+                {t.checkAnchorBefore}<code>{t.sourcesFolder}/{sourceName}</code>{t.checkAnchorMiddle}<code>^{displayParagraphId}</code>.
               </p>
             </div>
           ) : data ? (
             <div className="flex flex-col gap-4">
               {/* Context Before */}
               {data.context_before && (
-                <div className="text-[#8d8d8d] font-prose text-[14px] leading-relaxed opacity-60 line-clamp-4 select-text border-b border-[#2a2a2a] pb-3">
-                  <span className="font-ui text-[10px] uppercase text-[#8d8d8d] block mb-1">
-                    ... contexto anterior
+                <div className="text-muted-foreground font-prose text-[14px] leading-relaxed opacity-60 line-clamp-4 select-text border-b border-accent pb-3">
+                  <span className="font-ui text-[10px] uppercase text-muted-foreground block mb-1">
+                    {t.contextBefore}
                   </span>
                   {data.context_before}
                 </div>
               )}
 
               {/* Highlighted Paragraph */}
-              <div className="relative p-4 rounded-lg bg-[#242424] border-2 border-[#e6e6e6]/30 shadow-md select-text">
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#383838]">
-                  <span className="font-ui text-[10.5px] uppercase tracking-wider text-[#e0a030] font-semibold">
-                    ▲ Parágrafo Citado (#^{displayParagraphId})
+              <div className="relative p-4 rounded-lg bg-card border-2 border-foreground/30 shadow-md select-text">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-border">
+                  <span className="font-ui text-[10.5px] uppercase tracking-wider text-warning font-semibold">
+                    {t.citedParagraph(displayParagraphId)}
                   </span>
                   <button
                     type="button"
                     onClick={handleCopySnippet}
-                    className="flex items-center gap-1 text-[11px] text-[#8d8d8d] hover:text-[#e6e6e6] transition-colors p-1"
-                    title="Copiar citação para o Obsidian"
+                    className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors p-1"
+                    title={t.copyCitation}
                   >
                     {copied ? (
                       <>
-                        <Check className="w-3 h-3 text-green-400" />
-                        <span className="text-green-400 text-[10px]">Copiado</span>
+                        <Check className="w-3 h-3 text-success" />
+                        <span className="text-success text-[10px]">{t.copied}</span>
                       </>
                     ) : (
                       <>
                         <Copy className="w-3 h-3" />
-                        <span className="text-[10px]">Copiar</span>
+                        <span className="text-[10px]">{t.copy}</span>
                       </>
                     )}
                   </button>
                 </div>
 
-                <div className="font-prose text-[15.5px] leading-relaxed text-white select-text">
+                <div className="font-prose text-[15.5px] leading-relaxed text-foreground select-text">
                   {data.content}
                 </div>
               </div>
 
               {/* Context After */}
               {data.context_after && (
-                <div className="text-[#8d8d8d] font-prose text-[14px] leading-relaxed opacity-60 line-clamp-4 select-text border-t border-[#2a2a2a] pt-3">
-                  <span className="font-ui text-[10px] uppercase text-[#8d8d8d] block mb-1">
-                    contexto seguinte ...
+                <div className="text-muted-foreground font-prose text-[14px] leading-relaxed opacity-60 line-clamp-4 select-text border-t border-accent pt-3">
+                  <span className="font-ui text-[10px] uppercase text-muted-foreground block mb-1">
+                    {t.contextAfter}
                   </span>
                   {data.context_after}
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-center py-16 text-[#8d8d8d] font-prose text-sm">
-              Nenhuma fonte selecionada.
+            <div className="text-center py-16 text-muted-foreground font-prose text-sm">
+              {t.noSourceSelected}
             </div>
           )}
         </div>
 
         {/* Footer info */}
-        <div className="p-3 bg-[#141414] border-t border-[#434343] flex items-center justify-between text-[11px] text-[#8d8d8d]">
+        <div className="p-3 bg-background border-t border-border flex items-center justify-between text-[11px] text-muted-foreground">
           <span>
             Obsidian: <code>[[{sourceName}#^{displayParagraphId}]]</code>
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1 bg-[#1c1c1c] hover:bg-[#2a2a2a] text-[#e6e6e6] border border-[#434343] rounded cursor-pointer transition-colors"
+            className="px-3 py-1 bg-card hover:bg-accent text-foreground border border-border rounded cursor-pointer transition-colors"
           >
-            Fechar
+            {t.close}
           </button>
         </div>
       </aside>

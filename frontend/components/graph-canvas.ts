@@ -1,9 +1,10 @@
 /**
  * 2D Canvas Knowledge Graph Physics & Rendering Engine.
  * Single unified 2D graph with soft nebulous cluster hulls,
- * force-directed layout, smooth pan/zoom, and graphite skin styling (#141414).
+ * force-directed layout, smooth pan/zoom, and graphite skin styling (palette.background).
  */
 
+import { palette, withAlpha } from "@/lib/palette";
 import type { ConceptNode, GraphEdge } from "@/lib/types";
 
 export interface CanvasNode extends ConceptNode {
@@ -538,7 +539,7 @@ export class GraphCanvasEngine {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Canvas background
-    ctx.fillStyle = "#141414";
+    ctx.fillStyle = palette.background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Apply high-DPI scaling and camera pan/zoom
@@ -573,7 +574,7 @@ export class GraphCanvasEngine {
     const startY = Math.floor(screenTopLeft.y / step) * step;
     const endY = Math.ceil(screenBottomRight.y / step) * step;
 
-    ctx.fillStyle = "rgba(67, 67, 67, 0.22)";
+    ctx.fillStyle = withAlpha("border", 0.22);
 
     for (let x = startX; x <= endX; x += step) {
       for (let y = startY; y <= endY; y += step) {
@@ -615,15 +616,15 @@ export class GraphCanvasEngine {
         cluster.centroid.y,
         180
       );
-      grad.addColorStop(0, "rgba(42, 42, 42, 0.32)");
-      grad.addColorStop(0.7, "rgba(28, 28, 28, 0.18)");
-      grad.addColorStop(1, "rgba(20, 20, 20, 0.02)");
+      grad.addColorStop(0, withAlpha("accent", 0.32));
+      grad.addColorStop(0.7, withAlpha("card", 0.18));
+      grad.addColorStop(1, withAlpha("background", 0.02));
 
       ctx.fillStyle = grad;
       ctx.fill();
 
       // Delicate dashed border
-      ctx.strokeStyle = "rgba(67, 67, 67, 0.4)";
+      ctx.strokeStyle = withAlpha("border", 0.4);
       ctx.lineWidth = 1.0;
       ctx.setLineDash([4, 6]);
       ctx.stroke();
@@ -633,7 +634,7 @@ export class GraphCanvasEngine {
       if (cluster.name && cluster.name !== "Core" && cluster.nodes.length >= 2) {
         ctx.save();
         ctx.font = "600 9.5px 'JetBrains Mono', monospace";
-        ctx.fillStyle = "rgba(141, 141, 141, 0.65)";
+        ctx.fillStyle = withAlpha("mutedForeground", 0.65);
         ctx.textAlign = "center";
         ctx.letterSpacing = "0.08em";
 
@@ -666,13 +667,13 @@ export class GraphCanvasEngine {
       ctx.lineTo(tgt.x, tgt.y);
 
       if (isConnectedToSelected) {
-        ctx.strokeStyle = "#e6e6e6";
+        ctx.strokeStyle = palette.foreground;
         ctx.lineWidth = 1.8;
       } else if (isConnectedToHovered) {
-        ctx.strokeStyle = "#8d8d8d";
+        ctx.strokeStyle = palette.mutedForeground;
         ctx.lineWidth = 1.4;
       } else {
-        ctx.strokeStyle = "rgba(67, 67, 67, 0.65)";
+        ctx.strokeStyle = withAlpha("border", 0.65);
         ctx.lineWidth = 1.0;
       }
 
@@ -703,10 +704,10 @@ export class GraphCanvasEngine {
         );
         ctx.closePath();
         ctx.fillStyle = isConnectedToSelected
-          ? "#e6e6e6"
+          ? palette.foreground
           : isConnectedToHovered
-          ? "#8d8d8d"
-          : "rgba(67, 67, 67, 0.75)";
+          ? palette.mutedForeground
+          : withAlpha("border", 0.75);
         ctx.fill();
       }
 
@@ -725,35 +726,35 @@ export class GraphCanvasEngine {
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius + 6, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(230, 230, 230, 0.12)";
+        ctx.fillStyle = withAlpha("foreground", 0.12);
         ctx.fill();
       }
 
       // Base circle
       ctx.beginPath();
       ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? "#2a2a2a" : "#1c1c1c";
+      ctx.fillStyle = isSelected ? palette.accent : palette.card;
       ctx.fill();
 
       // Border stroke
       if (isSelected) {
-        ctx.strokeStyle = "#e6e6e6";
+        ctx.strokeStyle = palette.foreground;
         ctx.lineWidth = 2.2;
       } else if (isHovered) {
-        ctx.strokeStyle = "#8d8d8d";
+        ctx.strokeStyle = palette.mutedForeground;
         ctx.lineWidth = 1.8;
       } else {
-        ctx.strokeStyle = "#434343";
+        ctx.strokeStyle = palette.border;
         ctx.lineWidth = 1.2;
       }
       ctx.stroke();
 
       // Status indicator dot
-      let statusColor = "#34d399"; // default sólido
+      let statusColor: string = palette.success; // default sólido
       if (node.status === "aprendendo") {
-        statusColor = "#fbbf24";
+        statusColor = palette.warning;
       } else if (node.status === "revisar") {
-        statusColor = "#f87171";
+        statusColor = palette.danger;
       }
 
       ctx.beginPath();
@@ -773,12 +774,12 @@ export class GraphCanvasEngine {
       const padY = 3;
 
       // Label background pill
-      ctx.fillStyle = "rgba(20, 20, 20, 0.88)";
+      ctx.fillStyle = withAlpha("background", 0.88);
       ctx.strokeStyle = isSelected
-        ? "rgba(230, 230, 230, 0.4)"
+        ? withAlpha("foreground", 0.4)
         : isHovered
-        ? "rgba(141, 141, 141, 0.4)"
-        : "rgba(67, 67, 67, 0.35)";
+        ? withAlpha("mutedForeground", 0.4)
+        : withAlpha("border", 0.35);
       ctx.lineWidth = 1;
 
       ctx.beginPath();
@@ -793,7 +794,7 @@ export class GraphCanvasEngine {
       ctx.stroke();
 
       // Text
-      ctx.fillStyle = isSelected ? "#ffffff" : isHovered ? "#e6e6e6" : "#cccccc";
+      ctx.fillStyle = isSelected || isHovered ? palette.foreground : withAlpha("foreground", 0.85);
       ctx.fillText(labelText, node.x, labelY);
 
       ctx.restore();

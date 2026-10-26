@@ -217,6 +217,22 @@ export async function resumeChat(
   );
 }
 
+// --- Concept notes (read-only in-app pane) ---
+
+export interface ConceptNote {
+  /** Vault-relative path, e.g. "Conceitos/Attention.md". */
+  path: string;
+  markdown: string;
+}
+
+/**
+ * GET /api/graph/concepts/{id}/note → {path, markdown}.
+ * Silent: the pane renders a graceful message (404 when the endpoint/note is missing).
+ */
+export async function getConceptNote(id: string, signal?: AbortSignal): Promise<ConceptNote> {
+  return fetchJson(`/api/graph/concepts/${encodeURIComponent(id)}/note`, { signal }, { silent: true });
+}
+
 // --- Sources & Citations ---
 
 export async function getSourceParagraph(

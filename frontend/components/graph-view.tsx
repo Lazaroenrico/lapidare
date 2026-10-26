@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import {
   BookOpen,
   Edit3,
+  ExternalLink,
   Link2,
   Minus,
+  NotebookText,
   Plus,
   RefreshCw,
   Search,
@@ -16,9 +18,40 @@ import {
   X,
 } from "lucide-react";
 import type { ConceptNode, GraphSnapshot } from "@/lib/types";
-import { createChat, createDrawing, getGraphSnapshot } from "@/lib/api";
+import { createChat, createDrawing, getGraphSnapshot, getSetupStatus } from "@/lib/api";
 import { useEventSubscription } from "./server-events";
 import { GraphCanvasEngine } from "./graph-canvas";
+import { ConceptNotePane } from "./concept-note-pane";
+import { useLocale } from "./locale-provider";
+
+const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
+
+function readObsidianPref(): boolean {
+  try {
+    return window.localStorage.getItem(OBSIDIAN_PREF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeObsidianPref(value: boolean): void {
+  try {
+    window.localStorage.setItem(OBSIDIAN_PREF_KEY, value ? "1" : "0");
+  } catch {
+    // Storage unavailable (private mode / blocked): keep the in-memory choice only.
+  }
+}
+
+/** Vault folder name = last segment of the configured vault path (Obsidian vault name). */
+function vaultNameFromPath(vaultPath: string): string {
+  return vaultPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+}
+
+/** obsidian://open?vault=<name>&file=<vault-relative path without .md> */
+function buildObsidianUri(vaultName: string, notePath: string): string {
+  const file = notePath.replace(/^\/+/, "").replace(/\.md$/i, "");
+  return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file)}`;
+}
 
 interface GraphViewProps {
   onOpenImport?: () => void;
@@ -27,6 +60,7 @@ interface GraphViewProps {
 
 export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
   const router = useRouter();
+  const { t } = useLocale();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GraphCanvasEngine | null>(null);
@@ -46,6 +80,43 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
   // Search in Canvas
   const [nodeSearch, setNodeSearch] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // "Abrir Nota": Obsidian deep link vs. in-app read-only pane
+  const [openInObsidian, setOpenInObsidian] = useState<boolean>(false);
+  const [vaultName, setVaultName] = useState<string>("");
+  const [noteNode, setNoteNode] = useState<ConceptNode | null>(null);
+
+  const loadVaultName = useCallback(() => {
+    getSetupStatus()
+      .then((s) => setVaultName(vaultNameFromPath(s.config?.vault_path || "")))
+      .catch(() => setVaultName(""));
+  }, []);
+
+  useEffect(() => {
+    setOpenInObsidian(readObsidianPref());
+    loadVaultName();
+  }, [loadVaultName]);
+
+  useEventSubscription("config:updated", () => {
+    loadVaultName();
+  });
+
+  const toggleOpenInObsidian = () => {
+    setOpenInObsidian((prev) => {
+      writeObsidianPref(!prev);
+      return !prev;
+    });
+  };
+
+  const notePathFor = (node: ConceptNode) => node.file_path || `Conceitos/${node.name}.md`;
+
+  const handleOpenNote = (node: ConceptNode) => {
+    if (openInObsidian && vaultName) {
+      window.location.href = buildObsidianUri(vaultName, notePathFor(node));
+      return;
+    }
+    setNoteNode(node);
+  };
 
   // Fetch Snapshot from Backend
   const loadGraph = useCallback(async () => {
@@ -172,7 +243,7 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
       const res = await createDrawing({
         title: node.name,
         concept_ids: [node.id],
-        prompt: `Desenhe de memória a arquitetura, equações e fluxo de computação de "${node.name}".`,
+        prompt: t.drawPrompt(node.name),
       });
       router.push(`/draw/${res.slug}`);
     } catch (err) {
@@ -197,7 +268,7 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full overflow-hidden bg-[#141414] select-none ${className}`}
+      className={`relative w-full h-full overflow-hidden bg-background select-none ${className}`}
     >
       {/* 2D Canvas Target */}
       <canvas ref={canvasRef} className="w-full h-full block cursor-default" />
@@ -205,17 +276,16 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
       {/* Top Floating Action Pills Bar */}
       <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
         {/* Left Status Pill */}
-        <div className="flex items-center gap-3 bg-[#1c1c1c]/90 backdrop-blur border border-[#434343] rounded-lg px-3.5 py-1.5 shadow-lg pointer-events-auto">
+        <div className="flex items-center gap-3 bg-card/90 backdrop-blur border border-border rounded-lg px-3.5 py-1.5 shadow-lg pointer-events-auto">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#34d399]" />
-            <span className="font-ui font-semibold text-xs text-[#e6e6e6]">
-              Grafo de Conhecimento
+            <span className="w-2 h-2 rounded-full bg-success" />
+            <span className="font-ui font-semibold text-xs text-foreground">
+              {t.graphTitle}
             </span>
           </div>
-          <span className="text-[#434343] text-xs">|</span>
-          <span className="font-ui text-[11px] text-[#8d8d8d]">
-            {snapshot.nodes.length} conceitos · {snapshot.edges.length} conexões ·{" "}
-            {snapshot.chains.length} chains
+          <span className="text-border text-xs">|</span>
+          <span className="font-ui text-[11px] text-muted-foreground">
+            {t.graphStats(snapshot.nodes.length, snapshot.edges.length, snapshot.chains.length)}
           </span>
         </div>
 
@@ -223,20 +293,23 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
         <div className="flex items-center gap-2 pointer-events-auto">
           {/* Node Search Bar */}
           <div className="relative">
-            <div className="flex items-center bg-[#1c1c1c]/90 backdrop-blur border border-[#434343] focus-within:border-[#8d8d8d] rounded-lg px-2.5 py-1 shadow-lg transition-colors">
-              <Search className="w-3.5 h-3.5 text-[#8d8d8d] mr-2 shrink-0" />
+            <div className="flex items-center bg-card/90 backdrop-blur border border-border focus-within:border-muted-foreground rounded-lg px-2.5 py-1 shadow-lg transition-colors">
+              <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
               <input
                 type="text"
-                placeholder="⌕ Buscar conceito..."
+                placeholder={t.graphSearch}
+                aria-label={t.graphSearch}
                 value={nodeSearch}
                 onChange={(e) => setNodeSearch(e.target.value)}
-                className="bg-transparent text-[#e6e6e6] placeholder-[#8d8d8d] text-xs font-ui w-36 sm:w-48 outline-none border-none focus:outline-none focus:ring-0"
+                className="bg-transparent text-foreground placeholder-muted-foreground text-xs font-ui w-36 sm:w-48 outline-none border-none focus:outline-none focus:ring-0"
               />
               {nodeSearch && (
                 <button
                   type="button"
                   onClick={() => setNodeSearch("")}
-                  className="text-[#8d8d8d] hover:text-[#e6e6e6] p-0.5"
+                  className="text-muted-foreground hover:text-foreground p-0.5"
+                  title={t.clearSearch}
+                  aria-label={t.clearSearch}
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -245,7 +318,7 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
 
             {/* Search Dropdown Results */}
             {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-[#1c1c1c] border border-[#434343] rounded-lg shadow-2xl py-1 z-30">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-2xl py-1 z-30">
                 {searchResults.map((item) => (
                   <button
                     key={item.id}
@@ -255,11 +328,11 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
                       engineRef.current?.focusNode(item.id);
                       setNodeSearch("");
                     }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2a2a2a] flex items-center justify-between text-xs font-ui text-[#e6e6e6] transition-colors"
+                    className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center justify-between text-xs font-ui text-foreground transition-colors"
                   >
                     <span>{item.name}</span>
-                    <span className="text-[10px] text-[#8d8d8d] capitalize">
-                      {item.status}
+                    <span className="text-[10px] text-muted-foreground capitalize">
+                      {t.conceptStatus(item.status)}
                     </span>
                   </button>
                 ))}
@@ -271,13 +344,13 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           <button
             type="button"
             onClick={() => setIsChainsOpen(true)}
-            className="flex items-center gap-1.5 bg-[#1c1c1c]/90 hover:bg-[#2a2a2a] active:bg-[#333333] backdrop-blur border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title="Abrir implicações lógicas A ∧ B ⟹ C"
+            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
+            title={t.chainsTitle}
           >
-            <Link2 className="w-3.5 h-3.5 text-[#8d8d8d]" />
+            <Link2 className="w-3.5 h-3.5 text-muted-foreground" />
             <span>☍ Chains</span>
             {snapshot.chains.length > 0 && (
-              <span className="bg-[#2a2a2a] text-[#8d8d8d] text-[10px] px-1.5 py-0.2 rounded-full border border-[#434343]">
+              <span className="bg-accent text-muted-foreground text-[10px] px-1.5 py-0.2 rounded-full border border-border">
                 {snapshot.chains.length}
               </span>
             )}
@@ -287,10 +360,10 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           <button
             type="button"
             onClick={onOpenImport}
-            className="flex items-center gap-1.5 bg-[#1c1c1c]/90 hover:bg-[#2a2a2a] active:bg-[#333333] backdrop-blur border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title="Importar aulas do MCP ou notas locais"
+            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
+            title={t.importTitle}
           >
-            <Upload className="w-3.5 h-3.5 text-[#8d8d8d]" />
+            <Upload className="w-3.5 h-3.5 text-muted-foreground" />
             <span>↑ Import</span>
           </button>
 
@@ -298,36 +371,36 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           <button
             type="button"
             onClick={() => router.push("/draw/new")}
-            className="flex items-center gap-1.5 bg-[#1c1c1c]/90 hover:bg-[#2a2a2a] active:bg-[#333333] backdrop-blur border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title="Criar novo desenho de memória no Excalidraw"
+            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
+            title={t.excalidrawTitle}
           >
-            <Edit3 className="w-3.5 h-3.5 text-[#8d8d8d]" />
+            <Edit3 className="w-3.5 h-3.5 text-muted-foreground" />
             <span>✎ Excalidraw</span>
           </button>
 
           {/* Zoom Controls */}
-          <div className="flex items-center bg-[#1c1c1c]/90 backdrop-blur border border-[#434343] rounded-lg p-0.5 shadow-lg">
+          <div className="flex items-center bg-card/90 backdrop-blur border border-border rounded-lg p-0.5 shadow-lg">
             <button
               type="button"
               onClick={() => engineRef.current?.zoomIn()}
-              className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors"
-              title="Aproximar (+)"
+              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+              title={t.zoomIn}
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
               onClick={() => engineRef.current?.zoomOut()}
-              className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors"
-              title="Afastar (-)"
+              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+              title={t.zoomOut}
             >
               <Minus className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
               onClick={() => engineRef.current?.resetView()}
-              className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors"
-              title="Centralizar e ajustar visão"
+              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+              title={t.resetView}
             >
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -337,38 +410,38 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
 
       {/* Contextual Node Card */}
       {selectedNode && (
-        <div className="absolute top-20 right-4 w-84 bg-[#1c1c1c] border border-[#434343] rounded-xl p-4 shadow-2xl z-20 transition-all select-text font-ui animate-in fade-in slide-in-from-right-4 duration-150">
+        <div className="absolute top-20 right-4 w-84 bg-card border border-border rounded-xl p-4 shadow-2xl z-20 transition-all select-text font-ui animate-in fade-in slide-in-from-right-4 duration-150">
           {/* Card Header */}
-          <div className="flex items-start justify-between gap-2 border-b border-[#2a2a2a] pb-3 mb-3">
+          <div className="flex items-start justify-between gap-2 border-b border-accent pb-3 mb-3">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
                     selectedNode.status === "sólido"
-                      ? "bg-[#34d399]"
+                      ? "bg-success"
                       : selectedNode.status === "aprendendo"
-                      ? "bg-[#fbbf24]"
-                      : "bg-[#f87171]"
+                      ? "bg-warning"
+                      : "bg-danger"
                   }`}
                 />
-                <span className="text-[10px] text-[#8d8d8d] uppercase tracking-wider">
-                  {selectedNode.status}
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  {t.conceptStatus(selectedNode.status)}
                 </span>
                 {selectedNode.cluster && (
-                  <span className="text-[10px] text-[#8d8d8d] bg-[#2a2a2a] px-1.5 py-0.2 rounded border border-[#434343]">
+                  <span className="text-[10px] text-muted-foreground bg-accent px-1.5 py-0.2 rounded border border-border">
                     {selectedNode.cluster}
                   </span>
                 )}
               </div>
-              <h3 className="font-title text-lg text-[#e6e6e6] font-bold leading-tight">
+              <h3 className="font-title text-lg text-foreground font-bold leading-tight">
                 {selectedNode.name}
               </h3>
             </div>
             <button
               type="button"
               onClick={() => setSelectedNode(null)}
-              className="text-[#8d8d8d] hover:text-[#e6e6e6] p-1 rounded hover:bg-[#2a2a2a] transition-colors"
-              title="Fechar"
+              className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent transition-colors"
+              title={t.close}
             >
               <X className="w-4 h-4" />
             </button>
@@ -376,16 +449,16 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
 
           {/* Summary / Truth */}
           <div className="mb-3">
-            <p className="font-prose text-[13px] text-[#cccccc] leading-relaxed">
-              {selectedNode.summary || "Nenhum resumo registrado ainda para este conceito."}
+            <p className="font-prose text-[13px] text-foreground leading-relaxed">
+              {selectedNode.summary || t.noSummary}
             </p>
           </div>
 
           {/* Dependencies */}
           {selectedNode.depends_on && selectedNode.depends_on.length > 0 && (
             <div className="mb-3">
-              <span className="text-[10px] text-[#8d8d8d] block uppercase tracking-wider mb-1.5">
-                Depende de:
+              <span className="text-[10px] text-muted-foreground block uppercase tracking-wider mb-1.5">
+                {t.dependsOn}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {selectedNode.depends_on.map((dep) => (
@@ -393,7 +466,7 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
                     key={dep}
                     type="button"
                     onClick={() => handleSelectDependency(dep)}
-                    className="text-[11px] bg-[#2a2a2a] hover:bg-[#333333] text-[#e6e6e6] px-2 py-0.5 rounded border border-[#434343] transition-colors cursor-pointer"
+                    className="text-[11px] bg-accent hover:bg-border text-foreground px-2 py-0.5 rounded border border-border transition-colors cursor-pointer"
                   >
                     [[{dep}]]
                   </button>
@@ -403,86 +476,127 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           )}
 
           {/* Vault Path */}
-          <div className="mb-4 text-[11px] text-[#8d8d8d] flex items-center gap-1.5 bg-[#141414] px-2 py-1 rounded border border-[#2a2a2a] truncate">
-            <span className="text-[#666666]">Vault:</span>
+          <div className="mb-4 text-[11px] text-muted-foreground flex items-center gap-1.5 bg-background px-2 py-1 rounded border border-accent truncate">
+            <span className="text-muted-foreground">{t.vaultLabel}</span>
             <span className="truncate">
-              {selectedNode.file_path || `Conceitos/${selectedNode.name}.md`}
+              {notePathFor(selectedNode)}
             </span>
           </div>
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-[#2a2a2a]">
+          <div className="grid grid-cols-2 gap-2 pt-3 border-t border-accent">
             <button
               type="button"
               disabled={actionLoading !== null}
               onClick={() => handleOpenTeach(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-[#2a2a2a] hover:bg-[#333333] text-[#e6e6e6] border border-[#434343] hover:border-[#8d8d8d] transition-colors text-[10.5px] cursor-pointer text-center"
-              title="Abrir sessão de ensino para este conceito"
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
+              title={t.nodeTeachTitle}
             >
-              <BookOpen className="w-3.5 h-3.5 mb-1 text-[#34d399]" />
-              <span>Aula / TEACH</span>
+              <BookOpen className="w-3.5 h-3.5 mb-1 text-success" />
+              <span>{t.nodeTeach}</span>
             </button>
 
             <button
               type="button"
               disabled={actionLoading !== null}
               onClick={() => handleOpenPractice(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-[#2a2a2a] hover:bg-[#333333] text-[#e6e6e6] border border-[#434343] hover:border-[#8d8d8d] transition-colors text-[10.5px] cursor-pointer text-center"
-              title="Iniciar treino interativo focado neste conceito"
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
+              title={t.nodePracticeTitle}
             >
-              <Target className="w-3.5 h-3.5 mb-1 text-[#fbbf24]" />
-              <span>+ Practice</span>
+              <Target className="w-3.5 h-3.5 mb-1 text-warning" />
+              <span>{t.nodePractice}</span>
             </button>
 
             <button
               type="button"
               disabled={actionLoading !== null}
               onClick={() => handleOpenDraw(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-[#2a2a2a] hover:bg-[#333333] text-[#e6e6e6] border border-[#434343] hover:border-[#8d8d8d] transition-colors text-[10.5px] cursor-pointer text-center"
-              title="Desenhar arquitetura de memória no Excalidraw"
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
+              title={t.nodeDrawTitle}
             >
-              <Edit3 className="w-3.5 h-3.5 mb-1 text-[#e6e6e6]" />
-              <span>✎ Desenhar</span>
+              <Edit3 className="w-3.5 h-3.5 mb-1 text-foreground" />
+              <span>{t.nodeDraw}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOpenNote(selectedNode)}
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
+              title={openInObsidian && vaultName ? t.nodeNoteObsidianTitle : t.nodeNoteTitle}
+            >
+              {openInObsidian && vaultName ? (
+                <ExternalLink className="w-3.5 h-3.5 mb-1 text-foreground" />
+              ) : (
+                <NotebookText className="w-3.5 h-3.5 mb-1 text-foreground" />
+              )}
+              <span>{t.nodeNote}</span>
             </button>
           </div>
+
+          {/* Open-in-Obsidian preference (persisted per browser) */}
+          <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-muted-foreground select-none">
+            <span id="open-in-obsidian-label">{t.openInObsidian}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={openInObsidian}
+              aria-labelledby="open-in-obsidian-label"
+              onClick={toggleOpenInObsidian}
+              className={`relative w-8 h-4 rounded-full border transition-colors cursor-pointer ${
+                openInObsidian ? "bg-foreground border-foreground" : "bg-background border-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-2.5 h-2.5 rounded-full transition-all ${
+                  openInObsidian ? "left-4 bg-background" : "left-0.5 bg-muted-foreground"
+                }`}
+              />
+            </button>
+          </div>
+          {openInObsidian && !vaultName && (
+            <p className="mt-1 text-[10.5px] text-warning">{t.obsidianNoVault}</p>
+          )}
         </div>
       )}
 
       {/* Slide-over Drawer for Chains (☍ Chains) */}
       {isChainsOpen && (
-        <div className="absolute top-0 right-0 bottom-0 w-96 bg-[#1c1c1c] border-l border-[#434343] shadow-2xl z-30 flex flex-col font-ui animate-in fade-in slide-in-from-right duration-200">
+        <div className="absolute top-0 right-0 bottom-0 w-96 bg-card border-l border-border shadow-2xl z-30 flex flex-col font-ui animate-in fade-in slide-in-from-right duration-200">
           {/* Drawer Header */}
-          <div className="p-4 border-b border-[#2a2a2a] flex items-center justify-between">
+          <div className="p-4 border-b border-accent flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <Link2 className="w-4 h-4 text-[#8d8d8d]" />
-                <h2 className="font-ui font-semibold text-sm text-[#e6e6e6]">
-                  ☍ Cadeias Lógicas & Implicações
+                <Link2 className="w-4 h-4 text-muted-foreground" />
+                <h2 className="font-ui font-semibold text-sm text-foreground">
+                  {t.chainsHeading}
                 </h2>
               </div>
-              <p className="text-[11px] text-[#8d8d8d] mt-1 font-prose">
-                Proposições $A \land B \implies C$ extraídas das aulas e notas.
+              <p className="text-[11px] text-muted-foreground mt-1 font-prose">
+                {t.chainsSubtitle}
               </p>
             </div>
             <button
               type="button"
               onClick={() => setIsChainsOpen(false)}
-              className="text-[#8d8d8d] hover:text-[#e6e6e6] p-1 rounded hover:bg-[#2a2a2a] transition-colors"
+              className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent transition-colors"
+              title={t.close}
+              aria-label={t.close}
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
           {/* Drawer Search */}
-          <div className="p-3 border-b border-[#2a2a2a]">
-            <div className="flex items-center bg-[#141414] border border-[#434343] rounded px-2.5 py-1.5">
-              <Search className="w-3.5 h-3.5 text-[#8d8d8d] mr-2 shrink-0" />
+          <div className="p-3 border-b border-accent">
+            <div className="flex items-center bg-background border border-border rounded px-2.5 py-1.5">
+              <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
               <input
                 type="text"
-                placeholder="Filtrar premissas ou conclusões..."
+                placeholder={t.chainsFilter}
+                aria-label={t.chainsFilter}
                 value={chainsSearch}
                 onChange={(e) => setChainsSearch(e.target.value)}
-                className="bg-transparent text-xs text-[#e6e6e6] placeholder-[#8d8d8d] outline-none w-full border-none focus:outline-none focus:ring-0"
+                className="bg-transparent text-xs text-foreground placeholder-muted-foreground outline-none w-full border-none focus:outline-none focus:ring-0"
               />
             </div>
           </div>
@@ -490,22 +604,22 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           {/* Drawer Chains List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {filteredChains.length === 0 ? (
-              <div className="text-center py-12 text-[#8d8d8d]">
+              <div className="text-center py-12 text-muted-foreground">
                 <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-40" />
                 <p className="text-xs">
                   {chainsSearch
-                    ? "Nenhuma cadeia lógica coincide com a busca."
-                    : "Nenhuma cadeia lógica extraída ainda."}
+                    ? t.chainsNoMatch
+                    : t.chainsEmpty}
                 </p>
-                <p className="text-[11px] text-[#666666] mt-1">
-                  Ao concluir aulas no modo TEACH, o agente de background extrai proposições automaticamente para cá.
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {t.chainsEmptyHint}
                 </p>
               </div>
             ) : (
               filteredChains.map((chain) => (
                 <div
                   key={chain.id}
-                  className="bg-[#141414] border border-[#2a2a2a] hover:border-[#434343] rounded-lg p-3 transition-colors"
+                  className="bg-background border border-accent hover:border-border rounded-lg p-3 transition-colors"
                 >
                   <div className="flex items-center gap-1.5 flex-wrap text-xs mb-2">
                     {/* Premises */}
@@ -513,50 +627,50 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
                       {chain.premises.map((p, idx) => (
                         <span
                           key={idx}
-                          className="bg-[#2a2a2a] text-[#e6e6e6] px-1.5 py-0.5 rounded text-[11px] border border-[#434343]"
+                          className="bg-accent text-foreground px-1.5 py-0.5 rounded text-[11px] border border-border"
                         >
                           {p}
                         </span>
                       ))}
                     </div>
 
-                    <span className="text-[#8d8d8d] font-bold px-1">⟹</span>
+                    <span className="text-muted-foreground font-bold px-1">⟹</span>
 
                     {/* Conclusion */}
-                    <span className="bg-[#1c1c1c] text-[#34d399] font-medium px-1.5 py-0.5 rounded text-[11px] border border-[#34d399]/40">
+                    <span className="bg-card text-success font-medium px-1.5 py-0.5 rounded text-[11px] border border-success/40">
                       {chain.conclusion}
                     </span>
                   </div>
 
                   {chain.formula && (
-                    <div className="bg-[#1c1c1c] p-1.5 rounded text-[11px] text-[#8d8d8d] font-mono mb-2 truncate">
+                    <div className="bg-card p-1.5 rounded text-[11px] text-muted-foreground font-mono mb-2 truncate">
                       {chain.formula}
                     </div>
                   )}
 
                   {chain.notes && (
-                    <p className="text-[11px] text-[#8d8d8d] font-prose mb-2">
+                    <p className="text-[11px] text-muted-foreground font-prose mb-2">
                       {chain.notes}
                     </p>
                   )}
 
-                  <div className="flex items-center justify-between pt-1 border-t border-[#2a2a2a] text-[10.5px]">
-                    <span className="text-[#666666]">
-                      {chain.source_session_id ? "Da mentoria" : "Conceitual"}
+                  <div className="flex items-center justify-between pt-1 border-t border-accent text-[10.5px]">
+                    <span className="text-muted-foreground">
+                      {chain.source_session_id ? t.chainFromSession : t.chainConceptual}
                     </span>
                     <button
                       type="button"
                       onClick={async () => {
                         const session = await createChat({
                           mode: "PRACTICE",
-                          topic: `Implicação: ${chain.premises.join(" + ")} => ${chain.conclusion}`,
+                          topic: t.chainPracticeTopic(chain.premises.join(" + "), chain.conclusion),
                         });
                         router.push(`/chat/${session.id}`);
                       }}
-                      className="text-[#e6e6e6] hover:text-[#34d399] flex items-center gap-1 transition-colors"
+                      className="text-foreground hover:text-success flex items-center gap-1 transition-colors"
                     >
                       <Target className="w-3 h-3" />
-                      <span>Praticar</span>
+                      <span>{t.practiceAction}</span>
                     </button>
                   </div>
                 </div>
@@ -565,6 +679,13 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
           </div>
         </div>
       )}
+
+      <ConceptNotePane
+        conceptId={noteNode?.id ?? null}
+        conceptName={noteNode?.name ?? ""}
+        fallbackPath={noteNode ? notePathFor(noteNode) : ""}
+        onClose={() => setNoteNode(null)}
+      />
     </div>
   );
 }

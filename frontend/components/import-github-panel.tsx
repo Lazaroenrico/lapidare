@@ -46,7 +46,7 @@ function FolderCheckbox({
       aria-label={label}
       checked={state === "all"}
       onChange={(e) => onChange(e.target.checked)}
-      className="accent-[#e6e6e6] cursor-pointer"
+      className="accent-foreground cursor-pointer"
     />
   );
 }
@@ -212,9 +212,9 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
 
       {preview && (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-[#2a2a2a] bg-[#141414] px-3 py-2 font-ui text-[11px] text-[#8d8d8d]">
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent bg-background px-3 py-2 font-ui text-[11px] text-muted-foreground">
             <GitBranch className="w-3 h-3" aria-hidden />
-            <span className="text-[#e6e6e6] text-[12.5px]">
+            <span className="text-foreground text-[12.5px]">
               {preview.repo.owner}/{preview.repo.name}
             </span>
             <span>@{preview.repo.ref}</span>
@@ -231,7 +231,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
             <>
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-[#8d8d8d]" aria-hidden />
+                  <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
                   <label htmlFor="gh-filter" className="sr-only">
                     {t.impFilterLabel}
                   </label>
@@ -244,7 +244,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                     className={cx(inputClass, "pl-8")}
                   />
                 </div>
-                <span className="font-ui text-[11px] text-[#8d8d8d] shrink-0">{t.impSelected(selected.size)}</span>
+                <span className="font-ui text-[11px] text-muted-foreground shrink-0">{t.impSelected(selected.size)}</span>
                 <Btn variant="ghost" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>
                   {t.impClear}
                 </Btn>
@@ -254,9 +254,9 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                 role="tree"
                 aria-label={`${preview.repo.owner}/${preview.repo.name}`}
                 onKeyDown={handleListKeys}
-                className="max-h-72 overflow-y-auto rounded-md border border-[#2a2a2a]"
+                className="max-h-72 overflow-y-auto rounded-md border border-accent"
               >
-                {groups.length === 0 && <p className="p-3 font-ui text-[11px] text-[#8d8d8d]">{t.impNoMatch}</p>}
+                {groups.length === 0 && <p className="p-3 font-ui text-[11px] text-muted-foreground">{t.impNoMatch}</p>}
                 {groups.map(([dir, files]) => {
                   const count = files.filter((f) => selected.has(f.path)).length;
                   const state = count === 0 ? "none" : count === files.length ? "all" : "some";
@@ -264,7 +264,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                   const gid = `gh-dir-${dir || "root"}`;
                   return (
                     <div key={dir || "/"} role="treeitem" aria-expanded={open} aria-selected={state === "all"}>
-                      <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1 bg-[#1c1c1c] border-b border-[#2a2a2a]">
+                      <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1 bg-card border-b border-accent">
                         <FolderCheckbox
                           id={gid}
                           state={state}
@@ -277,15 +277,15 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                           aria-label={`${t.ghToggleFolder}: ${dir || t.ghRoot}`}
                           aria-expanded={open}
                           onClick={() => toggleCollapsed(dir)}
-                          className="flex-1 flex items-center gap-1 text-left font-ui text-[12.5px] text-[#e6e6e6] cursor-pointer min-w-0"
+                          className="flex-1 flex items-center gap-1 text-left font-ui text-[12.5px] text-foreground cursor-pointer min-w-0"
                         >
                           {open ? (
-                            <ChevronDown className="w-3 h-3 shrink-0 text-[#8d8d8d]" aria-hidden />
+                            <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden />
                           ) : (
-                            <ChevronRight className="w-3 h-3 shrink-0 text-[#8d8d8d]" aria-hidden />
+                            <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden />
                           )}
                           <span className="truncate">{dir ? `${dir}/` : t.ghRoot}</span>
-                          <span className="ml-auto pl-2 text-[11px] text-[#8d8d8d] shrink-0">
+                          <span className="ml-auto pl-2 text-[11px] text-muted-foreground shrink-0">
                             {count}/{files.length}
                           </span>
                         </button>
@@ -303,7 +303,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                                 aria-selected={on}
                                 className={cx(
                                   "flex items-center gap-2 pl-8 pr-3 py-1 cursor-pointer transition-colors",
-                                  on ? "bg-[#2a2a2a]" : "hover:bg-[#141414]"
+                                  on ? "bg-accent" : "hover:bg-background"
                                 )}
                               >
                                 <input
@@ -312,15 +312,15 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
                                   type="checkbox"
                                   checked={on}
                                   onChange={(e) => setMany([f.path], e.target.checked)}
-                                  className="accent-[#e6e6e6] cursor-pointer"
+                                  className="accent-foreground cursor-pointer"
                                 />
-                                <span className="min-w-0 flex-1 truncate font-ui text-[12.5px] text-[#e6e6e6]" title={f.path}>
+                                <span className="min-w-0 flex-1 truncate font-ui text-[12.5px] text-foreground" title={f.path}>
                                   {baseOf(f.path)}
                                   {f.title && f.title !== baseOf(f.path) && (
-                                    <span className="text-[#8d8d8d]"> — {f.title}</span>
+                                    <span className="text-muted-foreground"> — {f.title}</span>
                                   )}
                                 </span>
-                                <span className="font-ui text-[11px] text-[#8d8d8d] shrink-0">{fmtSize(f.size)}</span>
+                                <span className="font-ui text-[11px] text-muted-foreground shrink-0">{fmtSize(f.size)}</span>
                               </label>
                             );
                           })}
@@ -365,7 +365,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
               }
             >
               {t.ghTrackExists}
-              {conflict !== t.ghTrackExists && <span className="block text-[#8d8d8d]">{conflict}</span>}
+              {conflict !== t.ghTrackExists && <span className="block text-muted-foreground">{conflict}</span>}
             </Banner>
           )}
 

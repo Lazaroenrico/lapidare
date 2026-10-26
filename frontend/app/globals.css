@@ -14,7 +14,7 @@
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: local("CMU Serif Bold"), local("CMU Serif-Bold");
+  src: local("CMU Serif Bold"), local("CMU Serif-Bold"), url("/fonts/cmunbx.ttf") format("truetype");
 }
 
 @font-face {
@@ -22,16 +22,31 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: local("CMU Serif Roman"), local("CMU Serif");
+  src: local("CMU Serif Roman"), local("CMU Serif"), url("/fonts/cmunrm.ttf") format("truetype");
+}
+
+/*
+ * Design tokens ("The Skin") — single source of truth.
+ * Components use them via Tailwind utilities (bg-background, bg-card,
+ * bg-accent, border-border, text-foreground, text-muted-foreground,
+ * text-success, text-warning, text-danger, with /opacity modifiers).
+ * Canvas / Excalidraw code mirrors these values in lib/palette.ts.
+ * tests/tokens.test.cjs forbids hex literals anywhere else.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-card: var(--card);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
 }
 
 @theme {
-  --color-background: #141414;
-  --color-card: #1c1c1c;
-  --color-accent: #2a2a2a;
-  --color-border: #434343;
-  --color-foreground: #e6e6e6;
-  --color-muted: #8d8d8d;
   --font-title: "CMU Serif", "Computer Modern Serif", Georgia, serif;
   --font-prose: "Source Sans 3", system-ui, -apple-system, sans-serif;
   --font-ui: "JetBrains Mono", monospace;
@@ -44,6 +59,9 @@
   --border: #434343;
   --foreground: #e6e6e6;
   --muted-foreground: #8d8d8d;
+  --success: #34d399;
+  --warning: #e0a030;
+  --danger: #f87171;
   --font-title: "CMU Serif", "Computer Modern Serif", Georgia, serif;
   --font-prose: "Source Sans 3", system-ui, -apple-system, sans-serif;
   --font-ui: "JetBrains Mono", monospace;
@@ -92,22 +110,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #141414;
+  background: var(--background);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
+  background: var(--accent);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #434343;
+  background: var(--border);
 }
 
 /* KaTeX custom integration for achromatic graphite skin */
 .katex {
   font-size: 1.05em;
-  color: #f0f0f0;
+  color: var(--foreground);
 }
 
 .katex-display {
@@ -123,6 +141,6 @@ body {
 
 /* Text Selection */
 ::selection {
-  background-color: #383838;
-  color: #ffffff;
+  background-color: var(--border);
+  color: var(--foreground);
 }

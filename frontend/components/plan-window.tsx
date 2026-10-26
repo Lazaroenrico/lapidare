@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import type { DenseBlockDimensions, PlanDag, PlanNode } from "@/lib/types";
+import { useLocale } from "./locale-provider";
 
 interface ExtendedPlanNode extends PlanNode {
   dimensions?: DenseBlockDimensions;
@@ -44,6 +45,7 @@ export function PlanWindow({
   blockDimensions,
   className = "",
 }: PlanWindowProps) {
+  const { t } = useLocale();
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -90,21 +92,21 @@ export function PlanWindow({
   const renderStatusIcon = (status: PlanNode["status"], isCurrent: boolean) => {
     if (status === "mastered") {
       return (
-        <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
+        <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
       );
     }
     if (isCurrent || status === "current") {
       return (
         <div className="relative flex items-center justify-center shrink-0">
-          <span className="w-3.5 h-3.5 rounded-full bg-amber-400/30 animate-ping absolute" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#e0a030] shrink-0" />
+          <span className="w-3.5 h-3.5 rounded-full bg-warning/30 animate-ping absolute" />
+          <span className="w-2.5 h-2.5 rounded-full bg-warning shrink-0" />
         </div>
       );
     }
     if (status === "review") {
-      return <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+      return <RotateCcw className="w-3.5 h-3.5 text-warning shrink-0" />;
     }
-    return <Circle className="w-3.5 h-3.5 text-[#8d8d8d] shrink-0" />;
+    return <Circle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
   };
 
   // Minimized floating pill in bottom-right
@@ -114,14 +116,14 @@ export function PlanWindow({
         <button
           type="button"
           onClick={() => setIsMinimized(false)}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] shadow-2xl transition-all cursor-pointer font-ui text-xs active:scale-95 group"
-          title="Expandir Mini-DAG do Plano"
+          className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground shadow-2xl transition-all cursor-pointer font-ui text-xs active:scale-95 group"
+          title={t.planExpand}
         >
-          <Layers className="w-3.5 h-3.5 text-[#8d8d8d] group-hover:text-[#e6e6e6]" />
+          <Layers className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground" />
           <span className="font-semibold tracking-wider text-[11px]">
-            PLANO ({masteredCount}/{totalCount})
+            {t.planPill(masteredCount, totalCount)}
           </span>
-          <span className="w-2 h-2 rounded-full bg-[#e0a030] animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
         </button>
       </div>
     );
@@ -129,27 +131,28 @@ export function PlanWindow({
 
   return (
     <aside
-      className={`fixed bottom-20 right-6 w-80 md:w-96 max-h-[72vh] flex flex-col z-30 shadow-2xl rounded-lg overflow-hidden bg-[#1c1c1c] border border-[#434343] transition-all font-ui text-xs ${className}`}
-      aria-label="Lesson Plan Mini-DAG"
+      className={`fixed bottom-20 right-6 w-80 md:w-96 max-h-[72vh] flex flex-col z-30 shadow-2xl rounded-lg overflow-hidden bg-card border border-border transition-all font-ui text-xs ${className}`}
+      aria-label={t.planAria}
     >
       {/* Top Header */}
-      <div className="px-3.5 py-2.5 bg-[#141414] border-b border-[#434343] flex items-center justify-between select-none">
+      <div className="px-3.5 py-2.5 bg-background border-b border-border flex items-center justify-between select-none">
         <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-[#8d8d8d]" />
-          <span className="font-bold text-[#e6e6e6] text-[11.5px] uppercase tracking-wider">
-            ⇲ Plano da Aula · Mini-DAG
+          <Layers className="w-4 h-4 text-muted-foreground" />
+          <span className="font-bold text-foreground text-[11.5px] uppercase tracking-wider">
+            {t.planHeading}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[#8d8d8d] px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#2a2a2a]">
+          <span className="text-[10px] text-muted-foreground px-1.5 py-0.5 rounded bg-card border border-accent">
             {masteredCount}/{totalCount} ({progressPercent}%)
           </span>
           <button
             type="button"
             onClick={() => setIsMinimized(true)}
-            className="p-1 text-[#8d8d8d] hover:text-[#e6e6e6] transition-colors rounded hover:bg-[#2a2a2a]"
-            title="Minimizar plano"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-accent"
+            title={t.planMinimize}
+            aria-label={t.planMinimize}
           >
             <Minimize2 className="w-3.5 h-3.5" />
           </button>
@@ -157,9 +160,9 @@ export function PlanWindow({
       </div>
 
       {/* Progress Bar */}
-      <div className="w-full h-1 bg-[#141414]">
+      <div className="w-full h-1 bg-background">
         <div
-          className="h-full bg-green-500/70 transition-all duration-300"
+          className="h-full bg-success/70 transition-all duration-300"
           style={{ width: `${progressPercent}%` }}
         />
       </div>
@@ -179,10 +182,10 @@ export function PlanWindow({
               key={node.id}
               className={`group flex flex-col p-2.5 rounded border transition-all cursor-pointer ${
                 isCurrent
-                  ? "bg-[#2a2a2a] border-[#e0a030]/60 shadow-sm"
+                  ? "bg-accent border-warning/60 shadow-sm"
                   : isSelected
-                  ? "bg-[#252525] border-[#8d8d8d]"
-                  : "bg-[#141414] border-[#2a2a2a] hover:border-[#434343] hover:bg-[#1a1a1a]"
+                  ? "bg-accent border-muted-foreground"
+                  : "bg-background border-accent hover:border-border hover:bg-card"
               }`}
               onClick={() => {
                 setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
@@ -196,30 +199,30 @@ export function PlanWindow({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-medium text-[#e6e6e6] text-[12px] font-prose leading-snug">
+                      <span className="font-medium text-foreground text-[12px] font-prose leading-snug">
                         {node.title}
                       </span>
 
                       {/* Badges */}
                       {isRoot && (
-                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-[#1c1c1c] border border-[#434343] text-[#8d8d8d]">
-                          ✦ Base
+                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-card border border-border text-muted-foreground">
+                          {t.planBase}
                         </span>
                       )}
                       {isGoal && (
-                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-[#e0a030]/20 border border-[#e0a030]/40 text-[#e0a030]">
-                          🎯 Alvo
+                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-warning/20 border border-warning/40 text-warning">
+                          {t.planGoal}
                         </span>
                       )}
                       {isCurrent && (
-                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
-                          Atual
+                        <span className="text-[9px] uppercase tracking-wider px-1 py-0.2 rounded bg-warning/20 border border-warning/40 text-warning font-bold">
+                          {t.planCurrent}
                         </span>
                       )}
                     </div>
 
                     {node.summary && (
-                      <p className="text-[11px] text-[#8d8d8d] font-prose line-clamp-1 mt-0.5">
+                      <p className="text-[11px] text-muted-foreground font-prose line-clamp-1 mt-0.5">
                         {node.summary}
                       </p>
                     )}
@@ -236,8 +239,8 @@ export function PlanWindow({
                         prev === node.id ? null : node.id
                       );
                     }}
-                    className="px-1.5 py-0.5 rounded text-[9.5px] font-ui bg-[#1c1c1c] border border-[#434343] hover:border-[#8d8d8d] text-[#8d8d8d] hover:text-[#e6e6e6] shrink-0 transition-colors"
-                    title="Ver 4 dimensões (Dito/Pressuposto/Pulado/Simplificações)"
+                    className="px-1.5 py-0.5 rounded text-[9.5px] font-ui bg-card border border-border hover:border-muted-foreground text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+                    title={t.planDimsTitle}
                   >
                     4D
                   </button>
@@ -246,10 +249,10 @@ export function PlanWindow({
 
               {/* Dependencies hint */}
               {node.dependencies && node.dependencies.length > 0 && (
-                <div className="flex items-center gap-1 mt-1.5 text-[9.5px] text-[#8d8d8d]">
+                <div className="flex items-center gap-1 mt-1.5 text-[9.5px] text-muted-foreground">
                   <CornerDownRight className="w-2.5 h-2.5 shrink-0" />
                   <span className="truncate">
-                    requer: {node.dependencies.join(", ")}
+                    {t.planRequires(node.dependencies.join(", "))}
                   </span>
                 </div>
               )}
@@ -260,15 +263,17 @@ export function PlanWindow({
 
       {/* 4-Dimensions Drawer (When a node is inspected) */}
       {inspectedNode && inspectedDimensions && (
-        <div className="border-t border-[#434343] bg-[#141414] p-3 max-h-56 overflow-y-auto flex flex-col gap-2.5 select-text">
-          <div className="flex items-center justify-between pb-1 border-b border-[#2a2a2a]">
-            <span className="font-semibold text-[#e6e6e6] text-[11px] tracking-wide truncate">
-              {inspectedNode.title} · Dimensões da Fonte
+        <div className="border-t border-border bg-background p-3 max-h-56 overflow-y-auto flex flex-col gap-2.5 select-text">
+          <div className="flex items-center justify-between pb-1 border-b border-accent">
+            <span className="font-semibold text-foreground text-[11px] tracking-wide truncate">
+              {t.planDimsHeading(inspectedNode.title)}
             </span>
             <button
               type="button"
               onClick={() => setSelectedNodeId(null)}
-              className="text-[#8d8d8d] hover:text-[#e6e6e6] p-0.5"
+              className="text-muted-foreground hover:text-foreground p-0.5"
+              title={t.close}
+              aria-label={t.close}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -277,10 +282,10 @@ export function PlanWindow({
           {/* Dito */}
           {inspectedDimensions.what_was_said && (
             <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] uppercase font-bold text-[#8d8d8d]">
-                🗣 O que foi dito:
+              <span className="text-[10px] uppercase font-bold text-muted-foreground">
+                {t.dimSaid}
               </span>
-              <p className="font-prose text-[12px] text-[#e6e6e6] leading-relaxed">
+              <p className="font-prose text-[12px] text-foreground leading-relaxed">
                 {inspectedDimensions.what_was_said}
               </p>
             </div>
@@ -290,10 +295,10 @@ export function PlanWindow({
           {inspectedDimensions.what_was_assumed &&
             inspectedDimensions.what_was_assumed.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] uppercase font-bold text-blue-400">
-                  🔍 O que foi pressuposto:
+                <span className="text-[10px] uppercase font-bold text-foreground">
+                  {t.dimAssumed}
                 </span>
-                <ul className="list-disc pl-4 font-prose text-[11.5px] text-[#e6e6e6] space-y-0.5">
+                <ul className="list-disc pl-4 font-prose text-[11.5px] text-foreground space-y-0.5">
                   {inspectedDimensions.what_was_assumed.map((item, i) => (
                     <li key={i}>{item}</li>
                   ))}
@@ -305,10 +310,10 @@ export function PlanWindow({
           {inspectedDimensions.what_was_skipped &&
             inspectedDimensions.what_was_skipped.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] uppercase font-bold text-amber-400">
-                  ⚡ O que foi pulado / saltos:
+                <span className="text-[10px] uppercase font-bold text-warning">
+                  {t.dimSkipped}
                 </span>
-                <ul className="list-disc pl-4 font-prose text-[11.5px] text-[#e6e6e6] space-y-0.5">
+                <ul className="list-disc pl-4 font-prose text-[11.5px] text-foreground space-y-0.5">
                   {inspectedDimensions.what_was_skipped.map((item, i) => (
                     <li key={i}>{item}</li>
                   ))}
@@ -320,10 +325,10 @@ export function PlanWindow({
           {inspectedDimensions.simplifications &&
             inspectedDimensions.simplifications.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] uppercase font-bold text-purple-400">
-                  ⚠️ Simplificações &amp; Divergências:
+                <span className="text-[10px] uppercase font-bold text-muted-foreground">
+                  {t.dimSimplifications}
                 </span>
-                <ul className="list-disc pl-4 font-prose text-[11.5px] text-[#e6e6e6] space-y-0.5">
+                <ul className="list-disc pl-4 font-prose text-[11.5px] text-foreground space-y-0.5">
                   {inspectedDimensions.simplifications.map((item, i) => (
                     <li key={i}>{item}</li>
                   ))}
@@ -334,8 +339,8 @@ export function PlanWindow({
           {/* Source Anchors */}
           {inspectedDimensions.source_anchors &&
             inspectedDimensions.source_anchors.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#2a2a2a]">
-                <span className="text-[10px] text-[#8d8d8d]">Âncoras:</span>
+              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-accent">
+                <span className="text-[10px] text-muted-foreground">{t.dimAnchors}</span>
                 {inspectedDimensions.source_anchors.map((anchor) => (
                   <button
                     key={anchor}
@@ -343,12 +348,12 @@ export function PlanWindow({
                     onClick={() => {
                       if (onSelectCitation) {
                         onSelectCitation(
-                          sourceName || "Fonte",
+                          sourceName || t.sourceFallback,
                           anchor.replace(/^#?\^?/, "")
                         );
                       }
                     }}
-                    className="px-1.5 py-0.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] text-[10px] font-ui transition-colors cursor-pointer"
+                    className="px-1.5 py-0.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[10px] font-ui transition-colors cursor-pointer"
                   >
                     #{anchor.startsWith("^") ? anchor : `^${anchor}`}
                   </button>
