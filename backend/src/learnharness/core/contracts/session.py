@@ -31,6 +31,8 @@ class DenseBlockDimensions(BaseModel):
     """Four analytical dimensions mapped for each dense source block.
 
     Mapeamento: Dito / Pressuposto / Pulado / Simplificações com citações #^pN.
+    Every ``^pN`` mentioned here (and in ``paragraph_refs``) must exist in the source;
+    ``SessionService.set_plan`` rejects the plan otherwise.
     """
     said: str = ""
     assumed: list[str] = Field(default_factory=list)
@@ -82,6 +84,15 @@ class PlanDag(BaseModel):
         return self
 
 
+class NodeSpan(BaseModel):
+    """Marks that ``content[start:]`` of a message was produced while ``node_id`` was current.
+
+    ``node_id`` is ``None`` for prose produced before any plan existed (diagnosis).
+    """
+    start: int = 0
+    node_id: str | None = None
+
+
 class SessionMessage(BaseModel):
     """Single turn message in the teaching or practice session."""
     id: str
@@ -92,6 +103,7 @@ class SessionMessage(BaseModel):
     quiz_id: str | None = None
     demo_slug: str | None = None
     citations: list[str] = Field(default_factory=list)
+    node_spans: list[NodeSpan] = Field(default_factory=list)
 
 
 class SessionRecord(BaseModel):

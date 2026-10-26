@@ -44,12 +44,16 @@ For **every node**:
 ## 3. Dense Source Ingestion (4 Dimensions + Paragraph Anchors)
 
 When teaching from a dense source (e.g., mentor transcript in `Fontes/`):
-1. **Always Anchor to Paragraphs:** Quote and cite key statements using Obsidian wikilinks: `[[Fonte#^pN]]`.
-2. **Map the 4 Dimensions for Every Major Block:**
-   - **O que foi dito:** What the instructor literally stated, cited with `[[Fonte#^pN]]`.
-   - **O que foi pressuposto:** Background concepts the speaker assumed the listener already knows without explaining them.
-   - **O que foi pulado:** Mathematical or conceptual leaps omitted in the spoken explanation.
-   - **Simplificações / Divergências:** Where the mentor's practical mental model intentionally simplifies or diverges from academic textbook theory.
+1. **Always Anchor to Paragraphs:** Quote and cite key statements using Obsidian wikilinks: `[[Fonte#^pN]]` (the harness rewrites `Fonte` to the real source note name in the lesson note). Only cite `^pN` anchors that exist in the SOURCE.
+2. **One plan node per logical block:** each `plan_init` node is a block of the source; list its anchors in `source_paragraphs` (e.g. `["p3", "p4"]`).
+3. **Map the 4 Dimensions for Every Block** inside the node's `four_dimensions` object (it is rendered as the "Mapa da fonte" of `Aulas/<data> <tema>.md`):
+   - `said` — **O que foi dito:** faithful summary of what the instructor literally stated, with `^pN` anchors inline.
+   - `assumed` (list) — **O que foi pressuposto:** background concepts the speaker assumed without explaining.
+   - `skipped` (list) — **O que foi pulado:** mathematical or conceptual leaps omitted in the explanation.
+   - `simplifications` (list) — **Simplificações / Divergências:** where the practical mental model simplifies or diverges from rigorous theory.
+   - `paragraph_refs` (list) — every `pN` the block covers.
+   Every `^pN` used anywhere in a node is validated against the source; an unknown anchor makes `plan_init` fail, so never invent one.
+4. **Teach node by node:** call `plan_advance(node_id, "current")` before teaching a block. Prose written while a node is current becomes that node's section (`## <label>`) in the lesson note; prose before `plan_init` becomes the "Diagnóstico" section.
 
 ---
 
