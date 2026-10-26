@@ -1,14 +1,24 @@
-"""Quiz, QuestionDock, and calibration contracts for LearnHarness.
+"""Question, QuestionDock, and calibration contracts for LearnHarness.
 
 Pure Pydantic models with ZERO I/O.
-Every test of understanding occurs via QuestionDock with prediction/check, confidence, and thinking.
+Every question reaches the learner through the QuestionDock. Three kinds exist:
+
+* ``quiz``: graded multiple choice (single or multi select) with confidence and thinking;
+* ``explain``: free-text answer graded later by the agent (``grade_recall``) against an
+  answer it committed to before asking;
+* ``ask``: an ungraded question to the learner (goal, preference), with "Other…".
+
+Records persisted before Fase 8 (``correct_index`` / ``chosen_index`` scalars, mandatory
+confidence) still validate: the legacy scalars are folded into the list fields.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
-QuizMode = Literal["PREDICTION", "CHECK"]
+QuizMode = Literal["PROBE", "PREDICTION", "CHECK"]
+QuestionKind = Literal["quiz", "explain", "ask"]
+GradeVerdict = Literal["correct", "partial", "incorrect"]
 ConfidenceBand = Literal["low", "medium", "high"]
 CalibrationBand = Literal[
     "calibrated_mastery",
@@ -20,69 +30,158 @@ CalibrationBand = Literal[
 ]
 
 
+def _fold_legacy_index(data: Any, scalar: str, plural: str) -> Any:
+    """Map a legacy ``scalar`` index into the ``plural`` list (the list wins when both exist)."""
+    if not isinstance(data, dict) or scalar not in data:
+        return data
+    data = dict(data)
+    value = data.pop(scalar)
+    if plural not in data and value is not None:
+        data[plural] = [value]
+    return data
+
+
 class QuizOption(BaseModel):
-    """Single option in a quiz (supports KaTeX formulas in label)."""
+    """Single option in a question (supports KaTeX formulas in label)."""
     value: str
     label: str
+    description: str | None = None
 
 
 class QuizPayload(BaseModel):
-    """Payload presented inside the QuestionDock component."""
+    """A question presented inside the QuestionDock (name kept for API compatibility).
+
+    ``correct_indices``, ``committed_answer`` and ``explanation`` are the answer key:
+    they never leave the server while the question is pending.
+    """
     quiz_id: str
     session_id: str
     node_id: str | None = None
-    topic: str
-    mode: QuizMode = "PREDICTION"
+    topic: str = ""
+    kind: QuestionKind = "quiz"
+    mode: QuizMode | None = None
     question: str
     details: str | None = None
-    choices: list[QuizOption] = Field(min_length=2, max_length=6)
-    correct_index: int = Field(ge=0)
-    explanation: str
+    choices: list[QuizOption] = Field(default_factory=list, max_length=6)
+    multi_select: bool = False
+    correct_indices: list[int] = Field(default_factory=list)
+    committed_answer: str | None = None
+    explanation: str = ""
     created_at: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_correct_index(cls, data: Any) -> Any:
+        return _fold_legacy_index(data, "correct_index", "correct_indices")
+
     @model_validator(mode="after")
-    def validate_correct_index(self) -> "QuizPayload":
-        if self.correct_index >= len(self.choices):
-            raise ValueError(
-                f"correct_index {self.correct_index} is out of bounds for choices of length {len(self.choices)}"
-            )
+    def _consistent_kind(self) -> "QuizPayload":
+        if self.kind == "quiz":
+            if len(self.choices) < 2:
+                raise ValueError("A quiz needs between 2 and 6 options")
+            if not self.correct_indices:
+                raise ValueError("A quiz needs at least one correct option")
+            for index in self.correct_indices:
+                if not 0 <= index < len(self.choices):
+                    raise ValueError(
+                        f"correct index {index} is out of bounds for choices of length {len(self.choices)}"
+                    )
+            if len(set(self.correct_indices)) != len(self.correct_indices):
+                raise ValueError("correct indices must be unique")
+            if len(self.correct_indices) > 1 and not self.multi_select:
+                raise ValueError("More than one correct option requires multi_select=true")
+        elif self.kind == "explain":
+            if self.choices or self.correct_indices:
+                raise ValueError("An explain question has no options")
+            if not (self.committed_answer or "").strip():
+                raise ValueError("An explain question needs the committed_answer it will be graded against")
+        elif self.correct_indices:
+            raise ValueError("An ask question is not graded")
         return self
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def correct_index(self) -> int | None:
+        """Legacy single-answer view of ``correct_indices``."""
+        return self.correct_indices[0] if self.correct_indices else None
 
 
 class QuizSubmission(BaseModel):
-    """User response submitted from the QuestionDock UI."""
+    """Learner response submitted from the QuestionDock UI.
+
+    Which fields are required depends on the question kind; ``evaluate_calibration``
+    enforces it against the pending question.
+    """
     quiz_id: str
     session_id: str
-    chosen_index: int | None = None
+    chosen_indices: list[int] = Field(default_factory=list)
     is_dont_know: bool = False
-    confidence: int = Field(ge=0, le=100)
+    confidence: int | None = Field(default=None, ge=0, le=100)
     learner_thinking: str = ""
+    reading_thinking: str = ""
+    text: str = ""
+    other_text: str = ""
 
-    @model_validator(mode="after")
-    def validate_choice_or_dont_know(self) -> "QuizSubmission":
-        if not self.is_dont_know and self.chosen_index is None:
-            raise ValueError("Must either select a chosen_index or indicate is_dont_know=True")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_chosen_index(cls, data: Any) -> Any:
+        return _fold_legacy_index(data, "chosen_index", "chosen_indices")
+
+    @property
+    def chosen_index(self) -> int | None:
+        return self.chosen_indices[0] if self.chosen_indices else None
 
 
 class CalibrationResult(BaseModel):
-    """Calculated calibration metric stored in .harness/quiz-log.jsonl and passed to the agent."""
+    """Evaluated answer stored in the session, in .harness/quiz-log.jsonl and shown to the agent.
+
+    ``correct`` is ``None`` for ``ask`` and for an ``explain`` not yet graded; confidence
+    and the bands only exist for a ``quiz`` answered without "Don't know" (the band is
+    ``conscious_gap`` for a quiz "Don't know").
+    """
     quiz_id: str
     session_id: str
-    topic: str
+    topic: str = ""
     node_id: str | None = None
-    correct: bool
-    is_dont_know: bool
-    chosen_index: int | None
-    correct_index: int
-    confidence: int
-    confidence_band: ConfidenceBand
-    calibration_band: CalibrationBand
-    # Mode of the quiz that produced this answer. None only for legacy records written
-    # before the field existed. Mastery gates treat None as "not CHECK evidence"
-    # (conservative); practice prioritization treats None as CHECK (keeps old ranking).
+    kind: QuestionKind = "quiz"
+    # Mode of the question. None for ask and for legacy records written before the
+    # field existed. Mastery gates treat None as "not CHECK evidence" (conservative);
+    # practice prioritization treats None as CHECK (keeps old ranking).
     mode: QuizMode | None = None
-    learner_thinking: str
-    pedagogical_directive: str
-    explanation: str
+    question: str = ""
+    choices: list[QuizOption] = Field(default_factory=list)
+    correct: bool | None = None
+    is_dont_know: bool = False
+    chosen_indices: list[int] = Field(default_factory=list)
+    correct_indices: list[int] = Field(default_factory=list)
+    confidence: int | None = None
+    confidence_band: ConfidenceBand | None = None
+    calibration_band: CalibrationBand | None = None
+    learner_thinking: str = ""
+    reading_thinking: str = ""
+    text: str = ""
+    other_text: str = ""
+    committed_answer: str | None = None
+    grade: GradeVerdict | None = None
+    grade_feedback: str = ""
+    pedagogical_directive: str = ""
+    explanation: str = ""
     timestamp: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_indices(cls, data: Any) -> Any:
+        data = _fold_legacy_index(data, "chosen_index", "chosen_indices")
+        return _fold_legacy_index(data, "correct_index", "correct_indices")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def chosen_index(self) -> int | None:
+        """Legacy single-answer view of ``chosen_indices``."""
+        return self.chosen_indices[0] if self.chosen_indices else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def correct_index(self) -> int | None:
+        """Legacy single-answer view of ``correct_indices``."""
+        return self.correct_indices[0] if self.correct_indices else None

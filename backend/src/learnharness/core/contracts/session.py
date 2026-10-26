@@ -16,7 +16,9 @@ SessionMode = Literal["TEACH", "PRACTICE"]
 # Context kind that the TEACH mode adapts to automatically
 TeachContextKind = Literal["free_topic", "dense_source", "track_step", "drawing_review"]
 
-# State-machine phase of an active session
+# State-machine phase of an active session: probing -> planning -> teaching -> completed.
+# "awaiting_answer" and "consolidating" only exist in records written before Fase 8
+# (waiting on the learner is ``execution_status="waiting"``); they are normalized on load.
 SessionPhase = Literal[
     "probing",
     "planning",
@@ -25,6 +27,21 @@ SessionPhase = Literal[
     "consolidating",
     "completed",
 ]
+LEGACY_PHASES = frozenset({"awaiting_answer", "consolidating"})
+
+
+class ProbeStrand(BaseModel):
+    """One dependency strand of the learner's goal, as bracketed by the diagnosis."""
+    strand: str = Field(min_length=1)
+    # Floor, ceiling, misconceptions and where to build from.
+    assessment: str = Field(min_length=1)
+
+
+class ProbeAssessment(BaseModel):
+    """The diagnosis handed from the prober to the teacher (``probe_done``)."""
+    strands: list[ProbeStrand] = Field(min_length=1)
+    summary: str | None = None
+    created_at: str = ""
 
 
 class DenseBlockDimensions(BaseModel):
@@ -41,7 +58,9 @@ class DenseBlockDimensions(BaseModel):
     paragraph_refs: list[str] = Field(default_factory=list)
 
 
-PlanNodeStatus = Literal["pending", "current", "mastered", "needs_review"]
+# ``mastered`` / ``needs_review`` are set by plan_advance and persist; ``current`` /
+# ``visited`` / ``pending`` are derived from the questions posed (core.plan_mermaid).
+PlanNodeStatus = Literal["pending", "current", "visited", "mastered", "needs_review"]
 
 
 class PlanNode(BaseModel):
@@ -124,6 +143,11 @@ class SessionRecord(BaseModel):
     event_id: str = ""
     pending_quiz: QuizPayload | None = None
     answers: dict[str, CalibrationResult] = Field(default_factory=dict)
+    assessment: ProbeAssessment | None = None
+    # probe_done happened and the teacher's planning turn has not completed yet.
+    handoff_pending: bool = False
+    # Prompt family ("prober" | "teacher" | "practice") last sent to a persistent process.
+    prompt_phase: str | None = None
     execution_status: Literal["idle", "queued", "running", "waiting", "interrupted", "failed", "completed"] = "idle"
     execution_id: str | None = None
     error: str | None = None

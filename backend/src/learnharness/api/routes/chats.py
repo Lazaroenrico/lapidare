@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from learnharness.api.state import get_app_state
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import SessionMode, SessionRecord
+from learnharness.core.plan_mermaid import derive_plan_statuses
 from learnharness.services.sessions import SessionConflict, now
 from learnharness.vault.jsonl_store import list_sessions
 
@@ -27,10 +28,15 @@ class SendMessagePayload(BaseModel):
 
 
 class QuizSubmissionPayload(BaseModel):
+    """QuestionDock answer; ``chosen_index`` is the legacy single-choice spelling."""
     quiz_id: str
+    chosen_indices: list[int] = Field(default_factory=list)
     chosen_index: int | None = Field(default=None, ge=0)
-    confidence: int = Field(ge=0, le=100)
+    confidence: int | None = Field(default=None, ge=0, le=100)
     learner_thinking: str = ""
+    reading_thinking: str = ""
+    text: str = Field(default="", max_length=100000)
+    other_text: str = Field(default="", max_length=10000)
     is_dont_know: bool = False
 
 
@@ -39,13 +45,29 @@ class ResumePayload(BaseModel):
 
 
 def _serialize_quiz(quiz: QuizPayload) -> dict[str, Any]:
+    """The pending question as the dock sees it: never the answer key.
+
+    ``correct_indices`` / ``correct_index``, ``committed_answer`` and ``explanation`` stay
+    on the server until the learner answers.
+    """
     return {
         "id": quiz.quiz_id, "quiz_id": quiz.quiz_id, "session_id": quiz.session_id,
-        "mode": quiz.mode, "question": quiz.question, "details": quiz.details,
-        "options": [{"index": i, "label": opt.value.upper(), "text": opt.label} for i, opt in enumerate(quiz.choices)],
-        "choices": [opt.model_dump() for opt in quiz.choices], "has_dont_know": True,
-        "target_concept": quiz.topic, "plan_node_id": quiz.node_id,
+        "kind": quiz.kind, "mode": quiz.mode, "question": quiz.question, "details": quiz.details,
+        "options": [{"index": i, "label": opt.value.upper(), "text": opt.label, "description": opt.description}
+                    for i, opt in enumerate(quiz.choices)],
+        "choices": [opt.model_dump() for opt in quiz.choices], "multi_select": quiz.multi_select,
+        "has_dont_know": quiz.kind != "ask", "has_confidence": quiz.kind == "quiz",
+        "has_other": quiz.kind == "ask", "collapsed": quiz.mode == "CHECK",
+        "target_concept": quiz.topic, "plan_node_id": quiz.node_id, "node_id": quiz.node_id,
+        "created_at": quiz.created_at,
     }
+
+
+def _question_node_ids(session: SessionRecord, pending_quiz: QuizPayload | None) -> list[str | None]:
+    asked = [a.node_id for a in session.answers.values() if a.kind in ("quiz", "explain")]
+    if pending_quiz and pending_quiz.kind in ("quiz", "explain"):
+        asked.append(pending_quiz.node_id)
+    return asked
 
 
 def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, Any]:
@@ -56,12 +78,14 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
         "source_file": session.source_path,
         "status": "waiting_quiz" if pending_quiz else ("completed" if session.phase == "completed" else "active"),
         "pending_quiz": _serialize_quiz(pending_quiz) if pending_quiz else None,
+        "answers": [a.model_dump(mode="json") for a in session.answers.values()],
         "execution_status": session.execution_status,
         "error": session.error,
         "recovery_required": session.recovery_required or bool(session.pending_quiz_id and not session.pending_quiz),
         "messages": [{**m.model_dump(mode="json"), "timestamp": m.created_at} for m in session.messages],
     })
-    data["plan"]["nodes"] = [{**n.model_dump(mode="json"), "title": n.label, "dependencies": n.depends_on, "summary": n.four_dimensions.said if n.four_dimensions else ""} for n in session.plan.nodes]
+    statuses = derive_plan_statuses(session.plan.nodes, _question_node_ids(session, pending_quiz))
+    data["plan"]["nodes"] = [{**n.model_dump(mode="json"), "status": statuses[n.id], "title": n.label, "dependencies": n.depends_on, "summary": n.four_dimensions.said if n.four_dimensions else ""} for n in session.plan.nodes]
     return data
 
 
@@ -104,9 +128,12 @@ async def send_chat_message(chat_id: str, payload: SendMessagePayload, request: 
 @chats_router.post("/{chat_id}/answer")
 async def answer_quiz(chat_id: str, payload: QuizSubmissionPayload, request: Request):
     state = get_app_state(request.app)
-    submission = QuizSubmission(session_id=chat_id, **payload.model_dump())
-    result = await state.sessions.answer(submission)
-    return {**result.model_dump(mode="json"), "is_correct": result.correct, "band": result.calibration_band, "feedback_prose": result.pedagogical_directive + "\n\n" + result.explanation}
+    fields = payload.model_dump(exclude={"chosen_index"})
+    if not fields["chosen_indices"] and payload.chosen_index is not None:
+        fields["chosen_indices"] = [payload.chosen_index]
+    result = await state.sessions.answer(QuizSubmission(session_id=chat_id, **fields))
+    feedback = "\n\n".join(p for p in (result.pedagogical_directive, result.explanation) if p)
+    return {**result.model_dump(mode="json"), "is_correct": result.correct, "band": result.calibration_band, "feedback_prose": feedback}
 
 
 @chats_router.post("/{chat_id}/resume")
