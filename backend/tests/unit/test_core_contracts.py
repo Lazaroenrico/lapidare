@@ -129,6 +129,38 @@ def test_calibration_matrix_all_four_quadrants() -> None:
     assert res_gap.calibration_band == "conscious_gap"
 
 
+def test_calibration_records_quiz_mode_and_mastery_evidence() -> None:
+    """CalibrationResult carries the quiz mode; only a calibrated CHECK on the node is mastery evidence."""
+    from learnharness.core.calibration import is_mastery_evidence
+    from learnharness.core.contracts.quiz import CalibrationResult
+
+    base = dict(
+        quiz_id="q1", session_id="s1", topic="t", node_id="n1",
+        choices=[QuizOption(value="a", label="A"), QuizOption(value="b", label="B")],
+        correct_index=1, question="?", explanation="e",
+    )
+    sub = QuizSubmission(quiz_id="q1", session_id="s1", chosen_index=1, confidence=90)
+    pred = evaluate_calibration(sub, QuizPayload(mode="PREDICTION", **base))
+    check = evaluate_calibration(sub, QuizPayload(mode="CHECK", **base))
+    dont_know = evaluate_calibration(
+        QuizSubmission(quiz_id="q1", session_id="s1", is_dont_know=True, confidence=0),
+        QuizPayload(mode="CHECK", **base),
+    )
+    assert (pred.mode, check.mode, dont_know.mode) == ("PREDICTION", "CHECK", "CHECK")
+    assert pred.calibration_band == check.calibration_band == "calibrated_mastery"
+    assert not is_mastery_evidence(pred, "n1")
+    assert is_mastery_evidence(check, "n1")
+    assert not is_mastery_evidence(check, "other-node")
+    assert not is_mastery_evidence(dont_know, "n1")
+
+    # Legacy quiz-log / session records without `mode` still load, and are not CHECK evidence.
+    legacy = check.model_dump(mode="json")
+    legacy.pop("mode")
+    restored = CalibrationResult.model_validate(legacy)
+    assert restored.mode is None
+    assert not is_mastery_evidence(restored, "n1")
+
+
 def test_validate_quiz_options_evenness_detects_giveaways() -> None:
     """Verify detection of 'porque/because' justification giveaway and asymmetric bolding in the correct choice."""
     bad_choices = [

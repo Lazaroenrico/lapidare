@@ -71,6 +71,7 @@ def evaluate_calibration(
             confidence=submission.confidence,
             confidence_band=conf_band,
             calibration_band="conscious_gap",
+            mode=quiz.mode,
             learner_thinking=submission.learner_thinking,
             pedagogical_directive=(
                 "Step back one prerequisite rung, construct concept from ground up "
@@ -131,10 +132,25 @@ def evaluate_calibration(
         confidence=submission.confidence,
         confidence_band=conf_band,
         calibration_band=cal_band,
+        mode=quiz.mode,
         learner_thinking=submission.learner_thinking,
         pedagogical_directive=directive,
         explanation=quiz.explanation,
         timestamp=ts,
+    )
+
+
+def is_mastery_evidence(answer: CalibrationResult, node_id: str) -> bool:
+    """True only for a calibrated CHECK answer bound to ``node_id``.
+
+    PREDICTION quizzes are asked before teaching (to force a prediction), so even a
+    confident correct prediction does not prove understanding. Legacy answers with
+    ``mode=None`` are conservatively rejected.
+    """
+    return (
+        answer.mode == "CHECK"
+        and answer.node_id == node_id
+        and answer.calibration_band == "calibrated_mastery"
     )
 
 

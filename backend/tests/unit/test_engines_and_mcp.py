@@ -13,12 +13,13 @@ from learnharness.core.contracts.config import (
     EngineKind,
     ModelSlotConfig,
 )
-from learnharness.core.contracts.quiz import QuizSubmission
+from learnharness.core.contracts.quiz import CalibrationResult, QuizSubmission
 from learnharness.engines import GeminiAcpEngine, GenAiSdkEngine, get_engine
 from learnharness.engines.detector import detect_connectors
 from learnharness.mcp.runtime_server import session_tools
 from learnharness.prompts.loader import build_system_prompt
 from learnharness.services.sessions import SessionConflict
+from learnharness.vault.jsonl_store import append_session_event
 from tests.conftest import FakeEngine, wait_until
 
 
@@ -143,14 +144,60 @@ PLAN_NODES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Bug in services/sessions.py::advance: CalibrationResult does not record the quiz mode, "
-    "so a calibrated PREDICTION answer is accepted as mastery evidence instead of a CHECK."))
 async def test_prediction_answer_is_not_mastery_evidence(runtime) -> None:
+    """A calibrated PREDICTION (asked before teaching) never proves mastery; only a CHECK does."""
+    state, session_id, tools = runtime
+    await tools["plan_init"]("Approach", PLAN_NODES)
+    result, _ = await _pose_and_answer(state, session_id, tools, {"mode": "PREDICTION", **INNER_PRODUCT_CHECK},
+                                       chosen_index=1, confidence=90, thinking="Cosine similarity.")
+    assert result.mode == "PREDICTION"
+    assert result.calibration_band == "calibrated_mastery"
+    with pytest.raises(SessionConflict, match="calibrated check"):
+        await tools["plan_advance"]("node-truth", "mastered")
+
+
+async def _strip_answer_modes(state: AppState, session_id: str) -> None:
+    """Simulate a legacy session: append a snapshot whose answers predate the `mode` field."""
+    session = state.sessions.get(session_id)
+    data = session.model_dump(mode="json")
+    for answer in data["answers"].values():
+        answer.pop("mode")
+    append_session_event(state.vault_path, session_id, data)
+    assert all(a.mode is None for a in state.sessions.get(session_id).answers.values())
+
+
+async def test_legacy_answer_mode_is_recovered_from_session_history(runtime) -> None:
+    """Legacy answers without `mode` recover it from the posed quiz persisted in the session history."""
     state, session_id, tools = runtime
     await tools["plan_init"]("Approach", PLAN_NODES)
     await _pose_and_answer(state, session_id, tools, {"mode": "PREDICTION", **INNER_PRODUCT_CHECK},
                            chosen_index=1, confidence=90, thinking="Cosine similarity.")
+    await _strip_answer_modes(state, session_id)
+    with pytest.raises(SessionConflict, match="calibrated check"):
+        await tools["plan_advance"]("node-truth", "mastered")
+
+    await _pose_and_answer(state, session_id, tools,
+                           {"mode": "CHECK", **INNER_PRODUCT_CHECK, "question": "Check: " + INNER_PRODUCT_CHECK["question"]},
+                           chosen_index=1, confidence=90, thinking="Aligned vectors.")
+    await _strip_answer_modes(state, session_id)
+    res = await tools["plan_advance"]("node-truth", "mastered")
+    assert res["nodes"][0]["status"] == "mastered"
+    modes = sorted(a.mode for a in state.sessions.get(session_id).answers.values())
+    assert modes == ["CHECK", "PREDICTION"]  # Recovered modes are persisted by the next save.
+
+
+async def test_unrecoverable_legacy_answer_is_not_mastery_evidence(runtime) -> None:
+    """A legacy answer whose quiz is absent from history keeps mode=None and is rejected."""
+    state, session_id, tools = runtime
+    await tools["plan_init"]("Approach", PLAN_NODES)
+    session = state.sessions.get(session_id)
+    session.answers["ghost"] = CalibrationResult(
+        quiz_id="ghost", session_id=session_id, topic="inner-product", node_id="node-truth",
+        correct=True, is_dont_know=False, chosen_index=1, correct_index=1, confidence=90,
+        confidence_band="high", calibration_band="calibrated_mastery", learner_thinking="",
+        pedagogical_directive="", explanation="",
+    )
+    state.sessions.save(session)
     with pytest.raises(SessionConflict, match="calibrated check"):
         await tools["plan_advance"]("node-truth", "mastered")
 

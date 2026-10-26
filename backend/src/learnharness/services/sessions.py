@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from learnharness.core.calibration import evaluate_calibration
+from learnharness.core.calibration import evaluate_calibration, is_mastery_evidence
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import PlanDag, SessionMessage, SessionRecord
 from learnharness.core.events import SseEventType
@@ -20,7 +20,7 @@ from learnharness.vault.jsonl_store import (
     load_session,
 )
 from learnharness.vault.markdown_ast import merge_lesson_note
-from learnharness.vault.safety import safe_path
+from learnharness.vault.safety import safe_component, safe_path
 
 if TYPE_CHECKING:
     from learnharness.api.state import AppState
@@ -171,6 +171,37 @@ class SessionService:
             if (answer.session_id, answer.quiz_id) not in existing:
                 append_quiz_log(self.state.vault_path, answer)
 
+    def _recover_answer_modes(self, session: SessionRecord) -> None:
+        """Backfill ``mode`` on legacy answers from the session's own append-only history.
+
+        Every posed quiz is persisted as ``pending_quiz`` in a snapshot before it is
+        answered, so the QuizPayload (and its mode) can be recovered by quiz_id.
+        Answers whose quiz cannot be found keep ``mode=None`` and never count as
+        CHECK evidence. Recovered modes are persisted by the caller's next save.
+        """
+        legacy = {qid for qid, a in session.answers.items() if a.mode is None}
+        if not legacy:
+            return
+        path = safe_path(self.state.vault_path, f".harness/sessions/{safe_component(session.id)}.jsonl")
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        modes: dict[str, str] = {}
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            quiz = entry.get("pending_quiz") if isinstance(entry, dict) else None
+            if isinstance(quiz, dict) and quiz.get("quiz_id") in legacy:
+                try:
+                    modes[quiz["quiz_id"]] = QuizPayload.model_validate(quiz).mode
+                except ValueError:
+                    continue
+        for qid, mode in modes.items():
+            session.answers[qid].mode = mode
+
     async def set_plan(self, session_id: str, plan: PlanDag):
         async with self.lock(session_id):
             session = self.get(session_id)
@@ -200,7 +231,9 @@ class SessionService:
                 raise ValueError("Unknown plan node")
             if status in ("current", "mastered") and any(not any(n.id == dep and n.status == "mastered" for n in session.plan.nodes) for dep in node.depends_on):
                 raise SessionConflict("Prerequisites are not mastered")
-            if status == "mastered" and not any(a.node_id == node_id and a.calibration_band == "calibrated_mastery" for a in session.answers.values()):
+            if status == "mastered":
+                self._recover_answer_modes(session)
+            if status == "mastered" and not any(is_mastery_evidence(a, node_id) for a in session.answers.values()):
                 raise SessionConflict("Mastery requires a calibrated check")
             node.status = status
             session.plan.updated_at = now()
