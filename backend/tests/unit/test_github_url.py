@@ -88,3 +88,13 @@ def test_redact_hides_tokens_and_their_basic_auth_form():
     assert "ghp_supersecret" not in text and basic not in text and "abc" not in text
     assert "ghp_x" not in text
     assert "ghp_supersecret" not in str(GitHubSourceError("boom ghp_supersecret"))
+
+
+def test_generic_lesson_files_get_readable_names():
+    from learnharness.vault.github_source import source_basename
+
+    assert source_basename("phases/07-t/02-self-attention/docs/en.md") == "02-self-attention (en)"
+    assert source_basename("book/README.md") == "book"
+    assert source_basename("phases/07-t/README.md") == "07-t"
+    assert source_basename("guides/attention-intuition.md") == "attention-intuition"
+    assert source_basename("README.md") == "README"

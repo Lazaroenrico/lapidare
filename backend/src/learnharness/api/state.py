@@ -64,7 +64,12 @@ class AppState:
         if self.engine_factory:
             return self.engine_factory(slot)
         from learnharness.engines import get_engine
-        return get_engine(slot, runtime_config={"api_key": self.api_key})
+        # CLI idle timeouts pause while the learner is answering a QuestionDock.
+        return get_engine(
+            slot,
+            runtime_config={"api_key": self.api_key},
+            is_waiting_on_learner=lambda sid: self.dock_registry.get_pending_quiz(sid) is not None,
+        )
 
     def redact(self, text):
         for secret in (self.api_key, os.environ.get("GEMINI_API_KEY"), *self.tokens):
@@ -110,8 +115,10 @@ class AppState:
         await self.watcher.start()
 
     async def close(self):
+        from learnharness.engines import close_engine_processes
         await self.sessions.close()
         await self.jobs.close()
+        await close_engine_processes()
         if self.watcher:
             await self.watcher.stop()
         self.tokens.clear()

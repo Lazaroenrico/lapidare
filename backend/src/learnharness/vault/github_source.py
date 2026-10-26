@@ -27,14 +27,16 @@ from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 
-from learnharness.vault.safety import safe_component, safe_path
+import yaml
+
+from learnharness.vault.safety import folder_map, safe_component, safe_path
 from learnharness.vault.transcript_importer import import_transcript_text
 
 CLONE_TIMEOUT_SECONDS = 120.0
 LS_REMOTE_TIMEOUT_SECONDS = 30.0
-MAX_REPO_BYTES = 200 * 1024 * 1024
+MAX_REPO_BYTES = 500 * 1024 * 1024  # curricula ship images/notebooks; 200 MB was too tight
 MAX_FILE_BYTES = 1024 * 1024
-MAX_FILES = 2000
+MAX_FILES = 10000  # real curricula (e.g. ai-engineering-from-scratch) exceed 3k docs
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".ipynb"}
 SKIPPED_DIRS = {"node_modules", "__pycache__"}
 REPOS_DIR = ".harness/repos"
@@ -525,6 +527,53 @@ def list_repo_files(root: Path, subpath: str = "") -> tuple[list[RepoFile], bool
 # ---------------------------------------------------------------------------
 
 
+# Basenames that say nothing about the lesson. Obsidian resolves [[name#^pN]] by basename,
+# so hundreds of "docs/en.md" files would make every citation ambiguous.
+GENERIC_STEMS = {"readme", "index", "main", "docs", "doc", "lesson", "notes", "content", "src"}
+LANGUAGE_STEMS = {"en", "pt", "pt-br", "pt_br", "es", "fr", "de", "zh", "ja", "ko", "it", "ru"}
+
+
+def source_basename(relative: str) -> str:
+    """Readable, mostly vault-unique note name for a repository file."""
+    parts = [p for p in Path(relative).with_suffix("").parts]
+    stem = parts[-1]
+    lang = stem.lower() if stem.lower() in LANGUAGE_STEMS else None
+    meaningful = [p for p in parts if p.lower() not in GENERIC_STEMS | LANGUAGE_STEMS]
+    if not meaningful:
+        return stem
+    if stem.lower() in GENERIC_STEMS | LANGUAGE_STEMS:
+        # e.g. phases/07-x/02-self-attention/docs/en.md -> "02-self-attention (en)"
+        name = meaningful[-1]
+        return f"{name} ({lang})" if lang else name
+    return stem
+
+
+def _repo_path_of(note: Path) -> str | None:
+    text = note.read_text(encoding="utf-8", errors="replace")
+    if not text.startswith("---"):
+        return None
+    try:
+        meta = yaml.safe_load(text.split("---", 2)[1])
+    except yaml.YAMLError:
+        return None
+    return meta.get("repo_path") if isinstance(meta, dict) else None
+
+
+def _unique_basename(vault: Path, name: str, relative: str) -> str:
+    """Prefix the nearest meaningful ancestor while another source already uses the name."""
+    sources = safe_path(vault, folder_map(vault).sources_dir)
+    ancestors = [p for p in Path(relative).parent.parts if p.lower() not in GENERIC_STEMS | LANGUAGE_STEMS]
+    if ancestors and name.split(" (")[0] == ancestors[-1]:
+        ancestors.pop()  # already the basis of the name (generic stem case)
+    candidate = name
+    while ancestors:
+        clash = [f for f in sources.rglob(f"{candidate}.md") if _repo_path_of(f) != relative] if sources.exists() else []
+        if not clash:
+            return candidate
+        candidate = f"{ancestors.pop()} - {candidate}"
+    return candidate
+
+
 def import_repo_files(vault: Path, clone: RepoClone, paths: list[str]) -> list[dict[str, Any]]:
     """Copy listed files verbatim into ``Fontes/GitHub/<owner>-<repo>/<dirs>/<stem>.md``."""
     listed = {f.path: f for f in clone.files}
@@ -547,7 +596,7 @@ def import_repo_files(vault: Path, clone: RepoClone, paths: list[str]) -> list[d
             tipo="fonte",
             force=True,
             subdir=subdir,
-            filename=Path(relative).stem,
+            filename=_unique_basename(vault, source_basename(relative), relative),
             provenance={
                 "source_kind": "github",
                 "source_url": f"https://github.com/{clone.owner}/{clone.repo}/blob/{clone.commit}/{quote(relative)}",
