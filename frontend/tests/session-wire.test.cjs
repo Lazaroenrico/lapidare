@@ -71,3 +71,12 @@ test('legacy JSON answer messages render as cards with their question', () => {
   assert.equal(card.answer.question, 'Why?');
   assert.deepEqual(card.answer.chosen_indices, [0]);
 });
+
+test('answers sent as a list (current API) are keyed by quiz_id', () => {
+  const s = sw.decodeSession({
+    messages: [],
+    answers: [{quiz_id: 'q9', kind: 'quiz', mode: 'CHECK', correct: true, chosen_indices: [0], correct_indices: [0], confidence: 70}],
+  });
+  assert.equal(Object.keys(s.answers).join(), 'q9');
+  assert.equal(s.answers.q9.correct, true);
+});

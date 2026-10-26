@@ -332,7 +332,7 @@ class TrackService:
         session = self.state.sessions.get(session_id)
         if not session.track_item_id:
             raise ValueError("Foundations can be inserted only for an active track lesson")
-        if not any(not a.correct or a.calibration_band in ("fragile_intuition", "moderate_correct") for a in session.answers.values()):
+        if not any(a.correct is False or a.is_dont_know or a.calibration_band in ("fragile_intuition", "moderate_correct") for a in session.answers.values()):
             raise ValueError("A prerequisite lesson requires diagnostic evidence of a gap")
         async with self.lock:
             config = self.state.get_config()

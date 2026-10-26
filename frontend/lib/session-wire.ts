@@ -181,11 +181,15 @@ function decodeMessage(raw: Raw): SessionMessage {
 export function decodeSession(raw: unknown): SessionRecord {
   const r = isObj(raw) ? raw : {};
   const answers: Record<string, CalibrationResult> = {};
-  if (isObj(r.answers)) {
-    for (const [id, a] of Object.entries(r.answers)) {
-      const decoded = decodeAnswer(a, id);
-      if (decoded) answers[id] = decoded;
-    }
+  // The API sends a list; older payloads (and tests) use a quiz_id-keyed map.
+  const entries: [string, unknown][] = Array.isArray(r.answers)
+    ? r.answers.filter(isObj).map((a) => [str(a.quiz_id), a])
+    : isObj(r.answers)
+      ? Object.entries(r.answers)
+      : [];
+  for (const [id, a] of entries) {
+    const decoded = decodeAnswer(a, id);
+    if (decoded) answers[decoded.quiz_id || id] = decoded;
   }
   return {
     ...(r as unknown as SessionRecord),
