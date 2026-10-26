@@ -123,9 +123,9 @@ export function GithubTrackLinker({ onLinked }: { onLinked?: (result: GithubImpo
       {error && <Banner tone="error">{error}</Banner>}
 
       {preview && !linked && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-[11px] text-[#8d8d8d]">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent bg-background px-3 py-2 text-[11px] text-muted-foreground">
           <GitBranch className="w-3 h-3" aria-hidden />
-          <span className="text-[12.5px] text-[#e6e6e6]">
+          <span className="text-[12.5px] text-foreground">
             {preview.repo.owner}/{preview.repo.name}
           </span>
           <span>@{preview.repo.ref}</span>

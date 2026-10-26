@@ -1,5 +1,6 @@
 "use client";
 
+import { palette } from "@/lib/palette";
 import React, {
   forwardRef,
   useCallback,
@@ -21,6 +22,19 @@ import {
 } from "lucide-react";
 import { getDrawing, saveDrawing } from "@/lib/api";
 import { useEventSubscription } from "./server-events";
+import { useLocale } from "./locale-provider";
+
+function CanvasLoading() {
+  const { t } = useLocale();
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background text-muted-foreground font-ui text-xs">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-foreground" />
+        <span>{t.canvasLoading}</span>
+      </div>
+    </div>
+  );
+}
 
 // Dynamically import Excalidraw with ssr: false so Next.js SSR builds cleanly without "window is not defined"
 const ExcalidrawComponent = dynamic(
@@ -30,14 +44,7 @@ const ExcalidrawComponent = dynamic(
   },
   {
     ssr: false,
-    loading: () => (
-      <div className="flex h-full w-full items-center justify-center bg-[#141414] text-[#8d8d8d] font-ui text-xs">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#434343] border-t-[#e6e6e6]" />
-          <span>Carregando canvas Excalidraw...</span>
-        </div>
-      </div>
-    ),
+    loading: () => <CanvasLoading />,
   }
 );
 
@@ -90,6 +97,10 @@ export const ExcalidrawCanvas = forwardRef<
   },
   ref
 ) {
+  const { t } = useLocale();
+  // Ref so stable callbacks (save/load) read the current locale without re-subscribing.
+  const tRef = useRef(t);
+  tRef.current = t;
   const [initialDataLoaded, setInitialDataLoaded] = useState<boolean>(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -105,7 +116,7 @@ export const ExcalidrawCanvas = forwardRef<
   const latestElementsRef = useRef<readonly any[]>([]);
   const latestAppStateRef = useRef<any>({
     theme: "dark",
-    viewBackgroundColor: "#141414",
+    viewBackgroundColor: palette.background,
   });
   const latestFilesRef = useRef<any>({});
   const filePathRef = useRef<string>("");
@@ -120,7 +131,7 @@ export const ExcalidrawCanvas = forwardRef<
 
   /**
    * Generates a PNG data URL (base64) using Excalidraw's exportToBlob
-   * with dark theme background #141414, falling back to HTML5 canvas.
+   * with dark theme background (palette.background), falling back to HTML5 canvas.
    */
   const generatePngBase64 = useCallback(async (): Promise<string | null> => {
     if (typeof window === "undefined") return null;
@@ -143,7 +154,7 @@ export const ExcalidrawCanvas = forwardRef<
         appState: {
           ...appState,
           exportBackground: true,
-          viewBackgroundColor: "#141414",
+          viewBackgroundColor: palette.background,
           exportWithDarkMode: true,
         },
         files: files || {},
@@ -215,7 +226,7 @@ export const ExcalidrawCanvas = forwardRef<
         appState: {
           ...(typeof appState === "object" && appState !== null ? appState : {}),
           theme: "dark",
-          viewBackgroundColor: "#141414",
+          viewBackgroundColor: palette.background,
         },
         files: apiRef.current?.getFiles?.() || latestFilesRef.current,
         pngBase64,
@@ -228,7 +239,7 @@ export const ExcalidrawCanvas = forwardRef<
       return true;
     } catch (err: any) {
       const errorObj = err instanceof Error ? err : new Error(String(err));
-      const msg = errorObj.message || "Falha ao salvar desenho no Vault";
+      const msg = errorObj.message || tRef.current.drawingSaveFailed;
       setSaveError(msg);
       onSaveError?.(errorObj);
       return false;
@@ -251,7 +262,7 @@ export const ExcalidrawCanvas = forwardRef<
       const appState = (data as any).appState ||
         (data as any).scene?.appState || {
           theme: "dark",
-          viewBackgroundColor: "#141414",
+          viewBackgroundColor: palette.background,
         };
 
       filePathRef.current = data.file_path || `Desenhos/${slug}.excalidraw.md`;
@@ -267,7 +278,7 @@ export const ExcalidrawCanvas = forwardRef<
           appState: {
             ...appState,
             theme: "dark",
-            viewBackgroundColor: "#141414",
+            viewBackgroundColor: palette.background,
           },
         });
         if (elements.length > 0 && typeof apiRef.current.scrollToContent === "function") {
@@ -294,7 +305,7 @@ export const ExcalidrawCanvas = forwardRef<
       });
     } catch (err: any) {
       console.error("Failed to load drawing from Vault:", err);
-      const msg = err?.message || "Não foi possível carregar o arquivo de desenho.";
+      const msg = err?.message || tRef.current.drawingLoadFailed;
       setLoadingError(msg);
       setInitialDataLoaded(false);
       initialLoadDoneRef.current = false;
@@ -386,14 +397,14 @@ export const ExcalidrawCanvas = forwardRef<
 
   return (
     <div
-      className={`relative h-full w-full bg-[#141414] overflow-hidden select-none ${className}`}
+      className={`relative h-full w-full bg-background overflow-hidden select-none ${className}`}
     >
       {/* External change detection banner */}
       {externalEditDetected && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-[#1c1c1c] border border-amber-600/80 text-[#e6e6e6] px-3.5 py-2 rounded shadow-2xl font-ui text-xs animate-in fade-in slide-in-from-top duration-200">
-          <span className="flex items-center gap-1.5 text-amber-400 font-medium">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-card border border-warning/80 text-foreground px-3.5 py-2 rounded shadow-2xl font-ui text-xs animate-in fade-in slide-in-from-top duration-200">
+          <span className="flex items-center gap-1.5 text-warning font-medium">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            Arquivo modificado no Obsidian
+            {t.drawingChangedExternally}
           </span>
           <button
             type="button"
@@ -401,71 +412,71 @@ export const ExcalidrawCanvas = forwardRef<
               setExternalEditDetected(false);
               void loadDrawingData();
             }}
-            className="flex items-center gap-1 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-2.5 py-1 rounded transition-colors"
+            className="flex items-center gap-1 bg-accent hover:bg-border border border-border text-foreground px-2.5 py-1 rounded transition-colors"
           >
             <RefreshCw className="h-3 w-3" />
-            Recarregar do Vault
+            {t.reloadFromVault}
           </button>
           <button
             type="button"
             onClick={() => setExternalEditDetected(false)}
-            className="text-[#8d8d8d] hover:text-[#e6e6e6] text-[11px] underline ml-1 transition-colors"
+            className="text-muted-foreground hover:text-foreground text-[11px] underline ml-1 transition-colors"
           >
-            Manter edição local
+            {t.keepLocalEdit}
           </button>
         </div>
       )}
 
       {/* Floating Canvas Save & Status Overlay Toolbar */}
       {showToolbarControls && initialDataLoaded && (
-        <div className="absolute top-3 right-3 z-20 flex items-center gap-2 bg-[#1c1c1c]/90 backdrop-blur border border-[#434343] px-3 py-1.5 rounded shadow-lg font-ui text-xs">
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-2 bg-card/90 backdrop-blur border border-border px-3 py-1.5 rounded shadow-lg font-ui text-xs">
           {/* Status badge */}
           {isSaving ? (
-            <span className="flex items-center gap-1.5 text-[#8d8d8d]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#e6e6e6]" />
-              <span>Salvando no Vault...</span>
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
+              <span>{t.savingToVault}</span>
             </span>
           ) : saveError ? (
             <span
-              className="flex items-center gap-1 text-rose-400 truncate max-w-[200px]"
+              className="flex items-center gap-1 text-danger truncate max-w-[200px]"
               title={saveError}
             >
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              <span>Erro ao salvar</span>
+              <span>{t.saveError}</span>
             </span>
           ) : isDirty ? (
-            <span className="flex items-center gap-1.5 text-amber-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <span>Modificado</span>
+            <span className="flex items-center gap-1.5 text-warning">
+              <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+              <span>{t.modified}</span>
             </span>
           ) : lastSavedAt ? (
             <span
-              className="flex items-center gap-1 text-[#8d8d8d]"
-              title={`Último salvamento: ${lastSavedAt.toLocaleTimeString()}`}
+              className="flex items-center gap-1 text-muted-foreground"
+              title={t.lastSaved(lastSavedAt.toLocaleTimeString())}
             >
-              <Check className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Salvo</span>
+              <Check className="h-3.5 w-3.5 text-success" />
+              <span>{t.saved}</span>
             </span>
           ) : (
-            <span className="text-[#8d8d8d]">Pronto</span>
+            <span className="text-muted-foreground">{t.ready}</span>
           )}
 
-          <div className="h-3 w-px bg-[#434343] mx-1" />
+          <div className="h-3 w-px bg-border mx-1" />
 
           {/* Explicit Save Button */}
           <button
             type="button"
             onClick={() => void executeSave()}
             disabled={isSaving}
-            className="flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-2.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
-            title="Salvar alterações e gerar visualização PNG no Vault"
+            className="flex items-center gap-1.5 bg-accent hover:bg-border border border-border text-foreground px-2.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+            title={t.saveToVaultTitle}
           >
             {isSaving ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
               <Save className="h-3 w-3" />
             )}
-            <span>Salvar no Vault</span>
+            <span>{t.saveToVault}</span>
           </button>
         </div>
       )}
@@ -484,7 +495,7 @@ export const ExcalidrawCanvas = forwardRef<
                     elements: initialElementsRef.current,
                     appState: {
                       theme: "dark",
-                      viewBackgroundColor: "#141414",
+                      viewBackgroundColor: palette.background,
                     },
                   });
                 } catch {
@@ -497,8 +508,8 @@ export const ExcalidrawCanvas = forwardRef<
               files: latestFilesRef.current,
               appState: {
                 theme: "dark",
-                viewBackgroundColor: "#141414",
-                currentItemStrokeColor: "#e6e6e6",
+                viewBackgroundColor: palette.background,
+                currentItemStrokeColor: palette.foreground,
                 currentItemBackgroundColor: "transparent",
                 currentItemFillStyle: "hachure",
                 currentItemStrokeWidth: 1,
@@ -520,24 +531,24 @@ export const ExcalidrawCanvas = forwardRef<
           />
         </div>
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[#141414] text-[#8d8d8d] font-ui text-xs">
+        <div className="flex h-full w-full items-center justify-center bg-background text-muted-foreground font-ui text-xs">
           {loadingError ? (
-            <div className="flex flex-col items-center gap-3 max-w-sm text-center p-6 bg-[#1c1c1c] border border-[#434343] rounded">
-              <AlertCircle className="h-6 w-6 text-rose-400" />
-              <p className="text-[#e6e6e6]">{loadingError}</p>
+            <div className="flex flex-col items-center gap-3 max-w-sm text-center p-6 bg-card border border-border rounded">
+              <AlertCircle className="h-6 w-6 text-danger" />
+              <p className="text-foreground">{loadingError}</p>
               <button
                 type="button"
                 onClick={() => void loadDrawingData()}
-                className="flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-3 py-1.5 rounded font-ui text-xs transition-colors"
+                className="flex items-center gap-1.5 bg-accent hover:bg-border border border-border text-foreground px-3 py-1.5 rounded font-ui text-xs transition-colors"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Tentar novamente
+                {t.tryAgain}
               </button>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#434343] border-t-[#e6e6e6]" />
-              <span>Carregando dados do desenho...</span>
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-foreground" />
+              <span>{t.drawingLoading}</span>
             </div>
           )}
         </div>

@@ -2,8 +2,8 @@
 
 /**
  * Primitivas visuais compartilhadas pelo import multi-fonte e pelas Configurações.
- * Só tokens do Design System (#141414 / #1c1c1c / #2a2a2a / #434343 / #e6e6e6 / #8d8d8d)
- * e os acentos semânticos já existentes (#34d399 / #e0a030 / #f87171).
+ * Só tokens do Design System (background / card / accent / border / foreground / muted-foreground)
+ * e os acentos semânticos já existentes (success / warning / danger).
  * Sem outline nativo: o foco aparece como mudança de borda/fundo.
  */
 
@@ -17,13 +17,13 @@ type BtnVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BTN: Record<BtnVariant, string> = {
   primary:
-    "bg-[#e6e6e6] text-[#141414] border-[#e6e6e6] font-semibold hover:bg-[#e6e6e6]/90 focus-visible:bg-[#e6e6e6]/90",
+    "bg-foreground text-background border-foreground font-semibold hover:bg-foreground/90 focus-visible:bg-foreground/90",
   secondary:
-    "bg-[#2a2a2a] text-[#e6e6e6] border-[#434343] hover:border-[#8d8d8d] focus-visible:border-[#e6e6e6]",
+    "bg-accent text-foreground border-border hover:border-muted-foreground focus-visible:border-foreground",
   ghost:
-    "bg-transparent text-[#8d8d8d] border-transparent hover:text-[#e6e6e6] hover:bg-[#2a2a2a] focus-visible:text-[#e6e6e6] focus-visible:bg-[#2a2a2a]",
+    "bg-transparent text-muted-foreground border-transparent hover:text-foreground hover:bg-accent focus-visible:text-foreground focus-visible:bg-accent",
   danger:
-    "bg-transparent text-[#f87171] border-[#434343] hover:border-[#f87171] focus-visible:border-[#f87171]",
+    "bg-transparent text-danger border-border hover:border-danger focus-visible:border-danger",
 };
 
 export function Btn({
@@ -52,7 +52,7 @@ export function Btn({
 }
 
 export const inputClass =
-  "w-full bg-[#141414] border border-[#434343] focus:border-[#8d8d8d] rounded-md px-3 py-1 font-ui text-[12.5px] leading-6 text-[#e6e6e6] placeholder-[#8d8d8d]";
+  "w-full bg-background border border-border focus:border-muted-foreground rounded-md px-3 py-1 font-ui text-[12.5px] leading-6 text-foreground placeholder-muted-foreground";
 
 export function Field({
   label,
@@ -67,11 +67,11 @@ export function Field({
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={htmlFor} className="block font-ui text-[11px] text-[#8d8d8d]">
+      <label htmlFor={htmlFor} className="block font-ui text-[11px] text-muted-foreground">
         {label}
       </label>
       {children}
-      {hint && <p className="font-ui text-[11px] text-[#8d8d8d]/80">{hint}</p>}
+      {hint && <p className="font-ui text-[11px] text-muted-foreground/80">{hint}</p>}
     </div>
   );
 }
@@ -99,11 +99,11 @@ export function Check({
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-1 accent-[#e6e6e6] cursor-pointer"
+        className="mt-1 accent-foreground cursor-pointer"
       />
-      <label htmlFor={id} className="font-ui text-[12.5px] text-[#e6e6e6] cursor-pointer">
+      <label htmlFor={id} className="font-ui text-[12.5px] text-foreground cursor-pointer">
         {label}
-        {hint && <span className="block text-[11px] text-[#8d8d8d]">{hint}</span>}
+        {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
       </label>
     </div>
   );
@@ -111,10 +111,10 @@ export function Check({
 
 type Tone = "error" | "warn" | "ok" | "info";
 const TONE: Record<Tone, string> = {
-  error: "border-[#f87171]/40 bg-[#f87171]/10 text-[#f87171]",
-  warn: "border-[#e0a030]/40 bg-[#e0a030]/10 text-[#e0a030]",
-  ok: "border-[#34d399]/40 bg-[#34d399]/10 text-[#34d399]",
-  info: "border-[#434343] bg-[#141414] text-[#8d8d8d]",
+  error: "border-danger/40 bg-danger/10 text-danger",
+  warn: "border-warning/40 bg-warning/10 text-warning",
+  ok: "border-success/40 bg-success/10 text-success",
+  info: "border-border bg-background text-muted-foreground",
 };
 
 export function Banner({
@@ -144,9 +144,9 @@ export function Badge({ children, tone = "muted" }: { children: React.ReactNode;
     <span
       className={cx(
         "inline-flex items-center px-1 rounded border font-ui text-[10px] leading-4 tracking-wider shrink-0",
-        tone === "new" && "border-[#34d399]/40 bg-[#34d399]/10 text-[#34d399]",
-        tone === "warn" && "border-[#e0a030]/40 bg-[#e0a030]/10 text-[#e0a030]",
-        tone === "muted" && "border-[#434343] bg-[#2a2a2a] text-[#8d8d8d]"
+        tone === "new" && "border-success/40 bg-success/10 text-success",
+        tone === "warn" && "border-warning/40 bg-warning/10 text-warning",
+        tone === "muted" && "border-border bg-accent text-muted-foreground"
       )}
     >
       {children}
@@ -157,8 +157,8 @@ export function Badge({ children, tone = "muted" }: { children: React.ReactNode;
 /** Barra indeterminada para operações longas (clone do GitHub). Sem timers. */
 export function BusyStrip({ label, onCancel, cancelLabel }: { label: string; onCancel?: () => void; cancelLabel: string }) {
   return (
-    <div role="status" aria-live="polite" className="rounded-md border border-[#434343] bg-[#141414] p-3 space-y-2">
-      <div className="flex items-center gap-2 font-ui text-[11px] text-[#8d8d8d]">
+    <div role="status" aria-live="polite" className="rounded-md border border-border bg-background p-3 space-y-2">
+      <div className="flex items-center gap-2 font-ui text-[11px] text-muted-foreground">
         <Loader2 className="w-3 h-3 animate-spin" aria-hidden />
         <span className="flex-1">{label}</span>
         {onCancel && (
@@ -167,8 +167,8 @@ export function BusyStrip({ label, onCancel, cancelLabel }: { label: string; onC
           </Btn>
         )}
       </div>
-      <div className="h-1 rounded bg-[#2a2a2a] overflow-hidden">
-        <div className="h-full w-full bg-[#8d8d8d] animate-pulse" />
+      <div className="h-1 rounded bg-accent overflow-hidden">
+        <div className="h-full w-full bg-muted-foreground animate-pulse" />
       </div>
     </div>
   );

@@ -182,8 +182,33 @@ export function Composer({
     }
   };
 
-  // Keyboard Navigation: Enter submits (Shift+Enter for new line)
+  // Global shortcut: Ctrl/⌘+Enter with an empty composer triggers "Continuar ↵".
+  const continueTrackRef = useRef(handleContinueTrack);
+  continueTrackRef.current = handleContinueTrack;
+  const shortcutStateRef = useRef({ empty: true, hasStep: false, busy: false });
+  shortcutStateRef.current = { empty: !text.trim(), hasStep: !!nextTrackStep, busy: submitting };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.defaultPrevented) return;
+      const { empty, hasStep, busy } = shortcutStateRef.current;
+      if (!empty || !hasStep || busy) return;
+      const active = document.activeElement as HTMLElement | null;
+      const typingElsewhere =
+        active &&
+        active !== textareaRef.current &&
+        (active.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
+      if (typingElsewhere) return;
+      e.preventDefault();
+      void continueTrackRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Keyboard Navigation: Enter submits (Shift+Enter for new line).
+  // Ctrl/⌘+Enter bubbles to the global track shortcut above.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !text.trim()) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSubmit();
@@ -201,37 +226,38 @@ export function Composer({
             type="button"
             onClick={handleContinueTrack}
             disabled={submitting}
-            className="group flex items-center gap-2 bg-[#1c1c1c]/95 hover:bg-[#2a2a2a] backdrop-blur border border-[#434343] hover:border-[#8d8d8d] rounded-full px-3.5 py-1.5 shadow-lg transition-all cursor-pointer text-xs font-ui text-[#8d8d8d] hover:text-[#e6e6e6]"
-            title={`Continuar etapa da trilha: ${nextTrackStep.title}`}
+            className="group flex items-center gap-2 bg-card/95 hover:bg-accent backdrop-blur border border-border hover:border-muted-foreground rounded-full px-3.5 py-1.5 shadow-lg transition-all cursor-pointer text-xs font-ui text-muted-foreground hover:text-foreground"
+            title={t.composerContinueTitle(nextTrackStep.title)}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
           >
-            <Route className="w-3.5 h-3.5 text-[#34d399]" />
-            <span className="text-[#8d8d8d]">⇶ Trilha ativa · Próximo:</span>
-            <span className="text-[#e6e6e6] font-medium max-w-xs truncate">
+            <Route className="w-3.5 h-3.5 text-success" />
+            <span className="text-muted-foreground">{t.composerTrackActive}</span>
+            <span className="text-foreground font-medium max-w-xs truncate">
               {nextTrackStep.title}
             </span>
-            <span className="flex items-center gap-1 bg-[#2a2a2a] group-hover:bg-[#333333] px-2 py-0.5 rounded-full text-[11px] text-[#e6e6e6] border border-[#434343]">
-              Continuar ↵
+            <span className="flex items-center gap-1 bg-accent group-hover:bg-border px-2 py-0.5 rounded-full text-[11px] text-foreground border border-border">
+              {t.composerContinue}
             </span>
           </button>
         </div>
       )}
 
       {/* Main Elevated Composer Container */}
-      <div className="w-full bg-[#1c1c1c] border border-[#434343] focus-within:border-[#8d8d8d] rounded-2xl shadow-2xl transition-all duration-200 p-3">
+      <div className="w-full bg-card border border-border focus-within:border-muted-foreground rounded-2xl shadow-2xl transition-all duration-200 p-3">
         {/* Top Controls: STRICTLY TWO MODES (TEACH and PRACTICE) */}
-        <div className="flex items-center justify-between pb-2 border-b border-[#2a2a2a] mb-2 px-1">
-          <div className="flex items-center gap-1 bg-[#141414] p-1 rounded-lg border border-[#2a2a2a]">
+        <div className="flex items-center justify-between pb-2 border-b border-accent mb-2 px-1">
+          <div className="flex items-center gap-1 bg-background p-1 rounded-lg border border-accent">
             {/* TEACH Mode */}
             <button
               type="button"
               onClick={() => setMode("TEACH")}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
                 mode === "TEACH"
-                  ? "bg-[#2a2a2a] text-[#e6e6e6] border border-[#434343] shadow-sm"
-                  : "text-[#8d8d8d] hover:text-[#e6e6e6]"
+                  ? "bg-accent text-foreground border border-border shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <BookOpen className="w-3.5 h-3.5 text-[#34d399]" />
+              <BookOpen className="w-3.5 h-3.5 text-success" />
               <span>TEACH</span>
             </button>
 
@@ -241,17 +267,17 @@ export function Composer({
               onClick={() => setMode("PRACTICE")}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
                 mode === "PRACTICE"
-                  ? "bg-[#2a2a2a] text-[#e6e6e6] border border-[#434343] shadow-sm"
-                  : "text-[#8d8d8d] hover:text-[#e6e6e6]"
+                  ? "bg-accent text-foreground border border-border shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <Target className="w-3.5 h-3.5 text-[#fbbf24]" />
+              <Target className="w-3.5 h-3.5 text-warning" />
               <span>PRACTICE</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-ui text-[#8d8d8d]">
-            <span>Shift + Enter para nova linha</span>
+          <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground">
+            <span>{nextTrackStep ? t.composerHintTrack : t.composerHint}</span>
           </div>
         </div>
 
@@ -264,12 +290,12 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholderText}
-            className="w-full bg-transparent text-[#e6e6e6] placeholder-[#666666] font-prose text-[15px] resize-none border-none outline-none focus:outline-none focus:ring-0 leading-relaxed block"
+            className="w-full bg-transparent text-foreground placeholder-muted-foreground font-prose text-[15px] resize-none border-none outline-none focus:outline-none focus:ring-0 leading-relaxed block"
           />
         </div>
 
         {/* Bottom Toolbar */}
-        <div className="flex items-center justify-between pt-2 border-t border-[#2a2a2a] mt-2 px-1">
+        <div className="flex items-center justify-between pt-2 border-t border-accent mt-2 px-1">
           <div className="flex items-center gap-2">
             {/* Voice Dictation (🎙) */}
             {speechSupported && (
@@ -278,13 +304,13 @@ export function Composer({
                 onClick={toggleListening}
                 className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                   isListening
-                    ? "bg-[#f87171]/20 border-[#f87171] text-[#f87171] animate-pulse"
-                    : "bg-[#141414] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a]"
+                    ? "bg-danger/20 border-danger text-danger animate-pulse"
+                    : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-accent"
                 }`}
                 title={
                   isListening
-                    ? "Gravando voz... clique para parar"
-                    : "Ditar por voz (pt-BR)"
+                    ? t.micRecording
+                    : t.micDictate
                 }
               >
                 {isListening ? (
@@ -296,9 +322,9 @@ export function Composer({
             )}
 
             {isListening && (
-              <span className="text-[11px] font-ui text-[#f87171] flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#f87171] animate-ping" />
-                Ouvindo...
+              <span className="text-[11px] font-ui text-danger flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-danger animate-ping" />
+                {t.listening}
               </span>
             )}
           </div>
@@ -310,18 +336,18 @@ export function Composer({
             disabled={!text.trim() || submitting}
             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-ui font-semibold transition-all cursor-pointer ${
               text.trim() && !submitting
-                ? "bg-[#e6e6e6] text-[#141414] hover:bg-[#ffffff] shadow-md"
-                : "bg-[#2a2a2a] text-[#666666] border border-[#434343] cursor-not-allowed"
+                ? "bg-foreground text-background hover:bg-foreground/90 shadow-md"
+                : "bg-accent text-muted-foreground border border-border cursor-not-allowed"
             }`}
           >
             {submitting ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Iniciando...</span>
+                <span>{t.starting}</span>
               </>
             ) : (
               <>
-                <span>Enviar</span>
+                <span>{t.send}</span>
                 <Send className="w-3.5 h-3.5" />
               </>
             )}

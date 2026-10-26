@@ -1,3 +1,4 @@
+import { palette } from "@/lib/palette";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ServerEventsProvider } from "@/components/server-events";
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#141414",
+  themeColor: palette.background,
   colorScheme: "dark",
 };
 
@@ -25,12 +26,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" className="dark">
-      <body className="bg-[#141414] text-[#e6e6e6] min-h-screen antialiased select-text">
+      <body className="bg-background text-foreground min-h-screen antialiased select-text">
         <ServerEventsProvider>
           <LocaleProvider>
-          <div className="flex h-screen w-screen overflow-hidden bg-[#141414]">
+          <div className="flex h-screen w-screen overflow-hidden bg-background">
             <Sidebar />
-            <main className="flex-1 min-w-0 h-screen overflow-y-auto flex flex-col bg-[#141414]">
+            <main className="flex-1 min-w-0 h-screen overflow-y-auto flex flex-col bg-background">
               {children}
             </main>
           </div>

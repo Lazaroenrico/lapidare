@@ -1,6 +1,7 @@
 "use client";
 
 import { useEventSubscription } from "@/components/server-events";
+import { useLocale } from "@/components/locale-provider";
 import React, { useEffect, useState } from "react";
 import { GraphView } from "@/components/graph-view";
 import { Composer } from "@/components/composer";
@@ -10,6 +11,7 @@ import { getSetupStatus } from "@/lib/api";
 import type { HarnessConfig, SetupStatusResponse } from "@/lib/types";
 
 export default function HomePage() {
+  const { t } = useLocale();
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
   const [isSetupOpen, setIsSetupOpen] = useState<boolean>(false);
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
@@ -30,7 +32,7 @@ export default function HomePage() {
           setSetupStatus(status);
         }
       } catch (err) {
-        setSetupError(err instanceof Error ? err.message : "Setup unavailable");
+        setSetupError(err instanceof Error ? err.message : t.setupUnavailable);
       }
     };
 
@@ -62,7 +64,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#141414]">
+    <div className="relative w-full h-full flex flex-col overflow-hidden bg-background">
       {setupError && <p role="alert" className="p-4 font-ui text-xs">{setupError}</p>}
       {/* Center 100%: Single Unified 2D Knowledge Graph (No Macro/Micro Toggle) */}
       <main className="flex-1 w-full h-full relative">
