@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from learnharness.core.calibration import evaluate_calibration, is_mastery_evidence
+from learnharness.core.contracts.config import EngineKind
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import NodeSpan, PlanDag, SessionMessage, SessionRecord
 from learnharness.core.events import SseEventType
+from learnharness.engines.cli_protocol import EngineError
 from learnharness.prompts.loader import build_system_prompt
 from learnharness.vault.jsonl_store import (
     append_quiz_log,
@@ -370,6 +372,16 @@ class SessionService:
             session.error = None
             self.save(session)
             config = self.state.get_config()
+            if config.slots.strong.engine == EngineKind.AGY and self.state.engine_factory is None:
+                from learnharness.services.agy_permissions import status as agy_permission_status
+
+                if not agy_permission_status()["granted"]:
+                    # Headless agy silently refuses harness tools without this rule: the
+                    # lesson would end with no quiz and no explanation of why.
+                    raise EngineError(
+                        "O agy ainda não tem permissão para usar as ferramentas do harness. "
+                        "Conceda em Configurações → Conectores (regra mcp(harness/*))."
+                    )
             engine = self.state.engine(config.slots.strong)
             persistent = bool(getattr(engine, "session_persistent", False))
             # One token per session, re-bound to this execution (stale ones stay rejected).
