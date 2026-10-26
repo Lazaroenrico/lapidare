@@ -2,6 +2,7 @@
 import asyncio
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -158,6 +159,33 @@ async def test_reject_solution_leaking_hint(tmp_path):
             return problem
     with pytest.raises(ValueError, match="disclose"):
         await run_practice_generation_pipeline(tmp_path, ["Attention"], engine=LeakingEngine())
+
+
+def _quiz(topic, mode, correct, band, confidence=85):
+    record = {"quiz_id": f"q-{uuid4().hex}", "session_id": "s-1", "topic": topic, "correct": correct,
+              "is_dont_know": False, "chosen_index": 0, "correct_index": 0 if correct else 1,
+              "confidence": confidence, "confidence_band": "high" if confidence >= 70 else "low",
+              "calibration_band": band, "learner_thinking": "", "pedagogical_directive": "",
+              "explanation": "", "timestamp": "2026-10-26T10:00:00Z"}
+    if mode is not None:
+        record["mode"] = mode
+    return json.dumps(record) + "\n"
+
+
+async def test_partitioner_counts_only_check_evidence(tmp_path):
+    """PREDICTION misses are expected before teaching: tie-breaker only; legacy None counts as CHECK."""
+    (tmp_path / ".harness").mkdir()
+    (tmp_path / ".harness" / "quiz-log.jsonl").write_text("".join([
+        # Confident wrong predictions: would be "illusion" if they were CHECK answers.
+        _quiz("Prediction Only", "PREDICTION", False, "illusion_of_competence"),
+        _quiz("Prediction Only", "PREDICTION", False, "illusion_of_competence"),
+        _quiz("Check Weak", "CHECK", False, "fragile_intuition", confidence=40),
+        _quiz("Legacy Illusion", None, False, "illusion_of_competence"),
+        _quiz("Single Prediction Miss", "PREDICTION", False, "conscious_gap", confidence=20),
+        _quiz("Check Mastery", "CHECK", True, "calibrated_mastery", confidence=95),
+    ]), encoding="utf-8")
+    result = await run_practice_generation_pipeline(tmp_path, engine=FakeEngine())
+    assert result.target_topics == ["Legacy Illusion", "Check Weak", "Prediction Only"]
 
 
 @pytest.mark.parametrize(("scores", "total", "match"), [

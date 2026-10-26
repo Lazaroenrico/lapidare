@@ -46,9 +46,13 @@ def partitioner_node(state: PracticeGenState) -> dict[str, Any]:
 
     def priority(topic):
         records = by_topic.get(topic, [])
-        illusion = any(q.calibration_band == "illusion_of_competence" for q in records)
-        mistakes = sum(not q.correct for q in records)
-        weak = any(q.calibration_band in ("fragile_intuition", "conscious_gap") for q in records)
+        # Only CHECK answers (legacy None counts as CHECK) are evidence about learning;
+        # PREDICTION errors are expected before teaching and only break ties.
+        checks = [q for q in records if q.mode != "PREDICTION"]
+        illusion = any(q.calibration_band == "illusion_of_competence" for q in checks)
+        mistakes = sum(not q.correct for q in checks)
+        weak = any(q.calibration_band in ("fragile_intuition", "conscious_gap") for q in checks)
+        prediction_misses = sum(not q.correct for q in records if q.mode == "PREDICTION")
         # Oldest/never-practiced topics win ties; broad coverage wins over repetition.
         timestamps = []
         for record in records:
@@ -58,7 +62,8 @@ def partitioner_node(state: PracticeGenState) -> dict[str, Any]:
             except (ValueError, AttributeError):
                 continue
         elapsed = (now - max(timestamps)).total_seconds() if timestamps else float("inf")
-        return (-int(illusion), -mistakes, -int(weak), len(records), -elapsed, topic.casefold())
+        return (-int(illusion), -mistakes, -int(weak), -prediction_misses, len(records), -elapsed,
+                topic.casefold())
 
     selected = sorted((t for t in topics if t), key=priority)[:3]
     if not selected:
