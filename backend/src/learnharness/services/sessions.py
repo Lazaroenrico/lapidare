@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from learnharness.core.calibration import evaluate_calibration
@@ -14,7 +13,12 @@ from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, Qui
 from learnharness.core.contracts.session import PlanDag, SessionMessage, SessionRecord
 from learnharness.core.events import SseEventType
 from learnharness.prompts.loader import build_system_prompt
-from learnharness.vault.jsonl_store import append_quiz_log, append_session_event, list_sessions, load_session
+from learnharness.vault.jsonl_store import (
+    append_quiz_log,
+    append_session_event,
+    list_sessions,
+    load_session,
+)
 from learnharness.vault.markdown_ast import merge_lesson_note
 from learnharness.vault.safety import safe_path
 
