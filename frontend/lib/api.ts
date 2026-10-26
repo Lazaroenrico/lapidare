@@ -361,13 +361,15 @@ export async function retryJob(id: string): Promise<BackgroundJobStatus> {
 
 // --- Interactive Demos ---
 
+/** Queues a `demo_builder` job (202). The slug arrives as `result_id` once `jobs:updated` reports completion. */
 export async function createDemo(payload: {
   title: string;
   topic: string;
   description?: string;
   lesson_rel_path?: string;
-}): Promise<{ slug: string; html: string }> {
-  return fetchJson<{ slug: string; html: string }>("/api/demos", {
+  session_id?: string;
+}): Promise<BackgroundJobStatus> {
+  return fetchJson<BackgroundJobStatus>("/api/demos", {
     method: "POST",
     body: JSON.stringify(payload),
   });

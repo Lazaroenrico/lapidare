@@ -324,7 +324,7 @@ export type SseEventType =
   | "jobs:updated"
   | "config:updated";
 
-export type BackgroundJobKind = "practice_gen" | "extraction" | "track_gen" | (string & {});
+export type BackgroundJobKind = "practice_gen" | "extraction" | "track_gen" | "demo_builder" | (string & {});
 
 /** Raw job record as persisted in `.harness/jobs.jsonl` and served by GET /api/jobs. */
 export interface BackgroundJobStatus {

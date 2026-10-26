@@ -31,10 +31,10 @@ def session_tools(state, session_id):
         return await state.tracks.foundation(session_id, title, prerequisite)
 
     async def spawn_demo(title: str, topic: str, description: str = "") -> dict[str, Any]:
-        """Generate and attach an isolated interactive HTML simulator for the current lesson."""
-        from learnharness.services.demos import create_demo
-        session = state.sessions.get(session_id)
-        return await create_demo(state, title, topic, description, session.lesson_vault_path)
+        """Queue a lesson-specific interactive simulator; returns immediately with the job id."""
+        from learnharness.services.demos import submit_demo
+        record = submit_demo(state, title, topic, description, session_id=session_id)
+        return {"job_id": record["job_id"], "status": record["status"]}
 
     return [pose_quiz, plan_init, plan_advance, track_foundation, spawn_demo]
 
@@ -70,7 +70,7 @@ def create_runtime_mcp(state):
 
     @server.tool()
     async def spawn_demo(title: str, topic: str, description: str = "") -> dict[str, Any]:
-        """Create a lesson-specific simulator."""
+        """Queue a lesson-specific simulator in the background (non-blocking); it is linked into the lesson note when ready."""
         return await bound()[4](title, topic, description)
 
     return server

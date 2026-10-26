@@ -92,6 +92,10 @@ class JobManager:
                 elif record["kind"] == "track_gen":
                     await self.state.tracks.generate()
                     record["result_id"] = "track"
+                elif record["kind"] == "demo_builder":
+                    from learnharness.services.demos import run_demo_job
+                    result = await run_demo_job(self.state, record["payload"])
+                    record["result_id"] = result["slug"]
                 else:
                     raise ValueError("Unsupported background job")
                 record["status"] = "completed"

@@ -54,7 +54,7 @@ export function DemoIframe({
   const [reloadKey, setReloadKey] = useState<number>(0);
 
   // Determine fetch target URL
-  const fetchUrl = apiUrl || (slug ? `/api/demos/${slug}` : null);
+  const fetchUrl = apiUrl || (slug ? `/api/demos/${encodeURIComponent(slug)}` : null);
 
   const fetchDemoHtml = useCallback(async () => {
     if (srcDoc) {
@@ -127,7 +127,8 @@ export function DemoIframe({
 
   const handleOpenRaw = () => {
     if (!fetchUrl) return;
-    const rawUrl = fetchUrl.endsWith("/raw") ? fetchUrl : `${fetchUrl}/raw`;
+    // Served with a `CSP: sandbox allow-scripts` header, so the tab gets an opaque origin too.
+    const rawUrl = slug ? `/api/demos/${encodeURIComponent(slug)}?raw=true` : fetchUrl;
     window.open(rawUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -259,7 +260,7 @@ export function DemoIframe({
           </div>
         )}
 
-        {/* Sandboxed Interactive Iframe */}
+        {/* Sandboxed Interactive Iframe: allow-scripts only, NEVER allow-same-origin (opaque origin). */}
         {htmlContent && !error && (
           <iframe
             key={reloadKey}

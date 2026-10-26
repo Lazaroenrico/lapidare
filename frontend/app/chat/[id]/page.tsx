@@ -24,6 +24,7 @@ import type { CalibrationResult, SessionRecord } from "@/lib/types";
 import {
   createDemo,
   createDrawing,
+  getBackgroundJobs,
   getChat,
   resumeChat,
   sendChatMessage,
@@ -68,28 +69,51 @@ export default function ChatPage({ params }: ChatPageProps) {
   // Drawing & Interactive Demo state
   const [isCreatingDrawing, setIsCreatingDrawing] = useState<boolean>(false);
   const [showDemo, setShowDemo] = useState<boolean>(false);
-  const [demoHtml, setDemoHtml] = useState<string | null>(null);
-  const [isSpawningDemo, setIsSpawningDemo] = useState<boolean>(false);
+  const [demoSlug, setDemoSlug] = useState<string | null>(null);
+  // `demo_builder` job queued by the ⚡ button; resolved via SSE `jobs:updated` (notify -> fetch).
+  const [demoJobId, setDemoJobId] = useState<string | null>(null);
+  const isSpawningDemo = demoJobId !== null;
+
+  const settleDemoJob = (job: { status: string; result_id?: string | null; error?: string | null }) => {
+    if (job.status === "completed" && job.result_id) {
+      setDemoJobId(null);
+      setDemoSlug(job.result_id);
+      setShowDemo(true);
+    } else if (job.status === "failed" || job.status === "interrupted") {
+      setDemoJobId(null);
+      setActionError(`${t.demoFailed} ${job.error ?? ""}`.trim());
+    }
+  };
 
   const handleSpawnDemo = async () => {
-    if (!session) return;
-    setIsSpawningDemo(true);
+    if (!session || demoJobId) return;
     setActionError(null);
     try {
-      const data = await createDemo({
+      const job = await createDemo({
         title: `Simulador: ${session.title || session.topic}`,
         topic: session.title || session.topic,
         description: `Simulador interativo para explorar os parâmetros de ${session.title || session.topic}.`,
+        session_id: session.id,
       });
-      setDemoHtml(data.html);
-      setShowDemo(true);
+      setDemoJobId(job.job_id);
+      settleDemoJob(job);
     } catch (err: any) {
       console.error("Failed to spawn demo:", err);
+      setDemoJobId(null);
       setActionError(`${t.demoFailed} ${err?.message ?? ""}`.trim());
-    } finally {
-      setIsSpawningDemo(false);
     }
   };
+
+  useEventSubscription("jobs:updated", (frame) => {
+    const changed = (frame.data as { job_id?: string } | null)?.job_id;
+    if (!demoJobId || (changed && changed !== demoJobId)) return;
+    void getBackgroundJobs()
+      .then((jobs) => {
+        const job = jobs.find((j) => j.job_id === demoJobId);
+        if (job) settleDemoJob(job);
+      })
+      .catch(() => undefined);
+  });
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -385,7 +409,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             ) : (
               <Sparkles className="w-3.5 h-3.5 text-[#34d399]" />
             )}
-            <span>⚡ Simulador</span>
+            <span>{isSpawningDemo ? "gerando simulador…" : "⚡ Simulador"}</span>
           </button>
 
           <button
@@ -412,10 +436,11 @@ export default function ChatPage({ params }: ChatPageProps) {
         </div>
       ) : (
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
-        {showDemo && demoHtml && (
+        {showDemo && demoSlug && (
           <DemoIframe
+            key={demoSlug}
             title={`Simulador: ${session.title || session.topic}`}
-            srcDoc={demoHtml}
+            slug={demoSlug}
             showCloseButton
             onClose={() => setShowDemo(false)}
           />

@@ -11,10 +11,11 @@ from pydantic import BaseModel, ValidationError
 
 from learnharness.api.state import get_app_state
 from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeSet
-from learnharness.core.events import SseEventType
+from learnharness.core.demo_validation import DEMO_CSP
 from learnharness.engines.cli_protocol import EngineError
-from learnharness.mcp.demo_builder import load_demo_from_vault, save_demo_to_vault
+from learnharness.mcp.demo_builder import load_demo_from_vault
 from learnharness.pipelines.practice_gen import InvalidGradeError, grade_practice_attempt
+from learnharness.services.demos import submit_demo
 
 practice_router = APIRouter(tags=["practice_demos_and_jobs"])
 
@@ -33,7 +34,7 @@ class CreateDemoPayload(BaseModel):
     topic: str
     description: str = ""
     lesson_rel_path: str | None = None
-    parameters: list[dict[str, Any]] | None = None
+    session_id: str | None = None
 
 
 class TriggerExtractionPayload(BaseModel):
@@ -149,20 +150,12 @@ async def submit_practice_attempt(
     return {"grade": _serialize_grade(grade), "next_hint": None}
 
 
-@practice_router.post("/api/demos")
+@practice_router.post("/api/demos", status_code=202)
 async def create_demo_endpoint(payload: CreateDemoPayload, request: Request) -> dict[str, Any]:
-    """Generate and persist a self-contained #141414 interactive simulator in viz/demos/<slug>.html."""
+    """Queue a `demo_builder` job (engine-generated simulator saved to viz/demos/<slug>.html); returns the job record."""
     state = get_app_state(request.app)
-    result = save_demo_to_vault(
-        vault_path=state.vault_path,
-        title=payload.title,
-        topic=payload.topic,
-        description=payload.description,
-        lesson_rel_path=payload.lesson_rel_path,
-        parameters=payload.parameters,
-    )
-    state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"demo": result["slug"]})
-    return result
+    return submit_demo(state, payload.title, payload.topic, payload.description,
+                       lesson_rel_path=payload.lesson_rel_path, session_id=payload.session_id)
 
 
 @practice_router.get("/api/demos/{slug}")
@@ -175,7 +168,8 @@ async def get_demo_endpoint(slug: str, request: Request, raw: bool = False) -> A
         raise HTTPException(status_code=404, detail=f"Demo '{slug}' not found") from None
 
     if raw:
-        return HTMLResponse(content=data["html"])
+        # Opened directly (outside the sandboxed iframe) it must still get an opaque origin.
+        return HTMLResponse(content=data["html"], headers={"Content-Security-Policy": f"sandbox allow-scripts; {DEMO_CSP}"})
     return data
 
 
