@@ -23,6 +23,13 @@ HEAD_BYTES = 16 * 1024
 MAX_OUTLINE_FILE_BYTES = 1024 * 1024
 OUTLINE_EXTENSIONS = {".md", ".markdown", ".txt", ".ipynb"}
 SKIPPED_PARTS = {"node_modules", "pratica", "__pycache__", "venv", "site-packages"}
+# Directories that hold artifacts, translations or the website build, not lessons.
+NON_LESSON_PARTS = {
+    "outputs", "output", "assets", "images", "img", "static", "public", "site", "web", "dist",
+    "build", "i18n", "locales", "translations", "vendor", "third_party",
+}
+# Trailing path segments that do not name a lesson ("…/02-attention/docs/en.md" -> "02-attention").
+UNIT_TAIL_PARTS = {"docs", "doc", "content", "notes", "src"}
 STRUCTURE_STEMS = {
     "readme", "roadmap", "learning", "curriculum", "syllabus", "index", "toc", "summary",
     "overview", "contents", "outline", "learning-path", "learning-paths", "course",
@@ -114,10 +121,36 @@ def _describe_file(path: Path, relative: str) -> OutlineEntry:
     in_structure_dir = any(p.lower() in STRUCTURE_DIRS for p in parts[:-1])
     if (is_root_doc or in_structure_dir) and suffix != ".ipynb":
         entry.structure = True
-        entry.excerpt = "\n".join(_strip_frontmatter(text.splitlines())).strip()[:STRUCTURE_DOC_CHARS]
+        entry.excerpt = _clean_excerpt("\n".join(_strip_frontmatter(text.splitlines())))[:STRUCTURE_DOC_CHARS]
     elif stem.lower() in {"readme", "index", "overview"}:
         entry.overview = True
     return entry
+
+
+_HTML_TAG = re.compile(r"<[^>\n]+>")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def _clean_excerpt(text: str) -> str:
+    """Prose only: README headers are often walls of badge HTML that would eat the budget."""
+    text = _MD_IMAGE.sub("", _HTML_TAG.sub("", text))
+    text = _MD_LINK.sub(r"\1", text)
+    lines = [line.rstrip() for line in text.splitlines()]
+    out: list[str] = []
+    for line in lines:
+        if not line.strip() and (not out or not out[-1].strip()):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def _lesson_unit(relative: str) -> str:
+    """Directory that represents the lesson a file belongs to."""
+    parts = list(Path(relative).parent.parts)
+    while parts and parts[-1].lower() in UNIT_TAIL_PARTS:
+        parts.pop()
+    return "/".join(parts) or "."
 
 
 def _prefer_one_language(paths: list[str]) -> list[str]:
@@ -139,7 +172,8 @@ def _eligible_files(root: Path) -> list[str]:
     for current, dirs, files in os.walk(root):
         dirs[:] = [
             d for d in dirs
-            if not d.startswith(".") and d not in SKIPPED_PARTS and not Path(current, d).is_symlink()
+            if not d.startswith(".") and d not in SKIPPED_PARTS and d.lower() not in NON_LESSON_PARTS
+            and not Path(current, d).is_symlink()
         ]
         for name in files:
             path = Path(current, name)
@@ -162,16 +196,26 @@ def _entry_line(entry: OutlineEntry, with_summary: bool) -> str:
 
 
 def _grouped_lines(entries: list[OutlineEntry], budget: int) -> list[str]:
-    """Last resort: one line per directory, each capped so every directory still appears."""
-    groups: dict[str, list[OutlineEntry]] = {}
+    """Budget fallback that still spans the whole curriculum.
+
+    First one line per lesson unit (``phases/07-x/02-attention — Title``); if that is still too
+    long, one line per parent of units (e.g. a phase) listing its lessons, each line capped
+    evenly so every phase appears.
+    """
+    units: dict[str, OutlineEntry] = {}
     for entry in entries:
-        groups.setdefault(str(Path(entry.path).parent), []).append(entry)
-    per_group = max(80, budget // max(1, len(groups)))
+        units.setdefault(_lesson_unit(entry.path), entry)
+    unit_lines = [f"- {unit} — {entry.title}" for unit, entry in units.items()]
+    if _size(unit_lines) <= budget:
+        return unit_lines
+    parents: dict[str, list[tuple[str, str]]] = {}
+    for unit, entry in units.items():
+        parent = str(Path(unit).parent)
+        parents.setdefault(parent, []).append((Path(unit).name, entry.title))
+    per_group = max(80, budget // max(1, len(parents)) - 1)
     lines = []
-    for directory, items in groups.items():
-        line = f"- {directory}/ ({len(items)} files): " + "; ".join(
-            f"{Path(e.path).name} — {e.title}" for e in items
-        )
+    for parent, items in parents.items():
+        line = f"- {parent}/ ({len(items)} lessons): " + "; ".join(f"{name} — {title}" for name, title in items)
         lines.append(line if len(line) <= per_group else line[: per_group - 1] + "…")
     return lines
 

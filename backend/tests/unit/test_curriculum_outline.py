@@ -68,3 +68,25 @@ def test_outline_degrades_but_stays_whole_under_budget(tmp_path: Path) -> None:
     tiny = build_curriculum_outline(tmp_path, budget=6_000)
     assert len(tiny) <= 6_000
     assert "files):" in tiny  # grouped per directory as a last resort
+
+
+def test_outline_skips_artifacts_strips_badges_and_keeps_every_phase(tmp_path):
+    from learnharness.services.tracks import build_curriculum_outline
+
+    (tmp_path / "README.md").write_text(
+        '<p align="center"><img src="x.svg"><a href="y"><picture>badge</picture></a></p>\n\n'
+        "Learn AI from first principles.\n",
+        encoding="utf-8",
+    )
+    for phase in range(20):
+        for lesson in range(30):
+            unit = tmp_path / "phases" / f"{phase:02d}-phase" / f"{lesson:02d}-lesson-with-a-long-name"
+            (unit / "docs").mkdir(parents=True)
+            (unit / "docs" / "en.md").write_text(f"# Lesson {phase}.{lesson}\n\nBody.\n", encoding="utf-8")
+            (unit / "outputs").mkdir()
+            (unit / "outputs" / "prompt.md").write_text("# artifact\n", encoding="utf-8")
+    outline = build_curriculum_outline(tmp_path, budget=8000)
+    assert "<p" not in outline and "Learn AI from first principles." in outline
+    assert "outputs" not in outline and "artifact" not in outline
+    assert all(f"phases/{p:02d}-phase" in outline for p in range(20))
+    assert "omitted" not in outline
