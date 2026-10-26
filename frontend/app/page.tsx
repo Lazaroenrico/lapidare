@@ -6,14 +6,13 @@ import React, { useEffect, useState } from "react";
 import { GraphView } from "@/components/graph-view";
 import { Composer } from "@/components/composer";
 import { ImportDialog } from "@/components/import-dialog";
-import { SetupDialog } from "@/components/setup-dialog";
+import { openSetup } from "@/components/setup-gate";
 import { getSetupStatus } from "@/lib/api";
-import type { HarnessConfig, SetupStatusResponse } from "@/lib/types";
+import type { SetupStatusResponse } from "@/lib/types";
 
 export default function HomePage() {
   const { t } = useLocale();
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
-  const [isSetupOpen, setIsSetupOpen] = useState<boolean>(false);
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
   const [pendingTopic, setPendingTopic] = useState<string>("");
 
@@ -51,16 +50,7 @@ export default function HomePage() {
     if (text) {
       setPendingTopic(text);
     }
-    setIsSetupOpen(true);
-  };
-
-  const handleSetupComplete = (newConfig: HarnessConfig) => {
-    setSetupStatus((prev) => ({
-      initialized: true,
-      config: newConfig,
-      connectors: prev?.connectors || [],
-    }));
-    setIsSetupOpen(false);
+    openSetup();
   };
 
   return (
@@ -87,13 +77,6 @@ export default function HomePage() {
       <ImportDialog
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
-      />
-
-      {/* Onboarding / Setup Wizard Dialog */}
-      <SetupDialog
-        isOpen={isSetupOpen}
-        onClose={() => setIsSetupOpen(false)}
-        onComplete={handleSetupComplete}
       />
     </div>
   );

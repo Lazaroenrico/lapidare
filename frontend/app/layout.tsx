@@ -4,6 +4,7 @@ import "./globals.css";
 import { ServerEventsProvider } from "@/components/server-events";
 import { LocaleProvider } from "@/components/locale-provider";
 import { Sidebar } from "@/components/sidebar";
+import { SetupGate } from "@/components/setup-gate";
 
 export const metadata: Metadata = {
   title: "learnharness — Local-First Learning Harness",
@@ -35,6 +36,7 @@ export default function RootLayout({
               {children}
             </main>
           </div>
+          <SetupGate />
           </LocaleProvider>
         </ServerEventsProvider>
       </body>

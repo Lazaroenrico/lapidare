@@ -101,6 +101,10 @@ async function fetchJson<T>(
     let errBody: unknown = raw;
     try { errBody = JSON.parse(raw); } catch { /* Keep plain-text response. */ }
     const msg = errorDetail(errBody) ?? `Request to ${endpoint} failed with status ${res.status}`;
+    if (typeof window !== "undefined" && res.status === 409 && /setup/i.test(msg)) {
+      // Any action that needs a configured vault (TEACH from sidebar, import, graph…) opens Setup.
+      window.dispatchEvent(new CustomEvent("harness:open-setup"));
+    }
     if (!silent && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("harness:error", {detail: msg}));
     throw new ApiError(msg, res.status, errBody);
   }
