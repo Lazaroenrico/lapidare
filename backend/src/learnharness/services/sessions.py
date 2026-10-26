@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from learnharness.core.calibration import evaluate_calibration, is_mastery_evidence
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
-from learnharness.core.contracts.session import PlanDag, SessionMessage, SessionRecord
+from learnharness.core.contracts.session import NodeSpan, PlanDag, SessionMessage, SessionRecord
 from learnharness.core.events import SseEventType
 from learnharness.prompts.loader import build_system_prompt
 from learnharness.vault.jsonl_store import (
@@ -19,8 +20,16 @@ from learnharness.vault.jsonl_store import (
     list_sessions,
     load_session,
 )
-from learnharness.vault.markdown_ast import merge_lesson_note
-from learnharness.vault.safety import safe_component, safe_path
+from learnharness.vault.lesson_layout import (
+    current_node_id,
+    frontmatter_for,
+    legacy_message_blocks,
+    lesson_note_stem,
+    plan_paragraph_refs,
+    render_lesson_blocks,
+)
+from learnharness.vault.markdown_ast import sync_lesson_note
+from learnharness.vault.safety import RevisionConflictError, safe_component, safe_path
 
 if TYPE_CHECKING:
     from learnharness.api.state import AppState
@@ -80,14 +89,46 @@ class SessionService:
             id=session_id, title=(topic or "Nova sessão").strip()[:240], mode=mode,
             context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
             source_path=source_file, track_item_id=track_item_id,
-            lesson_vault_path=f"{config.folders.lessons_dir}/{session_id}.md",
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
         )
-        merge_lesson_note(self.state.vault_path, session.lesson_vault_path, session.title, objetivo=topic or "")
+        session.lesson_vault_path = self._create_lesson_note(session, config)
         self.save(session)
         if start:
             self.schedule(session.id)
         return session
+
+    def _create_lesson_note(self, session: SessionRecord, config) -> str:
+        """Create ``<lessons>/<YYYY-MM-DD> <Título>.md``; never adopt or overwrite a user file.
+
+        Collisions (including case-only ones, which clash on macOS/Windows vaults) get
+        `` (2)``, `` (3)``, ... suffixes; creation itself is create-only, so a file that
+        appears concurrently is skipped too.
+        """
+        lessons = config.folders.lessons_dir
+        folder = safe_path(self.state.vault_path, lessons)
+        taken = {p.name.casefold() for p in folder.iterdir()} if folder.is_dir() else set()
+        stem = lesson_note_stem(session.title, date.today(), config.language)
+        for attempt in range(1, 1000):
+            name = f"{stem}.md" if attempt == 1 else f"{stem} ({attempt}).md"
+            if name.casefold() in taken:
+                continue
+            rel_path = f"{lessons}/{name}"
+            session.lesson_vault_path = rel_path
+            try:
+                self._sync_lesson_note(session, config.language, create_only=True)
+            except FileExistsError:
+                continue
+            return rel_path
+        raise SessionConflict("Could not allocate a lesson note name")
+
+    def _sync_lesson_note(self, session: SessionRecord, language: str, *, create_only: bool = False) -> bool:
+        managed, tags = frontmatter_for(session, language)
+        return sync_lesson_note(
+            self.state.vault_path, session.lesson_vault_path, session.title, managed,
+            render_lesson_blocks(session, language), tags=tags,
+            retire=None if create_only else legacy_message_blocks(session),
+            touched={"atualizado": date.today()}, create_only=create_only,
+        )
 
     def resolve_source(self, source: str, track=False) -> str:
         config = self.state.get_config()
@@ -243,12 +284,13 @@ class SessionService:
             if session.source_path:
                 source = self.source_text(session)
                 for node in plan.nodes:
-                    for ref in node.source_paragraphs:
-                        if f"^{ref.lstrip('^')}" not in source:
+                    for ref in plan_paragraph_refs(node):
+                        if not re.search(rf"\^{re.escape(ref)}(?![\w-])", source):
                             raise ValueError(f"Unknown source paragraph: {ref}")
             session.plan = plan
             session.phase = "teaching"
             self.save(session)
+            self._refresh_lesson_note(session)
             self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
             return plan.model_dump()
 
@@ -271,6 +313,7 @@ class SessionService:
                 session.phase = "completed"
                 session.execution_status = "completed"
             self.save(session)
+            self._refresh_lesson_note(session)
         if status == "mastered":
             self.state.jobs.extraction(session, node_id)
         if completed and session.track_item_id:
@@ -356,14 +399,33 @@ class SessionService:
     async def _flush(self, session_id, message_id, text):
         async with self.lock(session_id):
             session = self.get(session_id)
+            node_id = current_node_id(session.plan)
             message = next((m for m in session.messages if m.id == message_id), None)
             if message:
+                # Text produced since the previous flush belongs to the node current now.
+                if not message.node_spans:
+                    message.node_spans.append(NodeSpan(start=0, node_id=message.node_id))
+                if message.node_spans[-1].node_id != node_id:
+                    message.node_spans.append(NodeSpan(start=len(message.content), node_id=node_id))
                 message.content = text
+                message.node_id = node_id
             else:
-                session.messages.append(SessionMessage(id=message_id, role="assistant", content=text, created_at=now()))
+                session.messages.append(SessionMessage(
+                    id=message_id, role="assistant", content=text, created_at=now(),
+                    node_id=node_id, node_spans=[NodeSpan(start=0, node_id=node_id)],
+                ))
             self.save(session)
-            if session.lesson_vault_path:
-                merge_lesson_note(self.state.vault_path, session.lesson_vault_path, session.title, node_section_title=message_id, node_section_md=text)
+            self._refresh_lesson_note(session)
+
+    def _refresh_lesson_note(self, session: SessionRecord) -> None:
+        """Mirror the session into its note; the JSONL session stays authoritative."""
+        if not session.lesson_vault_path:
+            return
+        try:
+            self._sync_lesson_note(session, self.state.get_config().language)
+        except (ValueError, OSError, RevisionConflictError) as exc:
+            # A malformed or concurrently edited note never fails a teaching turn.
+            logger.warning("Lesson note sync skipped for %s: %s", session.id, exc)
 
     async def recover(self):
         for session in list_sessions(self.state.vault_path):

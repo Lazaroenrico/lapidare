@@ -19,7 +19,15 @@ def session_tools(state, session_id):
         return await state.sessions.pose(session_id, quiz)
 
     async def plan_init(approach_prose: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
-        """Initialize a dependency DAG after diagnosing learner prerequisites."""
+        """Initialize a dependency DAG after diagnosing learner prerequisites.
+
+        Each node: {"id": str, "label": str (becomes the "## <label>" section of the lesson
+        note), "kind": "unconditional_truth" | "derived_step" | "goal", "depends_on": [ids],
+        "source_paragraphs": ["pN", ...] (dense sources only), "four_dimensions": {"said": str,
+        "assumed": [str], "skipped": [str], "simplifications": [str], "paragraph_refs": ["pN"]}
+        (dense sources only: Dito / Pressuposto / Pulado / Simplificações)}. Every ^pN cited
+        must exist in the source or the plan is rejected.
+        """
         return await state.sessions.set_plan(session_id, PlanDag(approach_prose=approach_prose, nodes=[PlanNode.model_validate(n) for n in nodes], updated_at=now()))
 
     async def plan_advance(node_id: str, status: Literal["current", "mastered", "needs_review"]) -> dict[str, Any]:
@@ -55,7 +63,15 @@ def create_runtime_mcp(state):
 
     @server.tool()
     async def plan_init(approach_prose: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
-        """Initialize the diagnosed learning plan."""
+        """Initialize the diagnosed learning plan (a DAG).
+
+        Each node: {"id": str, "label": str (becomes the "## <label>" section of the lesson
+        note), "kind": "unconditional_truth" | "derived_step" | "goal", "depends_on": [ids],
+        "source_paragraphs": ["pN", ...] (dense sources only), "four_dimensions": {"said": str,
+        "assumed": [str], "skipped": [str], "simplifications": [str], "paragraph_refs": ["pN"]}
+        (dense sources only: Dito / Pressuposto / Pulado / Simplificações)}. Every ^pN cited
+        must exist in the source or the plan is rejected.
+        """
         return await bound()[1](approach_prose, nodes)
 
     @server.tool()

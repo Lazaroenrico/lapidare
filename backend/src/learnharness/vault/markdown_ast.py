@@ -379,3 +379,258 @@ def scan_all_concepts(vault_path: Path, concepts_dir: str = "Conceitos") -> list
     # Deterministic sorting by title
     nodes.sort(key=lambda n: n.title.lower())
     return nodes
+
+
+# ============================================================================
+# Lesson notes v2: ordered, digest-tracked managed blocks + managed frontmatter keys
+# ============================================================================
+#
+# Merge policy:
+# * A managed block is delimited by whole-line HTML comments (hidden in Obsidian's
+#   reading view and on GitHub):
+#       <!-- harness:<token>:start sha=<digest> -->
+#       ...agent-owned markdown...
+#       <!-- harness:<token>:end -->
+#   ``token`` is derived from the block key; ``digest`` fingerprints what the agent wrote.
+# * Bytes outside markers are never modified (blocks are only inserted next to other
+#   managed blocks of the same layout, or appended at the end of the note).
+# * Inside markers the content is agent-owned. A block is rewritten only when the agent's
+#   own rendering changed. If the learner edited a block (digest mismatch) and the agent
+#   has nothing new for it, the edit stays. If the agent must rewrite an edited block, the
+#   learner's edited text is first moved, verbatim, right after the block and outside the
+#   markers, where it becomes a regular user-owned paragraph. User text is never dropped.
+# * Only the managed frontmatter keys are touched, and only when their value differs;
+#   every other key, comment and formatting in the YAML is preserved byte-for-byte.
+# * Writes happen only when the resulting bytes differ, so repeated flushes are no-ops
+#   (no watcher churn).
+
+_OWNED_START = re.compile(r"^<!-- harness:([0-9a-f]{24}):start(?: sha=([0-9a-f]{12}))? -->$")
+
+
+def _block_token(key: str) -> str:
+    return revision(key)[:24]
+
+
+def _normalize_block(markdown: str) -> str:
+    return markdown.replace("\r\n", "\n").rstrip()
+
+
+def _block_digest(markdown: str) -> str:
+    return revision(_normalize_block(markdown))[:12]
+
+
+def _scan_owned_blocks(content: str) -> dict[str, tuple[int, int, int, int, str | None]]:
+    """Map token -> (begin, inner_begin, inner_end, finish, sha) for every marker pair.
+
+    Raises ValueError on unclosed, nested or duplicate blocks (refusing to guess).
+    """
+    found: dict[str, tuple[int, int, int, int, str | None]] = {}
+    offset = 0
+    opened: tuple[str, int, int, str | None] | None = None
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        match = _OWNED_START.match(stripped)
+        if match:
+            if opened is not None:
+                raise ValueError("Nested managed block; refusing destructive merge")
+            opened = (match.group(1), offset, offset + len(line), match.group(2))
+        elif opened is not None and stripped == f"<!-- harness:{opened[0]}:end -->":
+            token, begin, inner_begin, sha = opened
+            if token in found:
+                raise ValueError("Duplicate managed block; refusing destructive merge")
+            found[token] = (begin, inner_begin, offset, offset + len(line.rstrip("\r\n")), sha)
+            opened = None
+        offset += len(line)
+    if opened is not None:
+        raise ValueError("Unclosed managed block; refusing destructive merge")
+    return found
+
+
+def _render_owned_block(key: str, markdown: str) -> str:
+    body = _normalize_block(markdown)
+    token = _block_token(key)
+    return (
+        f"<!-- harness:{token}:start sha={_block_digest(body)} -->\n"
+        f"{body}\n<!-- harness:{token}:end -->"
+    )
+
+
+def merge_owned_blocks(
+    content: str,
+    blocks: list[tuple[str, str]],
+    retire: dict[str, str | None] | None = None,
+) -> str:
+    """Upsert ``blocks`` (ordered ``(key, markdown)``) and retire obsolete keys.
+
+    New blocks are placed after the closest preceding managed block of the same layout
+    (or before the closest following one), otherwise appended. ``retire`` maps keys of
+    obsolete blocks to the markdown the agent last wrote there: an untouched obsolete
+    block is removed; an edited (or unknown, ``None``) one is unwrapped so its text
+    becomes user-owned.
+    """
+    for key, expected in (retire or {}).items():
+        span = _scan_owned_blocks(content).get(_block_token(key))
+        if span is None:
+            continue
+        begin, inner_begin, inner_end, finish, _sha = span
+        inner = content[inner_begin:inner_end]
+        if expected is not None and _normalize_block(inner) == _normalize_block(expected):
+            before, after = content[:begin], content[finish:]
+            if before.endswith("\n\n") and after.startswith("\n"):
+                after = after[1:]
+            content = before + after
+        else:
+            content = content[:begin] + inner.rstrip("\r\n") + content[finish:]
+
+    keys = [key for key, _ in blocks]
+    for index, (key, markdown) in enumerate(blocks):
+        found = _scan_owned_blocks(content)
+        rendered = _render_owned_block(key, markdown)
+        wanted = _block_digest(markdown)
+        span = found.get(_block_token(key))
+        if span is not None:
+            begin, inner_begin, inner_end, finish, sha = span
+            inner = content[inner_begin:inner_end]
+            if sha is not None and _block_digest(inner) != sha:  # edited by the learner
+                if sha == wanted:
+                    continue  # The edit stands until the agent has something new to say.
+                preserved = inner.strip("\r\n")
+                content = content[:begin] + rendered + "\n\n" + preserved + content[finish:]
+            elif sha != wanted or _normalize_block(inner) != _normalize_block(markdown):
+                content = content[:begin] + rendered + content[finish:]
+            continue
+        anchor = next(
+            (found[_block_token(k)] for k in reversed(keys[:index]) if _block_token(k) in found),
+            None,
+        )
+        if anchor is not None:
+            finish = anchor[3]
+            content = content[:finish] + "\n\n" + rendered + content[finish:]
+            continue
+        following = next(
+            (found[_block_token(k)] for k in keys[index + 1 :] if _block_token(k) in found), None
+        )
+        if following is not None:
+            begin = following[0]
+            content = content[:begin] + rendered + "\n\n" + content[begin:]
+            continue
+        if not content or content.endswith("\n\n"):
+            separator = ""
+        else:
+            separator = "\n" if content.endswith("\n") else "\n\n"
+        content = content + separator + rendered + "\n"
+    return content
+
+
+_FRONTMATTER = re.compile(r"\A---(\r?\n)(?:(.*?)(\r?\n))?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+
+
+def _dump_yaml_key(key: str, value: object, newline: str) -> str:
+    dumped = yaml.safe_dump(
+        {key: value}, allow_unicode=True, sort_keys=False, default_flow_style=False, width=10**6
+    )
+    return dumped.replace("\n", newline)
+
+
+def merge_frontmatter_keys(
+    content: str, managed: dict[str, object], ensure_tags: list[str] | None = None
+) -> str:
+    """Set only ``managed`` keys (when their value differs) and ensure ``ensure_tags``.
+
+    Unparseable user YAML is left untouched: the learner's note beats our metadata.
+    """
+    ensure_tags = ensure_tags or []
+    match = _FRONTMATTER.match(content)
+    if match is None:
+        values = {"tags": list(ensure_tags), **managed} if ensure_tags else dict(managed)
+        fm = "".join(_dump_yaml_key(k, v, "\n") for k, v in values.items())
+        return f"---\n{fm}---\n" + content
+    newline = match.group(1)
+    raw = match.group(2) or ""
+    try:
+        data = yaml.safe_load(raw) or {}
+    except yaml.YAMLError as exc:
+        logger.warning("Leaving unparseable lesson frontmatter untouched: %s", exc)
+        return content
+    if not isinstance(data, dict):
+        return content
+    updates: dict[str, object] = {}
+    if ensure_tags:
+        tags = data.get("tags")
+        current = [tags] if isinstance(tags, str) else (list(tags) if isinstance(tags, list) else [])
+        missing = [t for t in ensure_tags if t not in current]
+        if missing:
+            updates["tags"] = current + missing
+    for key, value in managed.items():
+        if data.get(key) != value:
+            updates[key] = value
+    if not updates:
+        return content
+    lines = raw.splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += newline
+    for key, value in updates.items():
+        rendered = _dump_yaml_key(key, value, newline)
+        head = re.compile(rf"^{re.escape(key)}\s*:")
+        start = next((i for i, line in enumerate(lines) if head.match(line)), None)
+        if start is None:
+            lines.append(rendered)
+            continue
+        end = start + 1
+        while end < len(lines) and (lines[end][:1] in (" ", "\t") or lines[end].startswith("-")):
+            end += 1
+        lines[start:end] = [rendered]
+    return f"---{newline}{''.join(lines)}---{newline}" + content[match.end() :]
+
+
+def _lesson_target(vault_path: Path, rel_path: str) -> Path:
+    folders = folder_map(vault_path)
+    target = safe_path(vault_path, rel_path)
+    for source in {folders.sources_dir, "Fontes", "Sources"}:
+        if target.is_relative_to(safe_path(vault_path, source)):
+            raise PermissionError("Fontes/ is strictly read-only")
+    if not target.is_relative_to(safe_path(vault_path, folders.lessons_dir)):
+        raise PermissionError("Lesson notes must be inside the configured lessons folder")
+    if target.suffix != ".md":
+        raise ValueError("Lesson notes must be Markdown files")
+    return target
+
+
+def sync_lesson_note(
+    vault_path: Path,
+    rel_path: str,
+    title: str,
+    frontmatter: dict[str, object],
+    blocks: list[tuple[str, str]],
+    *,
+    tags: list[str] | None = None,
+    retire: dict[str, str | None] | None = None,
+    touched: dict[str, object] | None = None,
+    create_only: bool = False,
+) -> bool:
+    """Bring a lesson note to the rendered layout. Returns True when bytes were written.
+
+    ``touched`` (e.g. ``{"atualizado": today}``) is applied only when something else
+    changed, so re-syncing the same state never rewrites the file. ``create_only``
+    refuses to adopt an existing file (FileExistsError): user notes are never overwritten.
+    """
+    target = _lesson_target(vault_path, rel_path)
+    with locked_path(target):
+        exists = target.exists()
+        if exists and create_only:
+            raise FileExistsError(rel_path)
+        original = target.read_bytes().decode("utf-8") if exists else None
+        content = original if original is not None else f"# {title}\n"
+        content = merge_frontmatter_keys(content, frontmatter, tags)
+        content = merge_owned_blocks(content, blocks, retire)
+        if content == original:
+            return False
+        if touched:
+            content = merge_frontmatter_keys(content, touched)
+        atomic_write(
+            target,
+            content,
+            expected_revision=revision(original) if original is not None else None,
+            create_only=not exists,
+        )
+    return True
