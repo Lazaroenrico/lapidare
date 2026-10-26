@@ -208,12 +208,9 @@ def test_drawings_crud_and_review(client: TestClient) -> None:
     assert put_res.status_code == 200
     assert put_res.json()["success"] is True
 
-    # 4. Review drawing
+    # 4. Review requires an exported PNG (full flow in test_drawing_review.py)
     rev_res = client.post(f"/api/drawings/{slug}/review")
-    assert rev_res.status_code == 200
-    rev_data = rev_res.json()
-    assert "what_is_correct" in rev_data
-    assert "summary" in rev_data
+    assert rev_res.status_code == 409
 
 
 def _practice_problem(prompt: str) -> PracticeProblem:

@@ -14,7 +14,7 @@ from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload
 SessionMode = Literal["TEACH", "PRACTICE"]
 
 # Context kind that the TEACH mode adapts to automatically
-TeachContextKind = Literal["free_topic", "dense_source", "track_step"]
+TeachContextKind = Literal["free_topic", "dense_source", "track_step", "drawing_review"]
 
 # State-machine phase of an active session
 SessionPhase = Literal[

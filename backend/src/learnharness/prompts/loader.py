@@ -72,6 +72,12 @@ def build_system_prompt(
             "- **Track Step Active:** Follow 2:1 syllabus progression, connect to established "
             "foundations, and advance syllabus pointer upon completion."
         )
+    elif context_kind == "drawing_review":
+        context_notes.append(
+            "- **Drawing Review Active:** The learner's retrieval drawing was reviewed by vision; "
+            "a follow-up quiz targets its conceptual errors. React to the calibration of that answer, "
+            "address the specific misconception briefly, and pose at most one new quiz via `pose_quiz`."
+        )
     elif context_kind == "free_topic":
         context_notes.append(
             "- **Free Topic Active:** Probe learner zone of proximal development with 1-3 quizzes, "

@@ -129,6 +129,35 @@ class SessionService:
             self.state.sse_hub.broadcast(SseEventType.DOCK_OPENED, {"session_id": session_id})
         return (await future).model_dump()
 
+    async def open_quiz(self, session_id: str, quiz: QuizPayload, *, replace_pending: bool = False) -> QuizPayload:
+        """Persist ``quiz`` as pending and open the dock without awaiting the answer.
+
+        Non-blocking sibling of ``pose`` for HTTP flows (e.g. drawing review): the answer
+        arrives later through ``answer`` (POST /api/chats/{id}/answer), which resolves a
+        dock future only when one was registered. An unanswered quiz may be replaced only
+        when ``replace_pending`` is set and no blocking ``pose`` is waiting on it.
+        """
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if session.phase == "completed":
+                raise SessionConflict("Session is completed")
+            if session.pending_quiz:
+                same = session.pending_quiz.model_dump(exclude={"quiz_id", "created_at", "session_id"}) == quiz.model_dump(exclude={"quiz_id", "created_at", "session_id"})
+                if same:
+                    return session.pending_quiz
+                if not replace_pending or self.state.dock_registry.get_pending_quiz(session_id):
+                    raise SessionConflict("A different quiz is already pending")
+            quiz.session_id = session_id
+            quiz.created_at = quiz.created_at or now()
+            session.pending_quiz = quiz
+            session.pending_quiz_id = quiz.quiz_id
+            session.recovery_required = False
+            session.phase = "awaiting_answer"
+            session.execution_status = "waiting"
+            self.save(session)
+            self.state.sse_hub.broadcast(SseEventType.DOCK_OPENED, {"session_id": session_id})
+        return quiz
+
     async def answer(self, submission: QuizSubmission) -> CalibrationResult:
         async with self.lock(submission.session_id):
             session = self.get(submission.session_id)

@@ -6,37 +6,26 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
-  Award,
   Check,
   CheckCircle2,
   ChevronRight,
   Eye,
-  HelpCircle,
   Loader2,
   PenTool,
   RotateCcw,
   Save,
-  Send,
-  Sparkles,
   X,
   XCircle,
 } from "lucide-react";
-import {
-  reviewDrawing,
-  submitQuizAnswer,
-} from "@/lib/api";
-import type {
-  CalibrationBand,
-  CalibrationResult,
-  DrawingReviewResult,
-  QuizPayload,
-  QuizSubmission,
-} from "@/lib/types";
+import { reviewDrawing } from "@/lib/api";
+import type { DrawingReviewResult } from "@/lib/types";
 import {
   DrawingLoadedMeta,
   ExcalidrawCanvas,
   ExcalidrawCanvasHandle,
 } from "@/components/excalidraw-canvas";
+import { LessonProse } from "@/components/lesson-prose";
+import { QuestionDock } from "@/components/question-dock";
 
 interface DrawPageProps {
   params: Promise<{ slug: string }>;
@@ -67,16 +56,8 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
     null
   );
   const [isReviewDrawerOpen, setIsReviewDrawerOpen] = useState<boolean>(false);
-
-  // Interactive Conceptual Quiz state inside Review Drawer
-  const [quizSelectedOption, setQuizSelectedOption] = useState<number | null>(
-    null
-  );
-  const [quizConfidence, setQuizConfidence] = useState<number>(75);
-  const [quizThinking, setQuizThinking] = useState<string>("");
-  const [isSubmittingQuiz, setIsSubmittingQuiz] = useState<boolean>(false);
-  const [quizCalibration, setQuizCalibration] =
-    useState<CalibrationResult | null>(null);
+  // Calibration of the follow-up quiz (answered through the session pipeline)
+  const [quizAnswered, setQuizAnswered] = useState<boolean>(false);
 
   const handleDrawingLoaded = useCallback((meta: DrawingLoadedMeta) => {
     if (meta.title) setDrawingTitle(meta.title);
@@ -105,99 +86,39 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
 
   /**
    * Review button click handler:
-   * 1. First saves current canvas state and exports preview to Vault
-   * 2. Calls reviewDrawing(slug)
-   * 3. Opens Multimodal Diagnosis drawer
+   * 1. Saves the canvas and exports the PNG to the Vault (the review reads that PNG)
+   * 2. Calls reviewDrawing(slug): the strong engine reviews the image + linked notes
+   * 3. Opens the diagnosis drawer; a follow-up quiz (if any) opens in the QuestionDock
    */
   const handleReviewDrawing = async () => {
     if (isReviewing) return;
     setIsReviewing(true);
     setReviewError(null);
-    setQuizSelectedOption(null);
-    setQuizCalibration(null);
-    setQuizThinking("");
+    setQuizAnswered(false);
 
     try {
-      // 1. Flush canvas scene + PNG to Vault first
       if (canvasRef.current) {
-        if (!await canvasRef.current.save()) throw new Error("Save the drawing successfully before requesting review.");
+        if (!(await canvasRef.current.save())) {
+          throw new Error("Salve o desenho com sucesso antes de pedir a revisão.");
+        }
       }
-
-      // 2. Call multimodal vision review backend endpoint
       const result = await reviewDrawing(slug);
       setReviewResult(result);
       setIsReviewDrawerOpen(true);
-    } catch (err: any) {
-      console.error("Multimodal review error:", err);
-      const msg =
-        err?.message ||
-        "Não foi possível processar a revisão multimodal do desenho. Verifique a conexão com o backend.";
-      setReviewError(msg);
-      // Still open drawer to show error diagnostic
+    } catch (err) {
+      setReviewError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Não foi possível processar a revisão multimodal do desenho."
+      );
       setIsReviewDrawerOpen(true);
     } finally {
       setIsReviewing(false);
     }
   };
 
-  /**
-   * Helper to resolve the active quiz payload:
-   * Either from reviewResult.conceptual_quiz OR synthesized from what_is_incorrect.
-   */
-  const activeQuiz = reviewResult?.conceptual_quiz ?? null;
-
-  /**
-   * Interactive Quiz submission inside Review Drawer
-   */
-  const handleSubmitQuiz = async () => {
-    if (!activeQuiz || quizSelectedOption === null || isSubmittingQuiz) return;
-    setIsSubmittingQuiz(true);
-
-    const submission: QuizSubmission = {
-      quiz_id: activeQuiz.id,
-      chosen_index: quizSelectedOption,
-      confidence: quizConfidence,
-      learner_thinking: quizThinking,
-    };
-
-    try {
-      const res = await submitQuizAnswer(activeQuiz.session_id, submission);
-      setQuizCalibration(res);
-    } catch (err) {
-      setReviewError(err instanceof Error ? err.message : "Quiz submission failed.");
-    } finally {
-      setIsSubmittingQuiz(false);
-    }
-  };
-
-  const getCalibrationBadge = (band: CalibrationBand) => {
-    switch (band) {
-      case "calibrated":
-        return {
-          label: "✓ Calibrado (Correto + Alta Confiança)",
-          classes:
-            "bg-[#16221a] text-emerald-300 border-emerald-800/80",
-        };
-      case "illusion_of_competence":
-        return {
-          label: "⚠ Ilusão de Competência (Incorreto + Alta Confiança)",
-          classes:
-            "bg-[#251517] text-rose-300 border-rose-800/80",
-        };
-      case "fragile_intuition":
-        return {
-          label: "⚡ Intuição Frágil (Correto + Baixa Confiança)",
-          classes:
-            "bg-[#221c14] text-amber-300 border-amber-800/80",
-        };
-      case "conscious_gap":
-        return {
-          label: "🔍 Lacuna Consciente (Incorreto + Baixa Confiança)",
-          classes:
-            "bg-[#1a1a1a] text-neutral-300 border-[#434343]",
-        };
-    }
-  };
+  const pendingQuiz = reviewResult?.pending_quiz ?? null;
+  const reviewSessionId = reviewResult?.session_id ?? null;
 
   return (
     <div className="flex h-screen w-full flex-col bg-[#141414] text-[#e6e6e6] overflow-hidden">
@@ -243,7 +164,7 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
             {isHeaderSaving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : headerSaveSuccess ? (
-              <Check className="h-3.5 w-3.5 text-emerald-400" />
+              <Check className="h-3.5 w-3.5 text-[#34d399]" />
             ) : (
               <Save className="h-3.5 w-3.5" />
             )}
@@ -367,15 +288,19 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
             {/* Drawer Content */}
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
               {reviewError && (
-                <div className="flex items-start gap-3 bg-[#251517] border border-rose-800/80 text-rose-300 p-4 rounded text-xs font-ui">
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 bg-[#141414] border border-[#f87171]/60 text-[#f87171] p-4 rounded font-ui text-[12.5px]"
+                >
                   <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-semibold mb-1">Falha na análise</p>
-                    <p className="text-rose-200/90">{reviewError}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold mb-1">Falha na revisão por visão</p>
+                    <p className="text-[#e6e6e6] break-words">{reviewError}</p>
                     <button
                       type="button"
                       onClick={handleReviewDrawing}
-                      className="mt-2 flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-2.5 py-1 rounded text-xs transition-colors"
+                      disabled={isReviewing}
+                      className="mt-2 flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-2.5 py-1 rounded text-xs transition-colors disabled:opacity-50"
                     >
                       <RotateCcw className="h-3 w-3" />
                       Tentar novamente
@@ -386,256 +311,59 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
 
               {reviewResult && (
                 <>
-                  {/* Summary Callout */}
-                  {reviewResult.summary && (
-                    <div className="bg-[#141414] border border-[#434343] rounded p-3.5 font-prose text-sm text-[#e6e6e6] leading-relaxed">
-                      <p>{reviewResult.summary}</p>
+                  {reviewResult.summary_markdown && (
+                    <div className="bg-[#141414] border border-[#434343] rounded p-4">
+                      <LessonProse content={reviewResult.summary_markdown} />
                     </div>
                   )}
 
-                  {/* 1. O que está correto */}
-                  <section className="bg-[#141414] border border-[#434343] rounded overflow-hidden">
-                    <div className="bg-[#16221a] border-b border-emerald-900/50 px-4 py-2.5 flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                      <h3 className="font-title font-semibold text-sm text-emerald-300">
-                        ✓ O que está correto
-                      </h3>
-                    </div>
-                    <div className="p-4">
-                      {reviewResult.what_is_correct &&
-                      reviewResult.what_is_correct.length > 0 ? (
-                        <ul className="space-y-2 font-prose text-sm text-[#e6e6e6]">
-                          {reviewResult.what_is_correct.map((item, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <span className="text-emerald-400 shrink-0 mt-0.5">
-                                •
-                              </span>
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="font-ui text-xs text-[#8d8d8d] italic">
-                          Nenhum componente fundamental correto foi detectado nesta tentativa.
-                        </p>
-                      )}
-                    </div>
-                  </section>
+                  <ReviewSection
+                    title="✓ O que está correto"
+                    accent="#34d399"
+                    icon={<CheckCircle2 className="h-4 w-4 shrink-0" />}
+                    items={reviewResult.correct_points}
+                    empty="Nenhum componente correto foi identificado nesta tentativa."
+                  />
+                  <ReviewSection
+                    title="△ O que faltou"
+                    accent="#e0a030"
+                    icon={<AlertTriangle className="h-4 w-4 shrink-0" />}
+                    items={reviewResult.missing_points}
+                    empty="Nenhum passo estrutural crítico foi omitido."
+                  />
+                  <ReviewSection
+                    title="✕ O que está incorreto"
+                    accent="#f87171"
+                    icon={<XCircle className="h-4 w-4 shrink-0" />}
+                    items={reviewResult.incorrect_points}
+                    empty="Nenhum erro conceitual foi detectado."
+                  />
 
-                  {/* 2. O que faltou */}
-                  <section className="bg-[#141414] border border-[#434343] rounded overflow-hidden">
-                    <div className="bg-[#221c14] border-b border-amber-900/50 px-4 py-2.5 flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                      <h3 className="font-title font-semibold text-sm text-amber-300">
-                        △ O que faltou
-                      </h3>
-                    </div>
-                    <div className="p-4">
-                      {reviewResult.what_was_missed &&
-                      reviewResult.what_was_missed.length > 0 ? (
-                        <ul className="space-y-2 font-prose text-sm text-[#e6e6e6]">
-                          {reviewResult.what_was_missed.map((item, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <span className="text-amber-400 shrink-0 mt-0.5">
-                                •
-                              </span>
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="font-ui text-xs text-[#8d8d8d] italic">
-                          Nenhum passo estrutural crítico foi omitido no diagrama.
-                        </p>
-                      )}
-                    </div>
-                  </section>
-
-                  {/* 3. O que está incorreto */}
-                  <section className="bg-[#141414] border border-[#434343] rounded overflow-hidden">
-                    <div className="bg-[#251517] border-b border-rose-900/50 px-4 py-2.5 flex items-center gap-2">
-                      <XCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                      <h3 className="font-title font-semibold text-sm text-rose-300">
-                        ✕ O que está incorreto
-                      </h3>
-                    </div>
-                    <div className="p-4">
-                      {reviewResult.what_is_incorrect &&
-                      reviewResult.what_is_incorrect.length > 0 ? (
-                        <ul className="space-y-2 font-prose text-sm text-[#e6e6e6]">
-                          {reviewResult.what_is_incorrect.map((item, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <span className="text-rose-400 shrink-0 mt-0.5">
-                                •
-                              </span>
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="font-ui text-xs text-emerald-400/90 italic">
-                          Nenhum erro conceitual ou direção causal incorreta foi detectada!
-                        </p>
-                      )}
-                    </div>
-                  </section>
-
-                  {/* =========================================================================
-                      INTERACTIVE CONCEPTUAL QUIZ CARD INSIDE REVIEW DRAWER
-                      Resolves misconception immediately if present
-                      ========================================================================= */}
-                  {activeQuiz && (
-                    <section className="bg-[#141414] border border-[#434343] rounded p-4 space-y-4">
-                      <div className="flex items-center justify-between border-b border-[#434343] pb-2">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="h-4 w-4 text-amber-400" />
-                          <h4 className="font-title font-semibold text-sm text-[#e6e6e6]">
-                            Calibração Conceitual Imediata
-                          </h4>
-                        </div>
-                        <span className="font-ui text-[10px] text-[#8d8d8d] uppercase">
-                          Desafio de Correção
-                        </span>
-                      </div>
-
-                      {/* Question */}
-                      <p className="font-prose text-sm font-medium text-[#e6e6e6] leading-relaxed">
-                        {activeQuiz.question}
-                      </p>
-
-                      {/* Multiple Choice Options */}
-                      <div className="space-y-2">
-                        {activeQuiz.options.map((opt) => {
-                          const isSelected = quizSelectedOption === opt.index;
-                          const showCorrect =
-                            quizCalibration && opt.index === 0;
-                          const showWrong =
-                            quizCalibration &&
-                            quizSelectedOption === opt.index &&
-                            opt.index !== 0;
-
-                          return (
-                            <button
-                              key={opt.index}
-                              type="button"
-                              disabled={Boolean(quizCalibration)}
-                              onClick={() => setQuizSelectedOption(opt.index)}
-                              className={`w-full text-left p-3 rounded border font-prose text-sm transition-all flex items-start gap-3 ${
-                                showCorrect
-                                  ? "bg-[#16221a] border-emerald-700/80 text-emerald-300"
-                                  : showWrong
-                                  ? "bg-[#251517] border-rose-700/80 text-rose-300"
-                                  : isSelected
-                                  ? "bg-[#2a2a2a] border-[#e6e6e6] text-[#ffffff]"
-                                  : "bg-[#1c1c1c] border-[#434343] text-[#e6e6e6] hover:bg-[#252525]"
-                              }`}
-                            >
-                              <span
-                                className={`flex items-center justify-center h-5 w-5 rounded font-ui text-xs font-semibold shrink-0 ${
-                                  isSelected
-                                    ? "bg-[#e6e6e6] text-[#141414]"
-                                    : "bg-[#2a2a2a] text-[#8d8d8d]"
-                                }`}
-                              >
-                                {opt.label || String.fromCharCode(65 + opt.index)}
-                              </span>
-                              <span className="leading-snug">{opt.text}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Confidence Rating & Submission Controls (before calibration) */}
-                      {!quizCalibration ? (
-                        <div className="pt-2 border-t border-[#434343] space-y-3">
-                          <div>
-                            <div className="flex items-center justify-between font-ui text-xs text-[#8d8d8d] mb-1.5">
-                              <span>Sua convicção nesta resposta:</span>
-                              <span className="font-semibold text-[#e6e6e6]">
-                                {quizConfidence}%
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-4 gap-1.5">
-                              {[
-                                { val: 25, label: "25% (Chute)" },
-                                { val: 50, label: "50% (Dúvida)" },
-                                { val: 75, label: "75% (Provável)" },
-                                { val: 100, label: "100% (Certeza)" },
-                              ].map((lvl) => (
-                                <button
-                                  key={lvl.val}
-                                  type="button"
-                                  onClick={() => setQuizConfidence(lvl.val)}
-                                  className={`py-1 text-center font-ui text-[10px] rounded border transition-colors ${
-                                    quizConfidence === lvl.val
-                                      ? "bg-[#2a2a2a] border-[#e6e6e6] text-[#ffffff]"
-                                      : "bg-[#1c1c1c] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6]"
-                                  }`}
-                                >
-                                  {lvl.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Optional reasoning */}
-                          <div>
-                            <input
-                              type="text"
-                              value={quizThinking}
-                              onChange={(e) => setQuizThinking(e.target.value)}
-                              placeholder="Justifique seu raciocínio (opcional)..."
-                              className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-3 py-1.5 font-ui text-xs text-[#e6e6e6] placeholder:text-[#8d8d8d] focus:border-[#e6e6e6]"
-                            />
-                          </div>
-
-                          {/* Submit Quiz Button */}
-                          <button
-                            type="button"
-                            onClick={handleSubmitQuiz}
-                            disabled={
-                              quizSelectedOption === null || isSubmittingQuiz
-                            }
-                            className="w-full flex items-center justify-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#ffffff] py-2 rounded font-ui text-xs font-semibold transition-colors disabled:opacity-40"
+                  {/* Follow-up quiz: the real QuestionDock, answered through the session pipeline */}
+                  {pendingQuiz && reviewSessionId && (
+                    <section className="space-y-3">
+                      <QuestionDock
+                        key={pendingQuiz.id}
+                        quiz={pendingQuiz}
+                        sessionId={reviewSessionId}
+                        onAnswerSubmitted={() => setQuizAnswered(true)}
+                      />
+                      {quizAnswered && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`/chat/${encodeURIComponent(reviewSessionId)}`}
+                            className="flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] px-3 py-1.5 rounded font-ui text-xs transition-colors"
                           >
-                            {isSubmittingQuiz ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Send className="h-3.5 w-3.5" />
-                            )}
-                            <span>Submeter Calibração ↵</span>
-                          </button>
-                        </div>
-                      ) : (
-                        /* Calibration Result Feedback Card */
-                        <div className="pt-2 border-t border-[#434343] space-y-3">
-                          {(() => {
-                            const badge = getCalibrationBadge(
-                              quizCalibration.band
-                            );
-                            return (
-                              <div
-                                className={`border p-3 rounded space-y-2 ${badge.classes}`}
-                              >
-                                <div className="flex items-center justify-between font-ui text-xs font-semibold">
-                                  <span>{badge.label}</span>
-                                  <span>Confiança: {quizCalibration.confidence}%</span>
-                                </div>
-                                <p className="font-prose text-xs leading-relaxed text-[#e6e6e6]">
-                                  {quizCalibration.feedback_prose}
-                                </p>
-                              </div>
-                            );
-                          })()}
-
-                          {/* Action button to continue drawing */}
+                            <span>Continuar na sessão</span>
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </Link>
                           <button
                             type="button"
                             onClick={() => setIsReviewDrawerOpen(false)}
-                            className="w-full flex items-center justify-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] text-[#e6e6e6] py-2 rounded font-ui text-xs transition-colors"
+                            className="flex items-center gap-1.5 bg-[#141414] hover:bg-[#252525] border border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6] px-3 py-1.5 rounded font-ui text-xs transition-colors"
                           >
                             <PenTool className="h-3.5 w-3.5" />
-                            <span>Continuar Desenhando & Ajustar no Canvas</span>
+                            <span>Ajustar o desenho</span>
                           </button>
                         </div>
                       )}
@@ -648,5 +376,50 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function ReviewSection({
+  title,
+  accent,
+  icon,
+  items,
+  empty,
+}: {
+  title: string;
+  accent: string;
+  icon: React.ReactNode;
+  items: string[];
+  empty: string;
+}) {
+  return (
+    <section
+      className="bg-[#141414] border border-[#434343] rounded overflow-hidden"
+      style={{ borderLeftColor: accent, borderLeftWidth: 2 }}
+    >
+      <div
+        className="bg-[#1c1c1c] border-b border-[#434343] px-4 py-2 flex items-center gap-2"
+        style={{ color: accent }}
+      >
+        {icon}
+        <h3 className="font-title font-semibold text-sm">{title}</h3>
+      </div>
+      <div className="p-4">
+        {items.length > 0 ? (
+          <ul className="space-y-2 font-prose text-[16px] leading-[1.5] text-[#e6e6e6]">
+            {items.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="shrink-0" style={{ color: accent }}>
+                  •
+                </span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="font-ui text-xs text-[#8d8d8d] italic">{empty}</p>
+        )}
+      </div>
+    </section>
   );
 }
