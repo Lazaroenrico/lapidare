@@ -31,6 +31,10 @@ def is_ignored_path(path_str: str) -> bool:
         return True
     if ".harness/langgraph.sqlite" in normalized:
         return True
+    # Machine-only caches: GitHub clones and per-execution CLI work dirs churn heavily
+    # and never contain user notes.
+    if "/.harness/repos/" in normalized or "/.harness/runtime/" in normalized:
+        return True
     return "/.git" in normalized or normalized.endswith("/.git")
 
 
