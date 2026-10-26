@@ -22,7 +22,9 @@ cleanup() { kill 0 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 # LEARNHARNESS_PORT faz o MCP interno anunciar a URL certa para gemini/agy.
+# A API só aceita escrita vinda do próprio frontend (proteção contra CSRF/DNS rebinding).
 (cd "$ROOT/backend" && LEARNHARNESS_PORT="$BACKEND_PORT" \
+  LEARNHARNESS_CORS_ORIGINS="http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT" \
   uv run uvicorn learnharness.api.app:app --host 127.0.0.1 --port "$BACKEND_PORT") &
 (cd "$ROOT/frontend" && BACKEND_URL="http://127.0.0.1:$BACKEND_PORT" \
   npx next dev --port "$FRONTEND_PORT") &
