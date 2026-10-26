@@ -161,7 +161,7 @@ async def get_demo_endpoint(slug: str, request: Request, raw: bool = False) -> A
     try:
         data = load_demo_from_vault(state.vault_path, slug)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Demo '{slug}' not found")
+        raise HTTPException(status_code=404, detail=f"Demo '{slug}' not found") from None
 
     if raw:
         return HTMLResponse(content=data["html"])
@@ -193,3 +193,13 @@ async def get_background_jobs(request: Request) -> list[dict[str, Any]]:
         else:
             jobs.append(j)
     return jobs
+
+
+@practice_router.post("/api/jobs/{job_id}/retry")
+async def retry_background_job(job_id: str, request: Request) -> dict[str, Any]:
+    """Re-queue a failed or interrupted background job (non-retryable status -> ValueError -> 422)."""
+    state = get_app_state(request.app)
+    try:
+        return state.jobs.retry(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found") from None

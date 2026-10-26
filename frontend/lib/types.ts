@@ -139,6 +139,15 @@ export interface SessionMessage {
   source_citations?: SourceCitation[];
 }
 
+export type SessionExecutionStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "waiting"
+  | "interrupted"
+  | "failed"
+  | "completed";
+
 export interface SessionRecord {
   id: string;
   mode: SessionMode;
@@ -150,7 +159,14 @@ export interface SessionRecord {
   phase: SessionPhase;
   plan?: PlanDag;
   messages: SessionMessage[];
+  /** Coarse legacy status (kept for backward compat). Prefer `execution_status`. */
   status: "active" | "waiting_quiz" | "completed";
+  /** Durable execution state of the agent run behind this session. */
+  execution_status: SessionExecutionStatus;
+  /** Redacted error from the last failed run, if any. */
+  error?: string | null;
+  /** True when the session can only continue by restarting the diagnostic. */
+  recovery_required: boolean;
   source_file?: string;
   track_item_id?: string;
   pending_quiz?: QuizPayload | null;
@@ -304,14 +320,19 @@ export type SseEventType =
   | "jobs:updated"
   | "config:updated";
 
+export type BackgroundJobKind = "practice_gen" | "extraction" | "track_gen" | (string & {});
+
+/** Raw job record as persisted in `.harness/jobs.jsonl` and served by GET /api/jobs. */
 export interface BackgroundJobStatus {
-  id: string;
-  type: "graph_extraction" | "practice_generation" | "vault_indexing";
-  name: string;
-  status: "running" | "completed" | "failed";
-  progress?: number;
-  started_at: string;
-  details?: string;
+  job_id: string;
+  kind: BackgroundJobKind;
+  label: string;
+  status: "queued" | "running" | "completed" | "failed" | "interrupted";
+  /** Redacted error message for failed jobs. */
+  error?: string | null;
+  result_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // --- 8. MCP Catalog & Sources ---

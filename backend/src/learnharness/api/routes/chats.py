@@ -56,6 +56,8 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
         "source_file": session.source_path,
         "status": "waiting_quiz" if pending_quiz else ("completed" if session.phase == "completed" else "active"),
         "pending_quiz": _serialize_quiz(pending_quiz) if pending_quiz else None,
+        "execution_status": session.execution_status,
+        "error": session.error,
         "recovery_required": session.recovery_required or bool(session.pending_quiz_id and not session.pending_quiz),
         "messages": [{**m.model_dump(mode="json"), "timestamp": m.created_at} for m in session.messages],
     })
@@ -84,8 +86,9 @@ async def get_chat(chat_id: str, request: Request):
 @chats_router.post("/{chat_id}/messages")
 @chats_router.post("/{chat_id}/message")
 async def send_chat_message(chat_id: str, payload: SendMessagePayload, request: Request):
-    from learnharness.core.contracts.session import SessionMessage
     from uuid import uuid4
+
+    from learnharness.core.contracts.session import SessionMessage
     state = get_app_state(request.app)
     async with state.sessions.lock(chat_id):
         session = state.sessions.get(chat_id)
