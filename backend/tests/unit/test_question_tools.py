@@ -382,3 +382,11 @@ async def test_persistent_process_gets_teacher_instructions_after_probe_done(tmp
     await service.run(session.id)
     assert "UPDATED INSTRUCTIONS" not in engine.calls[2]["prompt"]
     await state.close()
+
+
+async def test_question_text_double_escaped_latex_is_healed(runtime) -> None:
+    state, sid, tools = runtime
+    call = tools["probe"](r"Quanto vale $\\sqrt{4}$?", [r"$\\sqrt{4} = 2$", "3"], r"Pois $2 \\cdot 2 = 4$.", "A")
+    result, _ = await _ask(state, sid, call, chosen_indices=[0], confidence=90)
+    assert result.question == r"Quanto vale $\sqrt{4}$?"
+    assert result.choices[0].label == r"$\sqrt{4} = 2$" and result.explanation == r"Pois $2 \cdot 2 = 4$."

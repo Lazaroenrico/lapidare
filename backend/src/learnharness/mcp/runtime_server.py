@@ -23,6 +23,7 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 from learnharness.core.contracts.quiz import QuizMode, QuizOption, QuizPayload
 from learnharness.core.contracts.session import ProbeAssessment, ProbeStrand
+from learnharness.core.latex_heal import heal_latex
 from learnharness.core.plan_mermaid import PlanSyntaxError
 from learnharness.services.sessions import SessionConflict, now
 
@@ -109,6 +110,13 @@ def _correct_indices(correct: Any, options: list[QuizOption], multi_select: bool
 
 
 def _payload(session_id: str, **fields: Any) -> QuizPayload:
+    for key in ("question", "explanation", "details", "committed_answer"):
+        if isinstance(fields.get(key), str):
+            fields[key] = heal_latex(fields[key])
+    for choice in fields.get("choices") or []:
+        choice.label = heal_latex(choice.label)
+        if choice.description:
+            choice.description = heal_latex(choice.description)
     try:
         return QuizPayload(quiz_id=f"quiz-{uuid4().hex}", session_id=session_id, created_at=now(), **fields)
     except ValidationError as exc:
