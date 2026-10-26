@@ -103,6 +103,11 @@ class McpServerConfig(BaseModel):
     catalog_tool: str = "list_lessons"
     content_tool: str = "get_lesson"
     content_id_argument: str = "lesson_id"
+    # Reference to the token, never the token itself: a key into the user's secrets file
+    # (outside the Vault) or ``env:VAR_NAME``.
+    auth_ref: str | None = None
+    # stdio only: name of the env var through which the token is passed to the child process.
+    auth_env_var: str | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field, ValidationError
 
 from learnharness.api.routes.chats import CreateChatPayload, create_chat
 from learnharness.api.state import get_app_state
+from learnharness.core.contracts.config import McpServerConfig
+from learnharness.core.events import SseEventType
+from learnharness.mcp.content_client import ContentMcpError, UnknownMcpServer
+from learnharness.services.secrets import (
+    ENV_PREFIX,
+    delete_secret,
+    mcp_secret_key,
+    resolve_auth,
+    set_secret,
+)
+from learnharness.vault.bootstrap import save_config
 from learnharness.vault.transcript_importer import (
     get_source_paragraph,
     import_transcript_text,
@@ -16,12 +28,40 @@ from learnharness.vault.transcript_importer import (
 
 import_router = APIRouter(tags=["sources_and_import"])
 
+_SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
 
 class IngestPayload(BaseModel):
     item_id: str | None = None
+    server: str | None = None
     file_content: str | None = None
     file_name: str | None = None
     title: str
+
+
+class McpServerPayload(BaseModel):
+    name: str
+    transport: Literal["http", "sse", "stdio"] = "http"
+    url: str | None = None
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+    # Write-only. Omitted/None keeps the stored token; "" removes it.
+    auth_token: str | None = None
+    # Alternative to auth_token: "env:VAR_NAME" reads the token from the backend environment.
+    auth_ref: str | None = None
+    # stdio only: env var through which the token is handed to the child process.
+    auth_env_var: str | None = None
+    catalog_tool: str | None = None
+    content_tool: str | None = None
+    content_id_argument: str | None = None
+
+
+class McpImportPayload(BaseModel):
+    item_ids: list[str] = Field(min_length=1, max_length=200)
+    start_session: bool = False
 
 
 @import_router.get("/api/sources/paragraph")
@@ -64,65 +104,267 @@ async def get_paragraph(
     }
 
 
+# --------------------------------------------------------------------------- helpers
+def _public_server(server: McpServerConfig) -> dict[str, Any]:
+    """Serialize a server for API responses. Tokens never leave the backend."""
+    return {
+        "name": server.name,
+        "transport": server.transport,
+        "url": server.url,
+        "command": server.command,
+        "args": list(server.args),
+        "enabled": server.enabled,
+        "has_auth": bool(resolve_auth(server.auth_ref)),
+        "auth_env_var": server.auth_env_var,
+        "catalog_tool": server.catalog_tool,
+        "content_tool": server.content_tool,
+        "content_id_argument": server.content_id_argument,
+    }
+
+
+def _server_or_404(state: Any, name: str) -> McpServerConfig:
+    try:
+        return state.content_mcp_client.get_server(name)
+    except UnknownMcpServer as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown MCP server '{name}'") from exc
+
+
+def _bad_gateway(state: Any, exc: ContentMcpError) -> HTTPException:
+    return HTTPException(status_code=502, detail=state.redact(str(exc)))
+
+
+def _persist_servers(state: Any, servers: list[McpServerConfig]) -> None:
+    config = state.get_config()
+    config.content_mcps = servers
+    save_config(state.vault_path, config)
+    state.refresh_content_mcp_client()
+
+
+def _clean_title(title: str, fallback: str) -> str:
+    title = re.sub(r'[\\/*?:"<>|\x00-\x1f]', " ", title or "")
+    title = re.sub(r"\s+", " ", title).strip(" .")
+    return (title or re.sub(r"[^\w.-]+", "-", fallback).strip("-.") or "item")[:150]
+
+
+def _import_text(state: Any, server_name: str, item_id: str, title: str, text: str) -> dict[str, Any]:
+    target, count = import_transcript_text(
+        vault_path=state.vault_path,
+        raw_text=text,
+        title=title,
+        force=True,
+        subdir=f"MCP/{server_name}",
+        provenance={
+            "source_kind": "mcp",
+            "mcp_server": server_name,
+            "mcp_item_id": item_id,
+            "origem": server_name,
+        },
+    )
+    return {
+        "source_path": str(target.relative_to(state.vault_path)),
+        "paragraph_count": count,
+        "title": title,
+    }
+
+
+async def _teach_session(request: Request, title: str, source_path: str) -> str | None:
+    chat = await create_chat(
+        payload=CreateChatPayload(mode="TEACH", topic=title, source_file=source_path),
+        request=request,
+    )
+    return chat.get("id")
+
+
+# --------------------------------------------------------------------------- MCP servers
+@import_router.get("/api/import/mcp/servers")
+async def list_mcp_servers(request: Request) -> list[dict[str, Any]]:
+    state = get_app_state(request.app)
+    return [_public_server(s) for s in state.get_config().content_mcps]
+
+
+@import_router.post("/api/import/mcp/servers")
+async def upsert_mcp_server(payload: McpServerPayload, request: Request) -> dict[str, Any]:
+    state = get_app_state(request.app)
+    if not _SERVER_NAME.match(payload.name):
+        raise HTTPException(status_code=422, detail="Invalid server name (letters, digits, _ . -; max 64)")
+    if payload.auth_env_var and not _ENV_NAME.match(payload.auth_env_var):
+        raise HTTPException(status_code=422, detail="Invalid auth_env_var")
+    if payload.auth_ref and not (
+        payload.auth_ref.startswith(ENV_PREFIX) and _ENV_NAME.match(payload.auth_ref[len(ENV_PREFIX):])
+    ):
+        raise HTTPException(status_code=422, detail="auth_ref must be 'env:VAR_NAME'")
+    if payload.transport != "stdio" and payload.url and not payload.url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail="url must be http(s)")
+
+    servers = list(state.get_config().content_mcps)
+    existing = next((s for s in servers if s.name == payload.name), None)
+    secret_key = mcp_secret_key(payload.name)
+    auth_ref = existing.auth_ref if existing else None
+    if payload.auth_ref:
+        auth_ref = payload.auth_ref
+    fields: dict[str, Any] = {
+        "name": payload.name,
+        "transport": payload.transport,
+        "url": payload.url if payload.transport != "stdio" else None,
+        "command": payload.command if payload.transport == "stdio" else None,
+        "args": payload.args,
+        "env": payload.env,
+        "enabled": payload.enabled,
+        "auth_ref": secret_key if payload.auth_token else auth_ref,
+        "auth_env_var": payload.auth_env_var,
+    }
+    if payload.auth_token == "" and auth_ref == secret_key:
+        fields["auth_ref"] = None
+    for key in ("catalog_tool", "content_tool", "content_id_argument"):
+        value = getattr(payload, key)
+        if value is not None:
+            fields[key] = value
+        elif existing is not None:
+            fields[key] = getattr(existing, key)
+    try:
+        server = McpServerConfig.model_validate(fields)
+    except ValidationError as exc:
+        errors = "; ".join(str(e.get("msg", "")) for e in exc.errors())
+        raise HTTPException(status_code=422, detail=errors or "Invalid MCP server") from None
+
+    # Secrets are written only after validation, and never into the Vault.
+    if payload.auth_token:
+        set_secret(secret_key, payload.auth_token)
+    elif payload.auth_token == "":
+        delete_secret(secret_key)
+    servers = [s for s in servers if s.name != payload.name] + [server]
+    _persist_servers(state, servers)
+    return _public_server(server)
+
+
+@import_router.delete("/api/import/mcp/servers/{name}", status_code=204)
+async def delete_mcp_server(name: str, request: Request) -> Response:
+    state = get_app_state(request.app)
+    servers = list(state.get_config().content_mcps)
+    if not any(s.name == name for s in servers):
+        raise HTTPException(status_code=404, detail=f"Unknown MCP server '{name}'")
+    _persist_servers(state, [s for s in servers if s.name != name])
+    delete_secret(mcp_secret_key(name))
+    return Response(status_code=204)
+
+
+@import_router.post("/api/import/mcp/servers/{name}/test")
+async def test_mcp_server(name: str, request: Request) -> dict[str, Any]:
+    state = get_app_state(request.app)
+    result = await state.content_mcp_client.test(_server_or_404(state, name))
+    if result.get("error"):
+        result["error"] = state.redact(result["error"])
+    return result
+
+
+@import_router.get("/api/import/mcp/servers/{name}/items")
+async def list_mcp_items(name: str, request: Request) -> list[dict[str, Any]]:
+    state = get_app_state(request.app)
+    server = _server_or_404(state, name)
+    try:
+        return await state.content_mcp_client.list_items(server)
+    except ContentMcpError as exc:
+        raise _bad_gateway(state, exc) from None
+
+
+@import_router.post("/api/import/mcp/servers/{name}/import")
+async def import_mcp_items(name: str, payload: McpImportPayload, request: Request) -> dict[str, Any]:
+    state = get_app_state(request.app)
+    server = _server_or_404(state, name)
+    item_ids = list(dict.fromkeys(payload.item_ids))
+    try:
+        fetched = await state.content_mcp_client.fetch_items(server, item_ids)
+    except ContentMcpError as exc:
+        raise _bad_gateway(state, exc) from None
+
+    imported = [
+        _import_text(state, server.name, item["id"], _clean_title(item["title"], item["id"]), item["text"])
+        for item in fetched
+    ]
+    state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": [i["source_path"] for i in imported]})
+    session_id = None
+    if payload.start_session and len(imported) == 1:
+        session_id = await _teach_session(request, imported[0]["title"], imported[0]["source_path"])
+    return {"imported": imported, "session_id": session_id}
+
+
+# --------------------------------------------------------------------------- legacy
 @import_router.get("/api/import/catalog")
 async def get_catalog(request: Request) -> dict[str, Any]:
-    """List available Praxis or external MCP lessons."""
+    """Aggregate items of every enabled content MCP server (backward-compatible shape)."""
     state = get_app_state(request.app)
-    lessons = await state.content_mcp_client.list_available_lessons()
-
-    items = []
-    for lesson in lessons:
-        week = lesson.get("week", "")
-        items.append(
-            {
-                "id": lesson["id"],
-                "title": lesson["title"],
-                "week": int(week[1:]) if week.startswith("S") and week[1:].isdigit() else None,
-                "category": lesson.get("kind", "aula"),
-                "source_mcp": lesson.get("source_mcp", "praxis"),
-                "has_transcript": True,
-                "has_code": True,
-                "imported": not lesson.get("is_new", True),
-                "local_source_path": lesson.get("imported_note"),
-            }
-        )
-
-    return {"mcp_connected": True, "items": items}
+    client = state.content_mcp_client
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    connected = False
+    for server in client.enabled_servers():
+        try:
+            server_items = await client.list_items(server)
+        except ContentMcpError as exc:
+            errors.append({"server": server.name, "error": state.redact(str(exc))})
+            continue
+        connected = True
+        for item in server_items:
+            items.append(
+                {
+                    **item,
+                    "server": server.name,
+                    "week": None,
+                    "category": item.get("kind", "item"),
+                    "source_mcp": server.name,
+                    "has_transcript": True,
+                    "has_code": False,
+                    "imported": not item.get("is_new", True),
+                    "local_source_path": None,
+                }
+            )
+    return {"mcp_connected": connected, "items": items, "errors": errors}
 
 
 @import_router.post("/api/import/ingest")
 @import_router.post("/api/import/source")
 async def ingest_source(payload: IngestPayload, request: Request) -> dict[str, Any]:
-    """Import transcript into Fontes/ with ^pN anchors and start a TEACH session."""
+    """Import a transcript into Fontes/ with ^pN anchors and start a TEACH session on it.
+
+    ``file_content`` is imported directly; otherwise ``item_id`` is fetched from the MCP server
+    named by ``server`` (or the only enabled one).
+    """
     state = get_app_state(request.app)
 
-    content = payload.file_content
-    if not content and payload.item_id:
-        content = await state.content_mcp_client.fetch_lesson_content(payload.item_id, state.vault_path)
-
-    if not content:
+    if payload.file_content:
+        target_file, p_count = import_transcript_text(
+            vault_path=state.vault_path,
+            raw_text=payload.file_content,
+            title=payload.title,
+            praxis_id=payload.item_id,
+            force=True,
+        )
+        source_path = str(target_file.relative_to(state.vault_path))
+    elif payload.item_id:
+        client = state.content_mcp_client
+        if payload.server:
+            server = _server_or_404(state, payload.server)
+        else:
+            enabled = client.enabled_servers()
+            if len(enabled) != 1:
+                raise HTTPException(status_code=400, detail="Specify 'server' to import an MCP item")
+            server = enabled[0]
+        try:
+            text = await client.fetch_item(server, payload.item_id)
+        except ContentMcpError as exc:
+            raise _bad_gateway(state, exc) from None
+        result = _import_text(
+            state, server.name, payload.item_id, _clean_title(payload.title, payload.item_id), text
+        )
+        source_path, p_count = result["source_path"], result["paragraph_count"]
+    else:
         raise HTTPException(status_code=400, detail="No content provided for ingestion")
 
-    target_file, p_count = import_transcript_text(
-        vault_path=state.vault_path,
-        raw_text=content,
-        title=payload.title,
-        praxis_id=payload.item_id,
-        force=True,
-    )
-
-    # Invariant 1: Ingesting dense source automatically sets up TEACH session anchored on it
-    chat_resp = await create_chat(
-        payload=CreateChatPayload(
-            mode="TEACH",
-            topic=payload.title,
-            source_file=str(target_file.name),
-        ),
-        request=request,
-    )
-
+    state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": [source_path]})
+    # Invariant 1: ingesting a dense source sets up a TEACH session anchored on it.
+    session_id = await _teach_session(request, payload.title, source_path)
     return {
-        "source_path": str(target_file.relative_to(state.vault_path)),
-        "session_id": chat_resp.get("id"),
+        "source_path": source_path,
+        "session_id": session_id,
         "paragraph_count": p_count,
     }

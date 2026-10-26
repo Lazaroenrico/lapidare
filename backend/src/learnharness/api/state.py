@@ -42,13 +42,18 @@ class AppState:
         self.mcp_url = os.environ.get("LEARNHARNESS_MCP_URL", f"http://127.0.0.1:{port}/internal/mcp/")
         self.watcher = None
         self.started = False
-        self.content_mcp_client = ContentMcpClient(servers=self.get_config().content_mcps)
+        self.refresh_content_mcp_client()
         from learnharness.services.jobs import JobManager
         from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
         self.sessions = SessionService(self)
         self.jobs = JobManager(self)
         self.tracks = TrackService(self)
+
+    def refresh_content_mcp_client(self):
+        servers = self.get_config().content_mcps
+        self.content_mcp_client = ContentMcpClient(servers=servers, vault_path=self.vault_path)
+        return self.content_mcp_client
 
     def get_config(self):
         if not (self.vault_path / ".harness/config.json").is_file():
@@ -119,7 +124,7 @@ class AppState:
         self.api_key = api_key
         self.active_jobs.clear()
         self.practice_sets.clear()
-        self.content_mcp_client = ContentMcpClient(servers=self.get_config().content_mcps)
+        self.refresh_content_mcp_client()
         await self.start()
 
 
