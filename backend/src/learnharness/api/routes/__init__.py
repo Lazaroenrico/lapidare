@@ -5,6 +5,7 @@ from learnharness.api.routes.drawings import drawings_router
 from learnharness.api.routes.graph import graph_router
 from learnharness.api.routes.import_content import import_router
 from learnharness.api.routes.practice import practice_router
+from learnharness.api.routes.prompts import prompts_router
 from learnharness.api.routes.setup import setup_router
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "graph_router",
     "import_router",
     "practice_router",
+    "prompts_router",
     "setup_router",
 ]

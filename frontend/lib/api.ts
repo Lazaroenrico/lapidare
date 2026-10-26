@@ -44,6 +44,7 @@ import {
   buildUpsertMcpServer,
   type RequestSpec,
 } from "./import-wire";
+import { decodeAnswer, decodeQuiz, decodeSession } from "./session-wire";
 
 const BASE_URL = "";
 
@@ -200,11 +201,12 @@ export async function getGraphSnapshot(): Promise<GraphSnapshot> {
 // --- Chat & Classroom Sessions ---
 
 export async function listChats(): Promise<SessionRecord[]> {
-  return fetchJson<SessionRecord[]>("/api/chats");
+  const raw = await fetchJson<unknown[]>("/api/chats");
+  return Array.isArray(raw) ? raw.map(decodeSession) : [];
 }
 
 export async function getChat(id: string): Promise<SessionRecord> {
-  return fetchJson<SessionRecord>(`/api/chats/${encodeURIComponent(id)}`);
+  return decodeSession(await fetchJson<unknown>(`/api/chats/${encodeURIComponent(id)}`));
 }
 
 export async function createChat(payload: {
@@ -213,49 +215,55 @@ export async function createChat(payload: {
   source_file?: string;
   track_item_id?: string;
 }): Promise<SessionRecord> {
-  return fetchJson<SessionRecord>("/api/chats", {
+  return decodeSession(await fetchJson<unknown>("/api/chats", {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }));
 }
 
 export async function sendChatMessage(
   id: string,
   content: string
 ): Promise<{ session: SessionRecord }> {
-  return fetchJson<{ session: SessionRecord }>(
+  const res = await fetchJson<{ session?: unknown }>(
     `/api/chats/${encodeURIComponent(id)}/messages`,
     {
       method: "POST",
       body: JSON.stringify({ content }),
     }
   );
+  return { session: decodeSession(res?.session) };
 }
 
 export async function submitQuizAnswer(
   id: string,
   submission: QuizSubmission
 ): Promise<CalibrationResult> {
-  return fetchJson<CalibrationResult>(
+  const raw = await fetchJson<unknown>(
     `/api/chats/${encodeURIComponent(id)}/answer`,
     {
       method: "POST",
       body: JSON.stringify(submission),
-    }
+    },
+    // The dock shows the error inline.
+    { silent: true }
   );
+  const result = decodeAnswer(raw, submission.quiz_id);
+  if (!result) throw new ApiError("Malformed answer response", 502, raw);
+  return result;
 }
 
 export async function resumeChat(
   id: string,
   restartDiagnostic = false
 ): Promise<SessionRecord> {
-  return fetchJson<SessionRecord>(
+  return decodeSession(await fetchJson<unknown>(
     `/api/chats/${encodeURIComponent(id)}/resume`,
     {
       method: "POST",
       body: JSON.stringify({ restart_diagnostic: restartDiagnostic }),
     }
-  );
+  ));
 }
 
 // --- Concept notes (read-only in-app pane) ---
@@ -362,12 +370,13 @@ export async function saveDrawing(
 export async function reviewDrawing(
   slug: string
 ): Promise<DrawingReviewResult> {
-  return fetchJson<DrawingReviewResult>(
+  const raw = await fetchJson<DrawingReviewResult>(
     `/api/drawings/${encodeURIComponent(slug)}/review`,
     {
       method: "POST",
     }
   );
+  return { ...raw, pending_quiz: decodeQuiz(raw.pending_quiz) };
 }
 
 // --- Practice Sets & Hint Ladder ---

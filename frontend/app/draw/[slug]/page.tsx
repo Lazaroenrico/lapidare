@@ -346,7 +346,7 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
                   {pendingQuiz && reviewSessionId && (
                     <section className="space-y-3">
                       <QuestionDock
-                        key={pendingQuiz.id}
+                        key={pendingQuiz.quiz_id}
                         quiz={pendingQuiz}
                         sessionId={reviewSessionId}
                         onAnswerSubmitted={() => setQuizAnswered(true)}
