@@ -7,6 +7,7 @@ import pytest
 
 from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeProblem
 from learnharness.pipelines.practice_gen import (
+    InvalidGradeError,
     grade_practice_attempt,
     run_practice_generation_pipeline,
 )
@@ -157,3 +158,19 @@ async def test_reject_solution_leaking_hint(tmp_path):
             return problem
     with pytest.raises(ValueError, match="disclose"):
         await run_practice_generation_pipeline(tmp_path, ["Attention"], engine=LeakingEngine())
+
+
+@pytest.mark.parametrize(("scores", "total", "match"), [
+    ({"mechanism": 7, "limit": 0}, 7, "bounds"),
+    ({"mechanism": 2}, 2, "rubric criteria"),
+    ({"mechanism": 2, "limit": 0, "extra": 1}, 3, "rubric criteria"),
+])
+async def test_reject_grade_outside_committed_rubric(tmp_path, scores, total, match):
+    problem = (await run_practice_generation_pipeline(tmp_path, ["Attention"], engine=FakeEngine())).problems[0]
+
+    class Grader:
+        async def run_structured(self, **kwargs):
+            return PracticeAttemptGrade(problem_id="x", score=total, criterion_scores=scores, feedback="x",
+                                        passed=total >= 7)
+    with pytest.raises(InvalidGradeError, match=match):
+        await grade_practice_attempt(problem, "my answer", Grader())

@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from learnharness.api.state import get_app_state
-from learnharness.core.contracts.practice import PracticeSet
+from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeSet
 from learnharness.core.events import SseEventType
+from learnharness.engines.cli_protocol import EngineError
 from learnharness.mcp.demo_builder import load_demo_from_vault, save_demo_to_vault
-from learnharness.pipelines.extraction import run_extraction_pipeline
-from learnharness.pipelines.practice_gen import (
-    grade_practice_attempt_node,
-    run_practice_generation_pipeline,
-)
+from learnharness.pipelines.practice_gen import InvalidGradeError, grade_practice_attempt
 
 practice_router = APIRouter(tags=["practice_demos_and_jobs"])
 
@@ -45,9 +43,22 @@ class TriggerExtractionPayload(BaseModel):
     source_ref: str | None = None
 
 
+def _serialize_hint(hint) -> dict[str, Any]:
+    return {"level": hint.level, "title": hint.label, "label": hint.label, "prompt": hint.prompt,
+            "content": hint.prompt}
+
+
+def _serialize_grade(grade: PracticeAttemptGrade) -> dict[str, Any]:
+    return {"score": grade.score, "max_score": grade.max_score, "feedback": grade.feedback,
+            "rubric_scores": grade.criterion_scores, "passed": grade.passed}
+
+
 def _serialize_practice_set(p_set: PracticeSet) -> dict[str, Any]:
+    """Public view: never exposes the committed solution nor hints beyond the revealed rung."""
     problems_data = []
     for prob in p_set.problems:
+        revealed = p_set.current_hint_idx.get(prob.problem_id, -1)
+        grade = p_set.grades.get(prob.problem_id)
         problems_data.append(
             {
                 "id": prob.problem_id,
@@ -56,9 +67,11 @@ def _serialize_practice_set(p_set: PracticeSet) -> dict[str, Any]:
                 "prompt": prob.prompt,
                 "target_concepts": [prob.topic],
                 "kind": prob.kind,
-                "hints": [{"level": h.level, "title": h.label, "content": h.prompt} for h in prob.hints],
-                "rubric": [{"name": r.description, "weight": r.max_points, "description": r.description} for r in prob.rubric],
+                "hints": [_serialize_hint(h) for h in prob.hints[: revealed + 1]],
+                "rubric": [{"id": r.id, "name": r.description, "weight": r.max_points, "description": r.description}
+                           for r in prob.rubric],
                 "max_score": 10,
+                "grade": _serialize_grade(grade) if grade else None,
             }
         )
 
@@ -79,63 +92,61 @@ async def get_practice_sets(request: Request) -> list[dict[str, Any]]:
     return [_serialize_practice_set(s) for s in state.practice_sets.values()]
 
 
-@practice_router.post("/api/practice/generate")
+@practice_router.post("/api/practice/generate", status_code=202)
 async def generate_practice_set(payload: GeneratePracticePayload, request: Request) -> dict[str, Any]:
-    """Generate practice set via LangGraph StateGraph (Partitioner -> Send(Generator) -> Aggregator)."""
+    """Queue a `practice_gen` background job (Partitioner -> Send(Generator) -> Aggregator).
+
+    Returns the job record; the set appears in GET /api/practice/sets after SSE `jobs:updated`.
+    An identical request still queued/running is returned instead of duplicated.
+    """
     state = get_app_state(request.app)
-    p_set = await run_practice_generation_pipeline(
-        vault_path=state.vault_path,
-        topics=payload.topics if payload.topics else None,
-    )
-    state.practice_sets[p_set.set_id] = p_set
-    return _serialize_practice_set(p_set)
+    topics = list(dict.fromkeys(t.strip() for t in payload.topics if t.strip()))
+    for job in state.active_jobs.values():
+        if (job.get("kind") == "practice_gen" and job.get("status") in ("queued", "running")
+                and job.get("payload", {}).get("topics") == topics):
+            return job
+    label = f"Practice: {', '.join(topics[:2])}" if topics else "Practice: prioridades do quiz"
+    return state.jobs.submit("practice_gen", {"topics": topics, "topic": label})
+
+
+def _find_problem(request: Request, set_id: str, problem_id: str):
+    state = get_app_state(request.app)
+    p_set = state.practice_sets.get(set_id)
+    if not p_set:
+        raise HTTPException(status_code=404, detail=f"Practice set {set_id} not found")
+    problem = next((p for p in p_set.problems if p.problem_id == problem_id), None)
+    if not problem:
+        raise HTTPException(status_code=404, detail=f"Problem {problem_id} not found in set")
+    return state, p_set, problem
 
 
 @practice_router.post("/api/practice/sets/{set_id}/problems/{problem_id}/attempt")
 async def submit_practice_attempt(
     set_id: str, problem_id: str, payload: PracticeAttemptPayload, request: Request
 ) -> dict[str, Any]:
-    """Step hint ladder without grading OR grade attempt against committed rubric."""
-    state = get_app_state(request.app)
-    p_set = state.practice_sets.get(set_id)
-    if not p_set:
-        raise HTTPException(status_code=404, detail=f"Practice set {set_id} not found")
+    """Reveal exactly the next hint rung (R0 -> R5) OR grade the attempt against the committed rubric."""
+    state, p_set, problem = _find_problem(request, set_id, problem_id)
 
-    target_prob = next((p for p in p_set.problems if p.problem_id == problem_id), None)
-    if not target_prob:
-        raise HTTPException(status_code=404, detail=f"Problem {problem_id} not found in set")
-
-    current_idx = p_set.current_hint_idx.get(problem_id, -1)
-
-    # If learner requests hint, advance hint step WITHOUT revealing solution or grading
     if payload.request_hint:
-        next_idx = min(current_idx + 1, len(target_prob.hints) - 1)
+        next_idx = p_set.current_hint_idx.get(problem_id, -1) + 1
+        if next_idx >= len(problem.hints):
+            raise HTTPException(status_code=409, detail="Hint ladder exhausted (R5 already revealed)")
         p_set.current_hint_idx[problem_id] = next_idx
-        hint = target_prob.hints[next_idx]
-        return {
-            "next_hint": {
-                "level": hint.level,
-                "title": hint.label,
-                "label": hint.label,
-                "prompt": hint.prompt,
-                "content": hint.prompt,
-            }
-        }
+        state.jobs.save_practice(p_set)
+        return {"next_hint": _serialize_hint(problem.hints[next_idx])}
 
-    # Grade attempt against committed rubric via LangGraph grader node
-    grade = grade_practice_attempt_node(target_prob, payload.answer)
+    if not payload.answer.strip():
+        raise HTTPException(status_code=422, detail="Submit an answer before requesting grading")
+    config = state.get_config()
+    try:
+        grade = await grade_practice_attempt(
+            problem, payload.answer, state.engine(config.slots.strong), slot=config.slots.strong)
+    except (InvalidGradeError, ValidationError) as exc:
+        # Inconsistent provider output is an upstream failure, never silently repaired.
+        raise EngineError(f"Provider returned an invalid grade: {exc}") from exc
     p_set.grades[problem_id] = grade
-
-    return {
-        "grade": {
-            "score": grade.score,
-            "max_score": grade.max_score,
-            "feedback": grade.feedback,
-            "rubric_scores": grade.criterion_scores,
-            "passed": grade.passed,
-        },
-        "next_hint": None,
-    }
+    state.jobs.save_practice(p_set)
+    return {"grade": _serialize_grade(grade), "next_hint": None}
 
 
 @practice_router.post("/api/demos")
@@ -168,18 +179,12 @@ async def get_demo_endpoint(slug: str, request: Request, raw: bool = False) -> A
     return data
 
 
-@practice_router.post("/api/jobs/extract")
+@practice_router.post("/api/jobs/extract", status_code=202)
 async def trigger_extraction_job(payload: TriggerExtractionPayload, request: Request) -> dict[str, Any]:
-    """Run LangGraph concept & chain extraction pipeline (Extractor -> Auditor -> Merger)."""
+    """Queue an `extraction` background job (Extractor -> Auditor -> Merger); returns the job record."""
     state = get_app_state(request.app)
-    res = await run_extraction_pipeline(
-        vault_path=state.vault_path,
-        session_id=payload.session_id,
-        topic=payload.topic,
-        messages_text=payload.messages_text,
-        source_ref=payload.source_ref,
-    )
-    return res
+    digest = hashlib.sha256(payload.messages_text.encode("utf-8")).hexdigest()[:16]
+    return state.jobs.submit("extraction", payload.model_dump(), key=f"extract:{payload.session_id}:{digest}")
 
 
 @practice_router.get("/api/jobs")

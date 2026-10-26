@@ -17,6 +17,10 @@ from learnharness.vault.jsonl_store import load_chains, load_quiz_logs
 from learnharness.vault.markdown_ast import scan_all_concepts
 
 
+class InvalidGradeError(ValueError):
+    """The provider returned a grade inconsistent with the committed rubric."""
+
+
 class PracticeGenState(TypedDict, total=False):
     vault_path: str
     requested_topics: list[str]
@@ -169,17 +173,14 @@ async def grade_practice_attempt(problem: PracticeProblem, answer: str, engine, 
     grade = PracticeAttemptGrade.model_validate(grade)
     maxima = {c.id: c.max_points for c in problem.rubric}
     if set(grade.criterion_scores) != set(maxima):
-        raise ValueError("Grade does not match committed rubric criteria")
+        raise InvalidGradeError("Grade does not match committed rubric criteria")
     if any(not 0 <= score <= maxima[key] for key, score in grade.criterion_scores.items()):
-        raise ValueError("Criterion score exceeds committed rubric bounds")
+        raise InvalidGradeError("Criterion score exceeds committed rubric bounds")
     if grade.score != sum(grade.criterion_scores.values()) or grade.max_score != 10:
-        raise ValueError("Grade total does not match criterion scores")
+        raise InvalidGradeError("Grade total does not match criterion scores")
     if grade.passed != (grade.score >= 7):
-        raise ValueError("Grade pass status does not match score")
+        raise InvalidGradeError("Grade pass status does not match score")
     grade.problem_id = problem.problem_id
     grade.next_hint = None
     return grade
 
-
-def grade_practice_attempt_node(problem, answer):
-    raise ValueError("Use async grade_practice_attempt with a configured engine")

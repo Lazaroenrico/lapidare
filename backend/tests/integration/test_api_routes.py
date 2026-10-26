@@ -230,46 +230,101 @@ def _practice_problem(prompt: str) -> PracticeProblem:
     })
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "Bug in api/routes/practice.py: /api/practice/generate does not pass an engine to "
-    "run_practice_generation_pipeline, and grading calls grade_practice_attempt_node, which always raises."))
+def _generate_set(client: TestClient, topics: list[str]) -> dict:
+    gen_res = client.post("/api/practice/generate", json={"topics": topics})
+    assert gen_res.status_code == 202
+    job = gen_res.json()
+    assert job["kind"] == "practice_gen" and job["payload"]["topics"] == topics
+    jobs = poll_until(lambda: client.get("/api/jobs").json(),
+                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] in ("completed", "failed")
+                                     for j in js))
+    done = next(j for j in jobs if j["job_id"] == job["job_id"])
+    assert done["status"] == "completed", done["error"]
+    sets = client.get("/api/practice/sets").json()
+    return next(s for s in sets if s["id"] == done["result_id"])
+
+
 def test_practice_generate_and_hint_ladder(client: TestClient, fake_engine: FakeEngine) -> None:
-    """Generate a practice set with the injected engine and step through the R0-R5 hint ladder."""
+    """Generate via the background job, climb R0..R5 one rung at a time, then grade with the engine."""
     fake_engine.program(PracticeProblem, _practice_problem)
     fake_engine.program(PracticeAttemptGrade, {
         "problem_id": "provider-id", "score": 8, "max_score": 10,
         "criterion_scores": {"mechanism": 5, "limit": 3}, "feedback": "Bom raciocínio.", "passed": True,
     })
-    # 1. Generate practice set
-    gen_res = client.post(
-        "/api/practice/generate",
-        json={"topics": ["Decodificação Autoregressiva"]},
-    )
-    assert gen_res.status_code == 200
-    p_set = gen_res.json()
+    p_set = _generate_set(client, ["Decodificação Autoregressiva"])
     set_id = p_set["id"]
-    problem_id = p_set["problems"][0]["id"]
+    problem = p_set["problems"][0]
+    problem_id = problem["id"]
+    assert problem["hints"] == []  # Nothing revealed before the learner asks.
+    assert "committed_solution" not in str(p_set) and "K e V anteriores" not in str(p_set)
 
-    # 2. Request hint (R0) without grading
-    hint_res = client.post(
-        f"/api/practice/sets/{set_id}/problems/{problem_id}/attempt",
-        json={"answer": "", "request_hint": True},
-    )
-    assert hint_res.status_code == 200
-    hint_data = hint_res.json()
-    assert "next_hint" in hint_data
-    assert hint_data["next_hint"]["level"] == "R0"
+    url = f"/api/practice/sets/{set_id}/problems/{problem_id}/attempt"
+    for i in range(6):
+        hint_res = client.post(url, json={"answer": "", "request_hint": True})
+        assert hint_res.status_code == 200
+        hint = hint_res.json()["next_hint"]
+        assert hint["level"] == f"R{i}"
+        assert "K e V anteriores" not in str(hint)
+        revealed = next(s for s in client.get("/api/practice/sets").json() if s["id"] == set_id)
+        assert [h["level"] for h in revealed["problems"][0]["hints"]] == [f"R{j}" for j in range(i + 1)]
+    assert client.post(url, json={"answer": "", "request_hint": True}).status_code == 409
 
-    # 3. Submit solution attempt for grading
-    grade_res = client.post(
-        f"/api/practice/sets/{set_id}/problems/{problem_id}/attempt",
-        json={
-            "answer": "A decodificação autoregressiva consome um token por passo atualizando o KV cache incrementalmente.",
-            "request_hint": False,
-        },
-    )
+    answer = "A decodificação autoregressiva consome um token por passo atualizando o KV cache incrementalmente."
+    grade_res = client.post(url, json={"answer": answer, "request_hint": False})
     assert grade_res.status_code == 200
     grade_data = grade_res.json()
     assert grade_data["grade"]["score"] == 8
     assert grade_data["grade"]["passed"] is True
+    assert grade_data["grade"]["rubric_scores"] == {"mechanism": 5, "limit": 3}
+    assert grade_data["next_hint"] is None
     assert {c["schema"] for c in fake_engine.structured_calls} == {PracticeProblem, PracticeAttemptGrade}
+
+    # Hint progress and grade persist append-only under .harness/practice/.
+    persisted = next(s for s in client.get("/api/practice/sets").json() if s["id"] == set_id)
+    assert persisted["problems"][0]["grade"]["score"] == 8
+    assert persisted["completed"] is True
+
+
+def test_practice_grade_rejects_inconsistent_provider_output(client: TestClient, fake_engine: FakeEngine) -> None:
+    """A grade whose total disagrees with its criteria is a provider failure (502), never stored."""
+    fake_engine.program(PracticeProblem, _practice_problem)
+    fake_engine.program(PracticeAttemptGrade, [
+        {"problem_id": "x", "score": 10, "criterion_scores": {"mechanism": 5, "limit": 3},
+         "feedback": "x", "passed": True},
+        {"problem_id": "x", "score": 9, "criterion_scores": {"mechanism": 7, "limit": 2},
+         "feedback": "x", "passed": True},
+    ])
+    p_set = _generate_set(client, ["Atenção"])
+    url = f"/api/practice/sets/{p_set['id']}/problems/{p_set['problems'][0]['id']}/attempt"
+    assert client.post(url, json={"answer": "", "request_hint": False}).status_code == 422
+    for _ in range(2):
+        assert client.post(url, json={"answer": "minha resposta", "request_hint": False}).status_code == 502
+    stored = next(s for s in client.get("/api/practice/sets").json() if s["id"] == p_set["id"])
+    assert stored["problems"][0]["grade"] is None
+
+
+def test_practice_generation_provider_failure_marks_job_failed(client: TestClient, fake_engine: FakeEngine) -> None:
+    fake_engine.program(PracticeProblem, RuntimeError("provider unavailable"))
+    job = client.post("/api/practice/generate", json={"topics": ["Atenção"]}).json()
+    jobs = poll_until(lambda: client.get("/api/jobs").json(),
+                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] == "failed" for j in js))
+    failed = next(j for j in jobs if j["job_id"] == job["job_id"])
+    assert "provider unavailable" in failed["error"]
+    assert client.get("/api/practice/sets").json() == []
+
+
+def test_extract_route_queues_engine_backed_job(client: TestClient, fake_engine: FakeEngine) -> None:
+    """POST /api/jobs/extract goes through the JobManager, which supplies the background engine."""
+    payload = {"session_id": "chat-1", "topic": "Atenção", "messages_text": "A atenção pondera valores."}
+    res = client.post("/api/jobs/extract", json=payload)
+    assert res.status_code == 202
+    job = res.json()
+    assert job["kind"] == "extraction" and job["payload"]["session_id"] == "chat-1"
+    assert client.post("/api/jobs/extract", json=payload).json()["job_id"] == job["job_id"]  # dedup
+    jobs = poll_until(lambda: client.get("/api/jobs").json(),
+                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] in ("completed", "failed")
+                                     for j in js))
+    done = next(j for j in jobs if j["job_id"] == job["job_id"])
+    # The engine was actually invoked (no "requires a configured engine" error).
+    assert fake_engine.structured_calls
+    assert "configured engine" not in (done["error"] or "")
