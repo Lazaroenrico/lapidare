@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import pytest
 
 from learnharness.api.app import create_app
 from learnharness.api.state import AppState
@@ -181,11 +180,6 @@ async def test_teach_free_topic_end_to_end(tmp_path: Path) -> None:
     await _run_teach_flow(tmp_path)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "pipelines/extraction.py: nodes annotate `config: RunnableConfig | None` under "
-    "`from __future__ import annotations`; LangGraph does not recognise the string annotation, "
-    "never injects the config, and the engine is silently skipped (deterministic fallback only)."
-))
 async def test_extraction_job_uses_engine_structured_output(tmp_path: Path) -> None:
     flow = await _run_teach_flow(tmp_path)
     assert "_ExtractionStructuredPayload" in flow["engine"].structured_calls
