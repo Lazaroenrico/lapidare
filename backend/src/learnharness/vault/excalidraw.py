@@ -311,6 +311,17 @@ def load_drawing(vault_path: Path, slug: str) -> dict[str, Any]:
     }
 
 
+def _managed_block_body(content: str, key: str) -> str | None:
+    """Return the inner text of the harness-managed block ``key``, if present."""
+    token = revision(key)[:24]
+    match = re.search(
+        rf"^<!-- harness:{token}:start -->\n(.*?)^<!-- harness:{token}:end -->",
+        content,
+        re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1) if match else None
+
+
 def save_drawing(
     vault_path: Path,
     slug: str,
@@ -373,8 +384,14 @@ def save_drawing(
                 + content[text_section.end(2) :]
             )
         if review_markdown is not None:
+            # Reviews accumulate: earlier entries in the managed block are kept and the
+            # new one is appended; text outside the block (user notes) is never touched.
+            previous = _managed_block_body(content, "drawing:review")
+            if previous is not None:
+                previous = re.sub(r"^## Revis[ãa]o[^\n]*\n?", "", previous.strip(), count=1).strip()
+            entries = [e for e in (previous, review_markdown.strip()) if e]
             content = merge_managed_block(
-                content, "drawing:review", f"## Revisão\n{review_markdown}"
+                content, "drawing:review", "## Revisão\n" + "\n\n---\n\n".join(entries)
             )
             _fm, raw_fm, body = _split_frontmatter(content)
             if raw_fm:

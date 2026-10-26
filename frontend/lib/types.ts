@@ -90,7 +90,7 @@ export interface SetupStatusResponse {
 
 export type SessionMode = "TEACH" | "PRACTICE";
 
-export type TeachContextKind = "free_topic" | "dense_source" | "track_step";
+export type TeachContextKind = "free_topic" | "dense_source" | "track_step" | "drawing_review";
 
 export type SessionPhase =
   | "probing"
@@ -299,13 +299,17 @@ export interface PracticeSet {
 
 // --- 6. Excalidraw Multimodal Review ---
 
+/** Response of POST /api/drawings/{slug}/review. */
 export interface DrawingReviewResult {
   slug: string;
-  what_is_correct: string[];
-  what_was_missed: string[];
-  what_is_incorrect: string[];
-  conceptual_quiz?: QuizPayload;
-  summary: string;
+  correct_points: string[];
+  missing_points: string[];
+  incorrect_points: string[];
+  summary_markdown: string;
+  /** TEACH session (context_kind "drawing_review") hosting the follow-up quiz. */
+  session_id: string | null;
+  /** Follow-up quiz on conceptual errors; answered via POST /api/chats/{session_id}/answer. */
+  pending_quiz: QuizPayload | null;
 }
 
 // --- 7. Server-Sent Events & Background Jobs ---
