@@ -118,7 +118,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         }
       })
       .catch((err) => {
-        setErrorMsg(err instanceof Error ? err.message : "Failed to load setup.");
+        setErrorMsg(err instanceof Error ? err.message : t.sdLoadFailed);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -177,11 +177,11 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         onComplete?.(res.config);
         onClose?.();
       } else {
-        setErrorMsg("Failed to persist setup configuration.");
+        setErrorMsg(t.sdPersistFailed);
       }
     } catch (err: unknown) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Error saving configuration."
+        err instanceof Error ? err.message : t.sdSaveError
       );
     } finally {
       setSubmitting(false);
@@ -189,24 +189,26 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-2xl bg-[#1c1c1c] border border-[#434343] rounded shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-[#e6e6e6]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+      <div className="w-full max-w-2xl bg-card border border-border rounded shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-foreground">
         {/* Modal Header */}
-        <div className="p-4 border-b border-[#434343] flex items-center justify-between bg-[#141414]">
+        <div className="p-4 border-b border-border flex items-center justify-between bg-background">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#e6e6e6]" />
-            <span className="font-title text-base font-bold text-white tracking-wide">
+            <Sparkles className="w-4 h-4 text-foreground" />
+            <span className="font-title text-base font-bold text-foreground tracking-wide">
               {t.setup}
             </span>
-            <span className="text-xs font-ui text-[#8d8d8d] ml-2">
-              Passo {step} de 4
+            <span className="text-xs font-ui text-muted-foreground ml-2">
+              {t.sdStepOf(step, 4)}
             </span>
           </div>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              className="text-[#8d8d8d] hover:text-[#e6e6e6] p-1 rounded hover:bg-[#2a2a2a] transition-colors"
+              aria-label={t.close}
+              title={t.close}
+              className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -214,59 +216,59 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         </div>
 
         {/* Progress Rail */}
-        <div className="grid grid-cols-4 gap-1 px-4 py-2 bg-[#141414] border-b border-[#434343] text-[10px] font-ui">
+        <div className="grid grid-cols-4 gap-1 px-4 py-2 bg-background border-b border-border text-[10px] font-ui">
           <div
             className={`py-1 text-center rounded border ${
               step >= 1
-                ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                : "border-[#434343] text-[#8d8d8d]"
+                ? "bg-accent border-foreground text-foreground"
+                : "border-border text-muted-foreground"
             }`}
           >
-            1. Conector Google
+            {t.sdRail1}
           </div>
           <div
             className={`py-1 text-center rounded border ${
               step >= 2
-                ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                : "border-[#434343] text-[#8d8d8d]"
+                ? "bg-accent border-foreground text-foreground"
+                : "border-border text-muted-foreground"
             }`}
           >
-            2. Idioma & Vault
+            {t.sdRail2}
           </div>
           <div
             className={`py-1 text-center rounded border ${
               step >= 3
-                ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                : "border-[#434343] text-[#8d8d8d]"
+                ? "bg-accent border-foreground text-foreground"
+                : "border-border text-muted-foreground"
             }`}
           >
-            3. MCP de Conteúdo
+            {t.sdRail3}
           </div>
           <div
             className={`py-1 text-center rounded border ${
               step >= 4
-                ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                : "border-[#434343] text-[#8d8d8d]"
+                ? "bg-accent border-foreground text-foreground"
+                : "border-border text-muted-foreground"
             }`}
           >
-            4. Trilha Inicial
+            {t.sdRail4}
           </div>
         </div>
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto flex-1 font-prose text-sm space-y-6">
           {loading ? (
-            <div className="py-16 flex flex-col items-center justify-center gap-3 text-[#8d8d8d]">
+            <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <Loader2 className="w-6 h-6 animate-spin" />
               <p className="font-ui text-xs">
-                Inspecionando conectores e ambiente local...
+                {t.sdInspecting}
               </p>
             </div>
           ) : (
             <>
               {errorMsg && (
-                <div className="p-3 bg-red-950/40 border border-red-800 text-red-200 rounded text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                <div className="p-3 bg-danger/10 border border-danger/40 text-danger rounded text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
                   <span>{errorMsg}</span>
                 </div>
               )}
@@ -275,32 +277,31 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
               {step === 1 && (
                 <div className="space-y-4">
                   <div>
-                    <h3 className="font-title text-base font-bold text-white">
-                      Etapa 1 — Conector do Ecossistema Google & Slots
+                    <h3 className="font-title text-base font-bold text-foreground">
+                      {t.sdStep1Title}
                     </h3>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      O harness utiliza a sua assinatura Google existente sem
-                      necessidade de intermediários corporativos.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.sdStep1Hint}
                     </p>
                   </div>
 
                   {/* Connectors Status Cards */}
                   <div className="space-y-2">
                     {/* Agy Stream Engine */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded flex items-center justify-between">
+                    <div className="p-3 bg-background border border-border rounded flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <Terminal className="w-4 h-4 text-[#e6e6e6]" />
+                        <Terminal className="w-4 h-4 text-foreground" />
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-ui text-xs font-semibold text-white">
+                            <span className="font-ui text-xs font-semibold text-foreground">
                               Google Antigravity CLI (agy)
                             </span>
-                            <span className="text-[9px] px-1.5 py-0.2 bg-[#2a2a2a] text-[#8d8d8d] rounded font-ui">
+                            <span className="text-[9px] px-1.5 py-0.2 bg-accent text-muted-foreground rounded font-ui">
                               stream-json
                             </span>
                           </div>
-                          <p className="text-[11px] text-[#8d8d8d]">
-                            Gemini 4 Argon & Gemini 3.8 Flash nativos no terminal
+                          <p className="text-[11px] text-muted-foreground">
+                            {t.sdAgyHint}
                           </p>
                         </div>
                       </div>
@@ -308,22 +309,22 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                     </div>
 
                     {/* Gemini ACP Engine */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded flex items-center justify-between">
+                    <div className="p-3 bg-background border border-border rounded flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <Cpu className="w-4 h-4 text-[#e6e6e6]" />
+                        <Cpu className="w-4 h-4 text-foreground" />
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-ui text-xs font-semibold text-white">
+                            <span className="font-ui text-xs font-semibold text-foreground">
                               @google/gemini-cli (ACP)
                             </span>
-                            <span className="text-[9px] px-1.5 py-0.2 bg-[#2a2a2a] text-[#8d8d8d] rounded font-ui">
+                            <span className="text-[9px] px-1.5 py-0.2 bg-accent text-muted-foreground rounded font-ui">
                               Login with Google
                             </span>
                           </div>
-                          <p className="text-[11px] text-[#8d8d8d]">
-                            Google One AI Pro, AI Ultra ou Workspace Code Assist
+                          <p className="text-[11px] text-muted-foreground">
+                            {t.sdGeminiHint}
                           </p>
-                          <p className="text-[11px] text-[#8d8d8d] mt-1">
+                          <p className="text-[11px] text-muted-foreground mt-1">
                             {t.setupGeminiDeprecation}
                           </p>
                         </div>
@@ -332,16 +333,16 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                     </div>
 
                     {/* GenAI SDK fallback */}
-                    <div className="p-3 bg-[#141414] border border-[#434343] rounded flex flex-col gap-2">
+                    <div className="p-3 bg-background border border-border rounded flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <Key className="w-4 h-4 text-[#8d8d8d]" />
+                          <Key className="w-4 h-4 text-muted-foreground" />
                           <div>
-                            <span className="font-ui text-xs font-semibold text-white">
+                            <span className="font-ui text-xs font-semibold text-foreground">
                               Google AI Studio (google-genai SDK Fallback)
                             </span>
-                            <p className="text-[11px] text-[#8d8d8d]">
-                              Fallback via chave de API padrão (opcional)
+                            <p className="text-[11px] text-muted-foreground">
+                              {t.sdSdkHint}
                             </p>
                           </div>
                         </div>
@@ -351,26 +352,26 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                         type="password"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        placeholder="GEMINI_API_KEY (opcional se agy/gemini estiver ativo)"
-                        className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-3 py-1.5 font-ui text-xs text-[#e6e6e6] placeholder-[#8d8d8d] mt-1"
+                        placeholder={t.sdApiKeyPlaceholder}
+                        className="w-full bg-card border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground placeholder-muted-foreground mt-1"
                       />
                     </div>
                   </div>
 
                   {/* Model Slots & Reasoning Effort */}
-                  <div className="p-3.5 bg-[#141414] border border-[#434343] rounded space-y-3">
-                    <span className="font-ui text-xs font-semibold text-white block uppercase tracking-wider">
-                      Alocação dos Slots de Modelo
+                  <div className="p-3.5 bg-background border border-border rounded space-y-3">
+                    <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
+                      {t.sdSlotsTitle}
                     </span>
 
                     <div className="grid grid-cols-3 gap-2 font-ui text-xs">
                       {/* Strong Slot */}
-                      <div className="p-2.5 bg-[#1c1c1c] border border-[#434343] rounded flex flex-col gap-1.5">
+                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-white">
-                            Strong Slot
+                          <span className="font-semibold text-foreground">
+                            {t.sdStrongSlot}
                           </span>
-                          <span className="text-[9px] text-[#8d8d8d]">
+                          <span className="text-[9px] text-muted-foreground">
                             Teacher / Practice
                           </span>
                         </div>
@@ -385,14 +386,14 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                               },
                             }))
                           }
-                          className="bg-[#141414] border border-[#434343] rounded p-1 text-[11px] text-[#e6e6e6]"
+                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
                         >
                           <option value="agy">agy (Argon)</option>
                           <option value="gemini">gemini-cli (ACP)</option>
                           <option value="sdk">google-genai SDK</option>
                         </select>
-                        <div className="flex items-center justify-between text-[10px] text-[#8d8d8d] mt-1">
-                          <span>Effort:</span>
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
+                          <span>{t.sdEffort}</span>
                           <select
                             value={slots.strong.effort || "high"}
                             onChange={(e) =>
@@ -404,7 +405,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                                 },
                               }))
                             }
-                            className="bg-[#141414] border border-[#434343] rounded px-1 text-[10px] text-[#e6e6e6]"
+                            className="bg-background border border-border rounded px-1 text-[10px] text-foreground"
                           >
                             <option value="low">low</option>
                             <option value="medium">medium</option>
@@ -414,13 +415,13 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       </div>
 
                       {/* Fast Slot */}
-                      <div className="p-2.5 bg-[#1c1c1c] border border-[#434343] rounded flex flex-col gap-1.5">
+                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-white">
-                            Fast Slot
+                          <span className="font-semibold text-foreground">
+                            {t.sdFastSlot}
                           </span>
-                          <span className="text-[9px] text-[#8d8d8d]">
-                            Títulos / Prober
+                          <span className="text-[9px] text-muted-foreground">
+                            {t.sdFastSlotHint}
                           </span>
                         </div>
                         <select
@@ -434,7 +435,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                               },
                             }))
                           }
-                          className="bg-[#141414] border border-[#434343] rounded p-1 text-[11px] text-[#e6e6e6]"
+                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
                         >
                           <option value="agy">agy (Flash)</option>
                           <option value="gemini">gemini-cli (ACP)</option>
@@ -443,12 +444,12 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       </div>
 
                       {/* Background Slot */}
-                      <div className="p-2.5 bg-[#1c1c1c] border border-[#434343] rounded flex flex-col gap-1.5">
+                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-white">
+                          <span className="font-semibold text-foreground">
                             Background
                           </span>
-                          <span className="text-[9px] text-[#8d8d8d]">
+                          <span className="text-[9px] text-muted-foreground">
                             LangGraph Pipelines
                           </span>
                         </div>
@@ -463,7 +464,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                               },
                             }))
                           }
-                          className="bg-[#141414] border border-[#434343] rounded p-1 text-[11px] text-[#e6e6e6]"
+                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
                         >
                           <option value="agy">agy (Flash)</option>
                           <option value="gemini">gemini-cli (ACP)</option>
@@ -479,20 +480,19 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
               {step === 2 && (
                 <div className="space-y-4">
                   <div>
-                    <h3 className="font-title text-base font-bold text-white">
-                      Etapa 2 — Idioma & Pasta do Vault (UI ⇄ Vault)
+                    <h3 className="font-title text-base font-bold text-foreground">
+                      {t.sdStep2Title}
                     </h3>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      Sincronização bidirecional completa: edite notas ou desenhos no
-                      Obsidian ou na UI sem atrito.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.sdStep2Hint}
                     </p>
                   </div>
 
                   {/* Language Selection */}
-                  <div className="p-3.5 bg-[#141414] border border-[#434343] rounded space-y-2">
-                    <label className="font-ui text-xs font-semibold text-white flex items-center gap-2">
-                      <Globe className="w-3.5 h-3.5 text-[#8d8d8d]" />
-                      Idioma Padrão da Plataforma e das Aulas
+                  <div className="p-3.5 bg-background border border-border rounded space-y-2">
+                    <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+                      <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                      {t.sdLanguageLabel}
                     </label>
                     <div className="grid grid-cols-2 gap-2 font-ui text-xs">
                       <button
@@ -500,13 +500,13 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                         onClick={() => setLanguage("pt-br")}
                         className={`p-2.5 rounded border text-left transition-colors cursor-pointer ${
                           language === "pt-br"
-                            ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                            : "bg-[#1c1c1c] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6]"
+                            ? "bg-accent border-foreground text-foreground"
+                            : "bg-card border-border text-muted-foreground hover:text-foreground"
                         }`}
                       >
                         <div className="font-semibold">Português (PT-BR)</div>
-                        <div className="text-[10px] text-[#8d8d8d] mt-0.5">
-                          Aulas, Conceitos, Fontes, 00 Mapa.md
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          {t.sdLangPtFolders}
                         </div>
                       </button>
 
@@ -515,44 +515,43 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                         onClick={() => setLanguage("en")}
                         className={`p-2.5 rounded border text-left transition-colors cursor-pointer ${
                           language === "en"
-                            ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                            : "bg-[#1c1c1c] border-[#434343] text-[#8d8d8d] hover:text-[#e6e6e6]"
+                            ? "bg-accent border-foreground text-foreground"
+                            : "bg-card border-border text-muted-foreground hover:text-foreground"
                         }`}
                       >
                         <div className="font-semibold">English (EN)</div>
-                        <div className="text-[10px] text-[#8d8d8d] mt-0.5">
-                          Lessons, Concepts, Sources, 00 Map.md
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          {t.sdLangEnFolders}
                         </div>
                       </button>
                     </div>
                   </div>
 
                   {/* Vault Directory Path */}
-                  <div className="p-3.5 bg-[#141414] border border-[#434343] rounded space-y-2.5">
-                    <label className="font-ui text-xs font-semibold text-white flex items-center gap-2">
-                      <FolderOpen className="w-3.5 h-3.5 text-[#8d8d8d]" />
-                      Caminho do Vault no Disco
+                  <div className="p-3.5 bg-background border border-border rounded space-y-2.5">
+                    <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+                      <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                      {t.sdVaultPathLabel}
                     </label>
                     <input
                       type="text"
                       value={vaultPath}
                       onChange={(e) => setVaultPath(e.target.value)}
-                      className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-3 py-2 font-ui text-xs text-[#e6e6e6]"
+                      className="w-full bg-card border border-border rounded px-3 py-2 font-ui text-xs text-foreground"
                     />
 
                     {/* Non-destructive adoption callout */}
-                    <div className="p-3 bg-[#1c1c1c] border border-[#434343] rounded text-xs space-y-1">
-                      <div className="flex items-center gap-1.5 text-green-400 font-ui text-[11px] font-medium">
+                    <div className="p-3 bg-card border border-border rounded text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 text-success font-ui text-[11px] font-medium">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Adoção Não-Destrutiva Ativa</span>
+                        <span>{t.sdAdoptionTitle}</span>
                       </div>
-                      <p className="text-[#8d8d8d] text-[11px] leading-relaxed">
-                        Seu Vault existente (incluindo todas as notas em{" "}
-                        <code className="text-[#e6e6e6] font-ui">Aulas/</code> e{" "}
-                        <code className="text-[#e6e6e6] font-ui">Conceitos/</code>)
-                        será adotado sem que nenhum arquivo seja apagado ou
-                        sobrescrito. Dados do harness são mantidos estritamente em{" "}
-                        <code className="text-[#e6e6e6] font-ui">.harness/</code>.
+                      <p className="text-muted-foreground text-[11px] leading-relaxed">
+                        {t.sdAdoptionA}{" "}
+                        <code className="text-foreground font-ui">Aulas/</code> {t.sdAnd}{" "}
+                        <code className="text-foreground font-ui">Conceitos/</code>)
+                        {t.sdAdoptionB}{" "}
+                        <code className="text-foreground font-ui">.harness/</code>.
                       </p>
                     </div>
                   </div>
@@ -563,26 +562,25 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
               {step === 3 && (
                 <div className="space-y-4">
                   <div>
-                    <h3 className="font-title text-base font-bold text-white">
-                      Etapa 3 — Conectores MCP de Conteúdo
+                    <h3 className="font-title text-base font-bold text-foreground">
+                      {t.sdStep3Title}
                     </h3>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      Conecte servidores MCP de conteúdo para importar transcrições e
-                      aulas densas diretamente para o Vault.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.sdStep3Hint}
                     </p>
                   </div>
 
                   {/* Praxis MCP Toggle Card */}
-                  <div className="p-3.5 bg-[#141414] border border-[#434343] rounded space-y-3">
+                  <div className="p-3.5 bg-background border border-border rounded space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <Server className="w-4 h-4 text-[#e6e6e6]" />
+                        <Server className="w-4 h-4 text-foreground" />
                         <div>
-                          <div className="font-ui text-xs font-semibold text-white">
+                          <div className="font-ui text-xs font-semibold text-foreground">
                             Praxis AI Engineering MCP (mcp__praxis__*)
                           </div>
-                          <div className="text-[11px] text-[#8d8d8d]">
-                            Catálogo de aulas semanais, desafios e gabaritos
+                          <div className="text-[11px] text-muted-foreground">
+                            {t.sdPraxisHint}
                           </div>
                         </div>
                       </div>
@@ -591,33 +589,31 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                         onClick={() => setPraxisActive((prev) => !prev)}
                         className={`px-3 py-1 rounded font-ui text-xs border cursor-pointer transition-colors ${
                           praxisActive
-                            ? "bg-[#2a2a2a] border-[#e6e6e6] text-white"
-                            : "bg-[#1c1c1c] border-[#434343] text-[#8d8d8d]"
+                            ? "bg-accent border-foreground text-foreground"
+                            : "bg-card border-border text-muted-foreground"
                         }`}
                       >
-                        {praxisActive ? "Ativado" : "Desativado"}
+                        {praxisActive ? t.sdEnabled : t.sdDisabled}
                       </button>
                     </div>
 
                     {praxisActive && (
-                      <div className="space-y-1.5 pt-2 border-t border-[#434343]">
-                        <label className="font-ui text-[10.5px] text-[#8d8d8d]">
-                          URL SSE do Servidor Praxis MCP
+                      <div className="space-y-1.5 pt-2 border-t border-border">
+                        <label className="font-ui text-[10.5px] text-muted-foreground">
+                          {t.sdPraxisUrl}
                         </label>
                         <input
                           type="text"
                           value={praxisUrl}
                           onChange={(e) => setPraxisUrl(e.target.value)}
-                          className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-2.5 py-1.5 font-ui text-xs text-[#e6e6e6]"
+                          className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground"
                         />
                       </div>
                     )}
                   </div>
 
-                  <p className="text-xs text-[#8d8d8d] italic">
-                    Nota: O botão &quot;↑ Import&quot; na Home usará estes servidores
-                    automaticamente. Se nenhum MCP estiver ativo, ele permitirá
-                    importar notas locais ou arquivos `.md`.
+                  <p className="text-xs text-muted-foreground italic">
+                    {t.sdImportNote}
                   </p>
                 </div>
               )}
@@ -626,12 +622,11 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
               {step === 4 && (
                 <div className="space-y-4">
                   <div>
-                    <h3 className="font-title text-base font-bold text-white">
-                      Etapa 4 — Configuração da Trilha Inicial (Track)
+                    <h3 className="font-title text-base font-bold text-foreground">
+                      {t.sdStep4Title}
                     </h3>
-                    <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                      A trilha define a sequência pedagógica conduzida pelo Harness
-                      no ritmo integrado 2:1.
+                    <p className="text-xs text-muted-foreground mt-1 font-prose">
+                      {t.sdStep4Hint}
                     </p>
                   </div>
 
@@ -642,34 +637,34 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       onClick={() => setTrackMode("repo_binary")}
                       className={`p-3.5 rounded border cursor-pointer transition-all ${
                         trackMode === "repo_binary"
-                          ? "bg-[#2a2a2a] border-[#e6e6e6]"
-                          : "bg-[#141414] border-[#434343] hover:border-[#8d8d8d]"
+                          ? "bg-accent border-foreground"
+                          : "bg-background border-border hover:border-muted-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <Route className="w-4 h-4 text-[#e6e6e6]" />
-                        <span className="font-ui text-xs font-semibold text-white">
-                          Opção 1 — Repositório Local + Nivelamento Adaptativo
+                        <Route className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
+                          {t.sdOption1}
                         </span>
                       </div>
-                      <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                        Adota a fila do seu curso local (ex.:{" "}
-                        <code className="text-[#e6e6e6] font-ui">
+                      <p className="text-xs text-muted-foreground mt-1 font-prose">
+                        {t.sdOption1HintA}{" "}
+                        <code className="text-foreground font-ui">
                           00 Mapa.md / LEARNING.md
                         </code>
-                        ) integrando etapas teóricas e práticas no ritmo 2:1.
+                        {t.sdOption1HintB}
                       </p>
                       {trackMode === "repo_binary" && (
-                        <div className="mt-2.5 pt-2 border-t border-[#434343]">
-                          <label className="font-ui text-[10.5px] text-[#8d8d8d] block mb-1">
-                            Caminho do Repositório do Curso
+                        <div className="mt-2.5 pt-2 border-t border-border">
+                          <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                            {t.sdRepoPathLabel}
                           </label>
                           <input
                             type="text"
                             value={trackRepoPath}
                             onChange={(e) => setTrackRepoPath(e.target.value)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-2.5 py-1.5 font-ui text-xs text-[#e6e6e6]"
+                            className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground"
                           />
                         </div>
                       )}
@@ -680,31 +675,30 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       onClick={() => setTrackMode("goal_generated")}
                       className={`p-3.5 rounded border cursor-pointer transition-all ${
                         trackMode === "goal_generated"
-                          ? "bg-[#2a2a2a] border-[#e6e6e6]"
-                          : "bg-[#141414] border-[#434343] hover:border-[#8d8d8d]"
+                          ? "bg-accent border-foreground"
+                          : "bg-background border-border hover:border-muted-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-[#e6e6e6]" />
-                        <span className="font-ui text-xs font-semibold text-white">
-                          Opção 2 — Trilha Gerada por Objetivo
+                        <Layers className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
+                          {t.sdOption2}
                         </span>
                       </div>
-                      <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                        Estrutura um currículo de aprendizagem sob medida baseado no
-                        seu objetivo ou ementa colada.
+                      <p className="text-xs text-muted-foreground mt-1 font-prose">
+                        {t.sdOption2Hint}
                       </p>
                       {trackMode === "goal_generated" && (
-                        <div className="mt-2.5 pt-2 border-t border-[#434343]">
-                          <label className="font-ui text-[10.5px] text-[#8d8d8d] block mb-1">
-                            Descrição do Objetivo / Ementa
+                        <div className="mt-2.5 pt-2 border-t border-border">
+                          <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                            {t.sdGoalLabel}
                           </label>
                           <textarea
                             value={goalDescription}
                             onChange={(e) => setGoalDescription(e.target.value)}
                             onClick={(e) => e.stopPropagation()}
                             rows={2}
-                            className="w-full bg-[#1c1c1c] border border-[#434343] rounded px-2.5 py-1.5 font-ui text-xs text-[#e6e6e6] resize-none"
+                            className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground resize-none"
                           />
                         </div>
                       )}
@@ -715,19 +709,18 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       onClick={() => setTrackMode("free")}
                       className={`p-3.5 rounded border cursor-pointer transition-all ${
                         trackMode === "free"
-                          ? "bg-[#2a2a2a] border-[#e6e6e6]"
-                          : "bg-[#141414] border-[#434343] hover:border-[#8d8d8d]"
+                          ? "bg-accent border-foreground"
+                          : "bg-background border-border hover:border-muted-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <HardDrive className="w-4 h-4 text-[#e6e6e6]" />
-                        <span className="font-ui text-xs font-semibold text-white">
-                          Opção 3 — Sem Trilha Fixa (Modo Livre)
+                        <HardDrive className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
+                          {t.sdOption3}
                         </span>
                       </div>
-                      <p className="text-xs text-[#8d8d8d] mt-1 font-prose">
-                        Estudo livre por tópicos avulsos ou fontes importadas. A
-                        trilha pode ser ativada futuramente nas Configurações.
+                      <p className="text-xs text-muted-foreground mt-1 font-prose">
+                        {t.sdOption3Hint}
                       </p>
                     </div>
                   </div>
@@ -738,13 +731,13 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         </div>
 
         {/* Modal Footer Controls */}
-        <div className="p-4 border-t border-[#434343] flex items-center justify-between bg-[#141414] font-ui text-xs">
+        <div className="p-4 border-t border-border flex items-center justify-between bg-background font-ui text-xs">
           {step > 1 ? (
             <button
               type="button"
               onClick={() => setStep((s) => s - 1)}
               disabled={submitting}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-[#434343] bg-[#1c1c1c] text-[#e6e6e6] hover:bg-[#2a2a2a] cursor-pointer transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-card text-foreground hover:bg-accent cursor-pointer transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>{t.back}</span>
@@ -757,7 +750,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
             <button
               type="button"
               onClick={() => setStep((s) => s + 1)}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded border border-[#e6e6e6] bg-[#2a2a2a] text-white hover:bg-[#383838] cursor-pointer transition-colors font-medium"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded border border-foreground bg-accent text-foreground hover:bg-border cursor-pointer transition-colors font-medium"
             >
               <span>{t.next}</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -767,16 +760,16 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
               type="button"
               onClick={handleFinishSetup}
               disabled={submitting}
-              className="flex items-center gap-1.5 px-5 py-2 rounded bg-white text-black hover:bg-[#e6e6e6] cursor-pointer transition-colors font-semibold"
+              className="flex items-center gap-1.5 px-5 py-2 rounded bg-foreground text-background hover:bg-foreground/90 cursor-pointer transition-colors font-semibold"
             >
               {submitting ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Salvando no Vault...</span>
+                  <span>{t.sdSavingToVault}</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-black" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-background" />
                   <span>{t.finish}</span>
                 </>
               )}
@@ -798,17 +791,17 @@ function ConnectorBadge({
   return (
     <div className="flex items-center gap-1.5 font-ui text-[11px] shrink-0">
       {status?.recommended && (
-        <span className="px-1.5 bg-[#2a2a2a] border border-[#434343] text-[#e6e6e6] rounded">
+        <span className="px-1.5 bg-accent border border-border text-foreground rounded">
           {t.setupRecommended}
         </span>
       )}
       {status?.available ? (
-        <span className="flex items-center gap-1 text-[#e6e6e6]">
+        <span className="flex items-center gap-1 text-foreground">
           <CheckCircle2 className="w-3.5 h-3.5" />
           {t.setupDetected}
         </span>
       ) : (
-        <span className="text-[#8d8d8d]">{t.setupNotFound}</span>
+        <span className="text-muted-foreground">{t.setupNotFound}</span>
       )}
     </div>
   );

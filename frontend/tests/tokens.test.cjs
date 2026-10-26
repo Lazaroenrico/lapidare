@@ -14,15 +14,6 @@ const EXTENSIONS = new Set(['.ts', '.tsx', '.css']);
 // Files that legitimately hold literal palette values.
 const ALLOWLIST = new Set(['app/globals.css', 'lib/palette.ts']);
 
-// Files currently owned by parallel work streams (demo simulator / drawing review /
-// setup dialog). They must be migrated to tokens by their owners; remove each entry
-// from this set as soon as it is clean so the guard covers it.
-const PENDING_MIGRATION = new Set([
-  'components/setup-dialog.tsx',
-  'components/demo-iframe.tsx',
-  'app/draw/[slug]/page.tsx',
-]);
-
 const RULES = [
   {name: 'hex color literal', re: /#[0-9a-fA-F]{3,8}\b/g},
   {name: 'blue-*', re: /\bblue-/g},
@@ -54,7 +45,7 @@ function sourceFiles() {
 test('palette literals live only in globals.css and lib/palette.ts', () => {
   const violations = [];
   for (const rel of sourceFiles()) {
-    if (ALLOWLIST.has(rel) || PENDING_MIGRATION.has(rel)) continue;
+    if (ALLOWLIST.has(rel)) continue;
     const lines = fs.readFileSync(path.join(ROOT, rel), 'utf8').split('\n');
     lines.forEach((line, i) => {
       for (const rule of RULES) {

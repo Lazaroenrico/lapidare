@@ -10,6 +10,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { useLocale } from "@/components/locale-provider";
 
 export interface DemoIframeProps {
   /** Slug of the saved simulator in viz/demos/<slug>.html */
@@ -34,7 +35,7 @@ export interface DemoIframeProps {
  * Interactive Demo Iframe component for LearnHarness.
  *
  * Renders self-contained visual simulators (`viz/demos/<slug>.html`) inside
- * a sandboxed iframe styled in the `#141414` graphite design system.
+ * a sandboxed iframe styled in the graphite design system (`bg-background` tokens).
  * Supports reload, expand to fullscreen, loading spinners, and error retries.
  */
 export function DemoIframe({
@@ -47,6 +48,7 @@ export function DemoIframe({
   showCloseButton = false,
   onClose,
 }: DemoIframeProps) {
+  const { t } = useLocale();
   const [htmlContent, setHtmlContent] = useState<string>(srcDoc || "");
   const [loading, setLoading] = useState<boolean>(!srcDoc && Boolean(slug));
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +68,7 @@ export function DemoIframe({
 
     if (!fetchUrl) {
       if (!htmlContent) {
-        setError("Nenhum slug ou conteúdo srcDoc foi especificado para o simulador.");
+        setError(t.demoNoSource);
       }
       setLoading(false);
       return;
@@ -82,7 +84,7 @@ export function DemoIframe({
 
       if (!response.ok) {
         throw new Error(
-          `Falha ao carregar simulador (${response.status}: ${response.statusText})`
+          t.demoHttpFailed(response.status, response.statusText)
         );
       }
 
@@ -91,7 +93,7 @@ export function DemoIframe({
         const data = await response.json();
         const rawHtml = data.html || data.content || data.srcDoc;
         if (!rawHtml) {
-          throw new Error("Resposta da API não continha o código HTML do simulador.");
+          throw new Error(t.demoNoHtml);
         }
         setHtmlContent(rawHtml);
       } else {
@@ -99,12 +101,12 @@ export function DemoIframe({
         setHtmlContent(text);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro desconhecido ao carregar demo.";
+      const msg = err instanceof Error ? err.message : t.demoUnknownError;
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }, [srcDoc, fetchUrl, htmlContent]);
+  }, [srcDoc, fetchUrl, htmlContent, t]);
 
   useEffect(() => {
     fetchDemoHtml();
@@ -138,8 +140,8 @@ export function DemoIframe({
   return (
     <div
       className={`
-        flex flex-col bg-[#1c1c1c] border border-[#434343] rounded-md overflow-hidden transition-all duration-200
-        ${isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none border-none bg-[#141414]/98 p-3" : className}
+        flex flex-col bg-card border border-border rounded-md overflow-hidden transition-all duration-200
+        ${isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none border-none bg-background/98 p-3" : className}
       `}
       style={{
         height: isFullscreen ? "100vh" : formattedHeight,
@@ -147,19 +149,19 @@ export function DemoIframe({
       }}
     >
       {/* Header Bar */}
-      <header className="flex items-center justify-between px-3.5 py-2.5 bg-[#181818] border-b border-[#434343] select-none">
+      <header className="flex items-center justify-between px-3.5 py-2.5 bg-background border-b border-border select-none">
         {/* Left: Badge & Title */}
         <div className="flex items-center gap-2.5 overflow-hidden">
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono tracking-wider font-semibold bg-[#111e17] text-[#34d399] border border-[#1f3d2e] shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#34d399] animate-pulse" />
-            ⚡ SIMULADOR INTERATIVO · VIZ/DEMOS
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono tracking-wider font-semibold bg-success/10 text-success border border-success/30 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+            {t.demoBadge}
           </span>
 
           <span
-            className="text-[14px] font-serif font-bold text-[#e6e6e6] truncate max-w-[320px] sm:max-w-[480px]"
-            title={title || slug || "Simulador"}
+            className="text-[14px] font-serif font-bold text-foreground truncate max-w-[320px] sm:max-w-[480px]"
+            title={title || slug || t.demoSimulator}
           >
-            {title || (slug ? `viz/demos/${slug}.html` : "Simulador Gráfico")}
+            {title || (slug ? `viz/demos/${slug}.html` : t.demoGraphicSimulator)}
           </span>
         </div>
 
@@ -170,12 +172,12 @@ export function DemoIframe({
             type="button"
             onClick={handleReload}
             disabled={loading}
-            className="p-1.5 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors disabled:opacity-40"
-            title="Recarregar simulador"
-            aria-label="Recarregar"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors disabled:opacity-40"
+            title={t.demoReloadTitle}
+            aria-label={t.demoReload}
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 ${loading ? "animate-spin text-[#34d399]" : ""}`}
+              className={`w-3.5 h-3.5 ${loading ? "animate-spin text-success" : ""}`}
             />
           </button>
 
@@ -184,9 +186,9 @@ export function DemoIframe({
             <button
               type="button"
               onClick={handleOpenRaw}
-              className="p-1.5 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors"
-              title="Abrir simulador em nova aba"
-              aria-label="Nova aba"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+              title={t.demoOpenRawTitle}
+              aria-label={t.demoNewTab}
             >
               <ExternalLink className="w-3.5 h-3.5" />
             </button>
@@ -196,12 +198,12 @@ export function DemoIframe({
           <button
             type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1.5 text-[#8d8d8d] hover:text-[#e6e6e6] hover:bg-[#2a2a2a] rounded transition-colors"
-            title={isFullscreen ? "Restaurar tamanho (Esc)" : "Expandir para tela cheia"}
-            aria-label={isFullscreen ? "Minimizar" : "Tela cheia"}
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+            title={isFullscreen ? t.demoRestoreTitle : t.demoFullscreenTitle}
+            aria-label={isFullscreen ? t.demoMinimize : t.demoFullscreen}
           >
             {isFullscreen ? (
-              <Minimize2 className="w-3.5 h-3.5 text-[#34d399]" />
+              <Minimize2 className="w-3.5 h-3.5 text-success" />
             ) : (
               <Maximize2 className="w-3.5 h-3.5" />
             )}
@@ -212,9 +214,9 @@ export function DemoIframe({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-[#8d8d8d] hover:text-[#f87171] hover:bg-[#2a2a2a] rounded transition-colors ml-1"
-              title="Fechar simulador"
-              aria-label="Fechar"
+              className="p-1.5 text-muted-foreground hover:text-danger hover:bg-accent rounded transition-colors ml-1"
+              title={t.demoCloseTitle}
+              aria-label={t.close}
             >
               <X className="w-4 h-4" />
             </button>
@@ -223,39 +225,39 @@ export function DemoIframe({
       </header>
 
       {/* Main Viewer Area */}
-      <div className="relative flex-1 w-full h-full bg-[#141414] overflow-hidden">
+      <div className="relative flex-1 w-full h-full bg-background overflow-hidden">
         {/* Loading Overlay */}
         {loading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#141414]/90 backdrop-blur-xs">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/90 backdrop-blur-xs">
             <div className="relative w-8 h-8">
-              <div className="absolute inset-0 border-2 border-[#434343] rounded-full" />
-              <div className="absolute inset-0 border-2 border-t-[#34d399] border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin" />
+              <div className="absolute inset-0 border-2 border-border rounded-full" />
+              <div className="absolute inset-0 border-2 border-t-success border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin" />
             </div>
-            <span className="font-mono text-[11.5px] tracking-wider text-[#8d8d8d]">
-              Carregando simulador interativo...
+            <span className="font-mono text-[11.5px] tracking-wider text-muted-foreground">
+              {t.demoLoading}
             </span>
           </div>
         )}
 
         {/* Error State */}
         {error && !loading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#141414]">
-            <div className="w-10 h-10 rounded-full bg-[#2a1717] border border-[#522525] flex items-center justify-center text-[#f87171]">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center gap-3 bg-background">
+            <div className="w-10 h-10 rounded-full bg-danger/10 border border-danger/40 flex items-center justify-center text-danger">
               <AlertCircle className="w-5 h-5" />
             </div>
             <div className="max-w-md flex flex-col gap-1">
-              <span className="font-mono text-[12px] font-semibold text-[#f87171] uppercase">
-                Falha ao carregar simulador
+              <span className="font-mono text-[12px] font-semibold text-danger uppercase">
+                {t.demoLoadFailed}
               </span>
-              <p className="text-[13px] text-[#8d8d8d]">{error}</p>
+              <p className="text-[13px] text-muted-foreground">{error}</p>
             </div>
             <button
               type="button"
               onClick={handleReload}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 mt-2 text-[12px] font-mono text-[#e6e6e6] bg-[#2a2a2a] hover:bg-[#383838] border border-[#434343] rounded transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 mt-2 text-[12px] font-mono text-foreground bg-accent hover:bg-border border border-border rounded transition-colors"
             >
               <RefreshCw className="w-3 h-3" />
-              Tentar novamente
+              {t.tryAgain}
             </button>
           </div>
         )}
@@ -266,8 +268,8 @@ export function DemoIframe({
             key={reloadKey}
             sandbox="allow-scripts"
             srcDoc={htmlContent}
-            title={title || "Interactive Visual Simulator"}
-            className="w-full h-full border-none bg-[#141414] block"
+            title={title || t.demoIframeTitle}
+            className="w-full h-full border-none bg-background block"
           />
         )}
       </div>
