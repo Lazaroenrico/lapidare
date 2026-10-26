@@ -183,6 +183,45 @@ class ConnectorStatus(BaseModel):
     authenticated: bool | None = None
     models: list[str] = Field(default_factory=list)
     detail: str = ""
+    # Set by the detector on the connector a fresh setup should preselect.
+    recommended: bool = False
+
+
+# Sentinel model id: let the CLI choose its own account default (agy model ids are
+# account-specific, e.g. ``gemini-3.8-flash-medium``; see ``agy models``).
+AUTO_MODEL = "auto"
+
+_DEFAULT_MODELS: dict[EngineKind, tuple[str, str]] = {
+    # (strong, fast/background)
+    EngineKind.AGY: (AUTO_MODEL, AUTO_MODEL),
+    EngineKind.GEMINI_CLI: ("gemini-2.5-pro", "gemini-2.5-flash"),
+    EngineKind.GENAI_SDK: ("gemini-2.5-pro", "gemini-2.5-flash"),
+}
+
+
+def recommend_engine(statuses: list[ConnectorStatus], *, sdk_credentials: bool = False) -> EngineKind:
+    """Pure preference order for a fresh setup.
+
+    ``agy`` when its binary is available (individual Gemini Code Assist accounts were
+    moved to Antigravity, so ``gemini --acp`` rejects them); otherwise ``genai_sdk`` when
+    an API key / ADC is configured; otherwise ``gemini_cli``.
+    """
+    available = {s.engine for s in statuses if s.available}
+    if EngineKind.AGY in available:
+        return EngineKind.AGY
+    if sdk_credentials and EngineKind.GENAI_SDK in available:
+        return EngineKind.GENAI_SDK
+    return EngineKind.GEMINI_CLI
+
+
+def default_slots(engine: EngineKind) -> ModelSlots:
+    """Slot defaults for ``engine`` (pure; model ids valid for that connector)."""
+    strong, fast = _DEFAULT_MODELS[engine]
+    return ModelSlots(
+        strong=ModelSlotConfig(engine=engine, model_id=strong, effort=EffortLevel.MEDIUM),
+        fast=ModelSlotConfig(engine=engine, model_id=fast, effort=EffortLevel.LOW),
+        background=ModelSlotConfig(engine=engine, model_id=fast, effort=EffortLevel.MEDIUM),
+    )
 
 
 class HarnessConfig(BaseModel):

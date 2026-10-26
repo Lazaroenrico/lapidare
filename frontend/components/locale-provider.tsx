@@ -58,6 +58,8 @@ const messages = {
     trackLinked: 'Repositório vinculado. A Trilha está sendo gerada em segundo plano.',
     mcpSettingsTitle: 'Servidores MCP de Conteúdo',
     mcpSettingsHint: 'O botão "↑ Import" lista e ingere conteúdo destes servidores (HTTP, SSE ou stdio).',
+    setupRecommended: 'Recomendado', setupDetected: 'Detectado', setupNotFound: 'Não encontrado',
+    setupGeminiDeprecation: 'Contas individuais do Gemini Code Assist não são mais aceitas pelo gemini CLI: use o Antigravity (agy).',
   },
   en: {
     teachPrompt: 'What would you like to learn or explore today?', practicePrompt: 'What would you like to practice today?',
@@ -113,6 +115,8 @@ const messages = {
     trackLinked: 'Repository linked. The Track is being generated in the background.',
     mcpSettingsTitle: 'Content MCP servers',
     mcpSettingsHint: 'The "↑ Import" button lists and ingests content from these servers (HTTP, SSE or stdio).',
+    setupRecommended: 'Recommended', setupDetected: 'Detected', setupNotFound: 'Not found',
+    setupGeminiDeprecation: 'Individual Gemini Code Assist accounts are no longer accepted by the gemini CLI: use Antigravity (agy).',
   },
 };
 type Locale = keyof typeof messages;

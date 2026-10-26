@@ -32,6 +32,9 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+TURN_RULES = "Use pose_quiz for every graded question; never put a quiz in prose. Initialize a valid plan with plan_init after diagnosis. Use plan_advance after checks. Do not invent citations. If prior answers exist, react to their calibration before advancing. PRACTICE gives one hint at a time, never the solution."
+
+
 class SessionConflict(ValueError):
     """An operation conflicts with the authoritative persisted session."""
 
@@ -297,10 +300,11 @@ class SessionService:
         self.tasks[session_id] = asyncio.create_task(self.run(session_id))
 
     async def run(self, session_id):
-        token = None
+        completed = False
         try:
             session = self.get(session_id)
             if session.pending_quiz or session.recovery_required or session.phase == "completed":
+                completed = session.phase == "completed"
                 return
             session.execution_id = uuid4().hex
             session.execution_status = "running"
@@ -308,24 +312,34 @@ class SessionService:
             self.save(session)
             config = self.state.get_config()
             engine = self.state.engine(config.slots.strong)
-            token = self.state.issue_token(session_id, session.execution_id)
-            work_dir = safe_path(self.state.vault_path, f".harness/runtime/{session_id}/{session.execution_id}")
+            persistent = bool(getattr(engine, "session_persistent", False))
+            # One token per session, re-bound to this execution (stale ones stay rejected).
+            token = self.state.session_token(session_id, session.execution_id)
+            # Persistent CLI processes outlive a run: their cwd must be stable per session.
+            runtime = f".harness/runtime/{session_id}" + ("" if persistent else f"/{session.execution_id}")
+            work_dir = safe_path(self.state.vault_path, runtime)
             work_dir.mkdir(parents=True, exist_ok=True)
             if hasattr(engine, "configure_runtime"):
                 engine.configure_runtime(work_dir, self.state.mcp_url, token)
             # CLI engines reach the tools through the bound MCP server; only in-process
             # engines receive callables directly.
             tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
-            history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
             context = json.dumps({"topic": session.title, "plan": session.plan.model_dump(), "answers": [a.model_dump() for a in session.answers.values()], "track": config.track.model_dump(mode="json") if session.track_item_id else None}, ensure_ascii=False)
-            prompt = build_system_prompt(session.mode, session.context_kind, config.language, session.phase, extra_context=context)
-            prompt += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
-            prompt += "\n\nPERSISTED HISTORY:\n" + history
-            prompt += "\nUse pose_quiz for every graded question; never put a quiz in prose. Initialize a valid plan with plan_init after diagnosis. Use plan_advance after checks. Do not invent citations. If prior answers exist, react to their calibration before advancing. PRACTICE gives one hint at a time, never the solution."
+            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase, extra_context=context)
+            system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
+            if persistent:
+                # The engine keeps the conversation: send rules once (on a fresh process,
+                # with a compact history) and per turn only what is new.
+                history, prompt = self._persistent_turn(session)
+                stream = engine.stream_turn(prompt, session_id, history=history, slot=config.slots.strong, tools=tools, system_instruction=system + "\n" + TURN_RULES)
+            else:
+                history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
+                prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + TURN_RULES
+                stream = engine.stream_turn(prompt, session_id, slot=config.slots.strong, tools=tools)
             message_id = f"msg-{uuid4().hex}"
             text = ""
             last_flush = 0.0
-            async for chunk in engine.stream_turn(prompt, session_id, slot=config.slots.strong, tools=tools):
+            async for chunk in stream:
                 text += chunk
                 current_time = asyncio.get_running_loop().time()
                 if current_time - last_flush >= 0.2:
@@ -336,6 +350,7 @@ class SessionService:
             session = self.get(session_id)
             if session.phase != "completed":
                 session.execution_status = "waiting" if session.pending_quiz else "idle"
+            completed = session.phase == "completed"
             self.save(session)
         except asyncio.CancelledError:
             session = self.get(session_id)
@@ -350,8 +365,35 @@ class SessionService:
             session.error = self.state.redact(str(exc))
             self.save(session)
         finally:
-            if token:
-                self.state.tokens.pop(token, None)
+            if completed:
+                await self._release_runtime(session_id)
+
+    @staticmethod
+    def _persistent_turn(session):
+        """Split persisted messages into ``(history, new-content prompt)``.
+
+        New content is everything after the last assistant message (quiz answers, learner
+        input); the plan status travels each turn because answers can master nodes.
+        """
+        messages = list(session.messages)
+        last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
+        history, new = messages[: last + 1], messages[last + 1:]
+        state = json.dumps({"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}, ensure_ascii=False)
+        if new:
+            body = "\n\n".join(f"{m.role}: {m.content}" for m in new)
+        elif messages:
+            body = "Continue the session from where it stopped."
+        else:
+            body = "Begin the session."
+        return history, f"{body}\n\nCURRENT STATE: {state}"
+
+    async def _release_runtime(self, session_id):
+        from learnharness.engines import close_engine_processes
+        self.state.revoke_session_tokens(session_id)
+        try:
+            await close_engine_processes(session_id)
+        except Exception:
+            logger.warning("Could not close engine processes for %s", session_id, exc_info=True)
 
     async def _flush(self, session_id, message_id, text):
         async with self.lock(session_id):
@@ -380,3 +422,4 @@ class SessionService:
             await asyncio.gather(*tasks, return_exceptions=True)
         for session_id in self.tasks:
             self.state.dock_registry.cancel_dock(session_id)
+            self.state.revoke_session_tokens(session_id)
