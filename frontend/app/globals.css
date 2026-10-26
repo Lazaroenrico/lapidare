@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "CMU Serif";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("CMU Serif Bold"), local("CMU Serif-Bold");
+}
+
+@font-face {
+  font-family: "CMU Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("CMU Serif Roman"), local("CMU Serif");
+}
+
+@theme {
+  --color-background: #141414;
+  --color-card: #1c1c1c;
+  --color-accent: #2a2a2a;
+  --color-border: #434343;
+  --color-foreground: #e6e6e6;
+  --color-muted: #8d8d8d;
+  --font-title: "CMU Serif", "Computer Modern Serif", Georgia, serif;
+  --font-prose: "Source Sans 3", system-ui, -apple-system, sans-serif;
+  --font-ui: "JetBrains Mono", monospace;
+}
+
+:root {
+  --background: #141414;
+  --card: #1c1c1c;
+  --accent: #2a2a2a;
+  --border: #434343;
+  --foreground: #e6e6e6;
+  --muted-foreground: #8d8d8d;
+  --font-title: "CMU Serif", "Computer Modern Serif", Georgia, serif;
+  --font-prose: "Source Sans 3", system-ui, -apple-system, sans-serif;
+  --font-ui: "JetBrains Mono", monospace;
+}
+
+/* Strict elimination of native browser focus outlines */
+*:focus,
+*:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Base Body Styling */
+html,
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-prose);
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Chrome UI Elements */
+.font-title {
+  font-family: var(--font-title);
+  font-weight: 700;
+}
+
+.font-prose {
+  font-family: var(--font-prose);
+}
+
+.font-ui {
+  font-family: var(--font-ui);
+  letter-spacing: 0.06em;
+}
+
+/* Custom Graphite Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #141414;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #434343;
+}
+
+/* KaTeX custom integration for achromatic graphite skin */
+.katex {
+  font-size: 1.05em;
+  color: #f0f0f0;
+}
+
+.katex-display {
+  margin: 1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+}
+
+.katex-display > .katex {
+  white-space: normal;
+}
+
+/* Text Selection */
+::selection {
+  background-color: #383838;
+  color: #ffffff;
+}

@@ -1,0 +1,163 @@
+"""Protocol fixtures execute controlled processes; no Google account/network involved."""
+
+import asyncio
+import json
+import os
+from types import SimpleNamespace
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from learnharness.engines.agy_engine import AgyStreamEngine
+from learnharness.engines.cli_protocol import EngineError
+from learnharness.engines.gemini_engine import GeminiAcpEngine
+from learnharness.engines.genai_sdk_engine import GenAiSdkEngine
+
+
+class Answer(BaseModel):
+    answer: int
+
+
+def executable(tmp_path, body):
+    path = tmp_path / "provider"
+    path.write_text("#!/usr/bin/env python3\n" + body)
+    path.chmod(0o700)
+    return str(path)
+
+
+async def collect(engine, **kwargs):
+    return "".join([part async for part in engine.stream_turn("question", "session", **kwargs)])
+
+
+async def test_gemini_protocol_history_tools_stderr(tmp_path):
+    binary = executable(
+        tmp_path,
+        """import json,sys,os
+assert '--output-format' in sys.argv and 'stream-json' in sys.argv
+assert 'earlier' in sys.argv[sys.argv.index('-p')+1]
+assert os.getcwd() == os.path.dirname(__file__)
+sys.stderr.write('diagnostic' * 100000)
+for e in [{'type':'init'}, {'type':'message','role':'user','content':'ignore'},
+ {'type':'tool_use','parameters':{'secret':'ignore'}}, {'type':'tool_result','output':'ignore'},
+ {'type':'message','role':'assistant','content':'Hello '},
+ {'type':'message','role':'assistant','content':'world'}, {'type':'result','status':'success'}]:
+ print(json.dumps(e),flush=True)
+""",
+    )
+    engine = GeminiAcpEngine(binary, work_dir=tmp_path)
+    assert (
+        await collect(engine, history=[SimpleNamespace(role="user", content="earlier")])
+        == "Hello world"
+    )
+
+
+async def test_agy_stdin_and_structured_envelope(tmp_path):
+    binary = executable(
+        tmp_path,
+        """import json,sys
+assert '--input-format' in sys.argv
+request=json.loads(sys.stdin.readline())
+assert request['event']=='user' and request['message']['content']
+print(json.dumps({'event':'step_update','step_update':{'step_type':'tool','text_delta':'ignore'}}))
+print(json.dumps({'event':'result','result':{'status':'SUCCESS','structured_output':{'answer':42}}}))
+""",
+    )
+    assert (await AgyStreamEngine(binary).run_structured("task", Answer)).answer == 42
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [{"type": "result", "status": "error"}],
+        [{"type": "message", "role": "assistant", "content": "partial"}],
+        [{"type": "error", "severity": "error", "message": "bad"}],
+    ],
+)
+async def test_gemini_failure_is_not_success(tmp_path, events):
+    binary = executable(tmp_path, "print(" + repr("\n".join(map(json.dumps, events))) + ")")
+    with pytest.raises(EngineError):
+        await collect(GeminiAcpEngine(binary))
+
+
+async def test_invalid_structured_output_raises(tmp_path):
+    binary = executable(
+        tmp_path,
+        """print('{"type":"message","role":"assistant","content":"{}"}')
+print('{"type":"result","status":"success"}')
+""",
+    )
+    with pytest.raises(ValidationError):
+        await GeminiAcpEngine(binary).run_structured("task", Answer)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_timeout_and_cancellation_reap_child(tmp_path, cancel):
+    pidfile = tmp_path / "pid"
+    binary = executable(
+        tmp_path,
+        f"import os,time\nopen({str(pidfile)!r},'w').write(str(os.getpid()))\ntime.sleep(30)\n",
+    )
+    task = asyncio.create_task(collect(GeminiAcpEngine(binary, timeout=0.3)))
+    for _ in range(100):
+        if pidfile.exists():
+            break
+        await asyncio.sleep(0.01)
+    if cancel:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancel else EngineError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+
+
+async def test_nonzero_exit_and_malformed_json(tmp_path):
+    for body in ["import sys;sys.exit(2)", "print('not json')"]:
+        with pytest.raises(EngineError):
+            await collect(GeminiAcpEngine(executable(tmp_path, body)))
+
+
+async def test_sdk_history_tools_and_image(monkeypatch):
+    from learnharness.engines import genai_sdk_engine as module
+
+    calls = []
+
+    class Models:
+        async def generate_content_stream(self, **kwargs):
+            calls.append(kwargs)
+
+            async def chunks():
+                yield SimpleNamespace(text="real")
+
+            return chunks()
+
+        async def generate_content(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(text='{"slug":"diagram","summary_markdown":"Review"}')
+
+    monkeypatch.setattr(
+        module.genai,
+        "Client",
+        lambda **kwargs: SimpleNamespace(aio=SimpleNamespace(models=Models())),
+    )
+    engine = GenAiSdkEngine(api_key="test")
+
+    def helper(value: str) -> str:
+        return value
+
+    assert (
+        await collect(
+            engine, history=[SimpleNamespace(role="assistant", content="prior")], tools=[helper]
+        )
+        == "real"
+    )
+    assert calls[0]["contents"][0].role == "model"
+    assert calls[0]["config"].tools
+    await engine.review_drawing_multimodal(b"PNG", "diagram")
+    assert calls[1]["contents"][1].inline_data.data == b"PNG"
+
+
+def test_discovery_does_not_claim_authentication(monkeypatch):
+    from learnharness.engines import detector
+
+    monkeypatch.setattr(detector, "_find_executable", lambda *args: "/fake/bin")
+    assert all(not item.authenticated and not item.models for item in detector.detect_connectors())

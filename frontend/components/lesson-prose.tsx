@@ -1,0 +1,293 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { Check, Copy } from "lucide-react";
+
+interface LessonProseProps {
+  content: string;
+  sourceName?: string;
+  onSelectCitation?: (sourceName: string, paragraphId: string) => void;
+  className?: string;
+}
+
+/**
+ * Preprocesses markdown string to transform Obsidian-style citations and wikilinks
+ * into custom protocol links recognized by ReactMarkdown.
+ *
+ * Supported formats:
+ * - [[Nome da Fonte#^p14]] or [[Nome da Fonte#p14]] -> lh-cite://Nome da Fonte/p14
+ * - [[#^p14]] -> lh-cite://{defaultSource}/p14
+ * - (#^p14) -> lh-cite://{defaultSource}/p14
+ * - [[Conceito]] -> lh-concept://Conceito
+ */
+function preprocessCitations(raw: string, defaultSource?: string): string {
+  if (!raw) return "";
+
+  const fallback = defaultSource ? encodeURIComponent(defaultSource.trim()) : "";
+
+  let processed = raw;
+
+  // 1. [[Fonte#^p14]] or [[Fonte#p14]]
+  processed = processed.replace(
+    /\[\[([^\]#\n]+)#\^?([a-zA-Z0-9_-]+)\]\]/g,
+    (_, src, p) => `[#^${p}](lh-cite://${encodeURIComponent(src.trim())}/${p})`
+  );
+
+  // 2. [[#^p14]] or [[^p14]]
+  processed = processed.replace(
+    /\[\[#?\^([a-zA-Z0-9_-]+)\]\]/g,
+    (_, p) => `[#^${p}](lh-cite://${fallback || "default"}/${p})`
+  );
+
+  // 3. (#^p14) standalone in text
+  processed = processed.replace(
+    /\(#\^([a-zA-Z0-9_-]+)\)/g,
+    (_, p) => `[#^${p}](lh-cite://${fallback || "default"}/${p})`
+  );
+
+  // 4. Obsidian wikilinks: [[Nome do Conceito]] (exclude already processed links)
+  processed = processed.replace(
+    /\[\[([a-zA-Z0-9_ -]+)\]\]/g,
+    (_, concept) => `[${concept}](lh-concept://${encodeURIComponent(concept.trim())})`
+  );
+
+  return processed;
+}
+
+/**
+ * Code block with copy button and graphite styling
+ */
+function CodeBlock({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const codeText = React.Children.toArray(children).join("");
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Ignore clipboard error
+    }
+  };
+
+  return (
+    <div className="relative group my-4 rounded border border-[#434343] bg-[#1c1c1c] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#141414] border-b border-[#434343] text-[11px] font-ui text-[#8d8d8d]">
+        <span className="uppercase tracking-wider">
+          {className ? className.replace("language-", "") : "code"}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1 hover:text-[#e6e6e6] transition-colors p-1 rounded"
+          title="Copiar código"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3 h-3 text-green-400" />
+              <span className="text-green-400 text-[10px]">Copiado</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" />
+              <span className="text-[10px]">Copiar</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="p-3.5 font-ui text-[12.5px] leading-relaxed text-[#e6e6e6] overflow-x-auto selection:bg-[#383838]">
+        <code>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+export function LessonProse({
+  content,
+  sourceName,
+  onSelectCitation,
+  className = "",
+}: LessonProseProps) {
+  const processedContent = useMemo(
+    () => preprocessCitations(content, sourceName),
+    [content, sourceName]
+  );
+
+  return (
+    <div className={`lesson-prose select-text font-prose text-[16px] text-[#e6e6e6] leading-[1.65] ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          h1: ({ children }) => (
+            <h1 className="font-title font-bold text-2xl md:text-3xl text-[#e6e6e6] mt-7 mb-3 tracking-tight">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="font-title font-bold text-xl md:text-2xl text-[#e6e6e6] mt-6 mb-2.5 pb-1 border-b border-[#2a2a2a] tracking-tight">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="font-title font-bold text-lg md:text-xl text-[#e6e6e6] mt-5 mb-2 tracking-tight">
+              {children}
+            </h3>
+          ),
+          h4: ({ children }) => (
+            <h4 className="font-title font-bold text-base text-[#e6e6e6] mt-4 mb-1.5 tracking-tight">
+              {children}
+            </h4>
+          ),
+          p: ({ children }) => (
+            <p className="my-3 font-prose text-[16px] leading-[1.65] text-[#e6e6e6]">
+              {children}
+            </p>
+          ),
+          ul: ({ children }) => (
+            <ul className="my-3 pl-5 list-disc space-y-1 font-prose text-[16px] leading-[1.6] text-[#e6e6e6]">
+              {children}
+            </ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="my-3 pl-5 list-decimal space-y-1 font-prose text-[16px] leading-[1.6] text-[#e6e6e6]">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => (
+            <li className="text-[#e6e6e6] my-0.5">{children}</li>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="my-3 pl-4 border-l-2 border-[#434343] text-[#8d8d8d] italic font-prose">
+              {children}
+            </blockquote>
+          ),
+          hr: () => <hr className="border-[#2a2a2a] my-6" />,
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-4 border border-[#434343] rounded bg-[#1c1c1c]">
+              <table className="w-full text-left font-prose border-collapse text-sm">
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-[#141414] border-b border-[#434343]">
+              {children}
+            </thead>
+          ),
+          th: ({ children }) => (
+            <th className="px-3 py-2 font-ui text-[11px] font-semibold text-[#8d8d8d] uppercase tracking-wider">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-3 py-2 border-b border-[#2a2a2a] text-[#e6e6e6] text-[14px]">
+              {children}
+            </td>
+          ),
+          pre: ({ children }) => <>{children}</>,
+          code: ({
+            inline,
+            className: codeClassName,
+            children,
+          }: {
+            inline?: boolean;
+            className?: string;
+            children?: React.ReactNode;
+          }) => {
+            if (inline) {
+              return (
+                <code className="px-1.5 py-0.5 rounded bg-[#1c1c1c] border border-[#434343] font-ui text-[12px] text-[#e6e6e6] mx-0.5">
+                  {children}
+                </code>
+              );
+            }
+            return <CodeBlock className={codeClassName}>{children}</CodeBlock>;
+          },
+          a: ({ href, children, ...props }) => {
+            // Check for custom citation links
+            if (href?.startsWith("lh-cite://")) {
+              const urlPart = href.replace("lh-cite://", "");
+              const slashIdx = urlPart.indexOf("/");
+              let rawSource = "";
+              let paragraphId = "";
+
+              if (slashIdx !== -1) {
+                rawSource = urlPart.slice(0, slashIdx);
+                paragraphId = urlPart.slice(slashIdx + 1);
+              } else {
+                paragraphId = urlPart;
+              }
+
+              const resolvedSource =
+                rawSource && rawSource !== "default"
+                  ? decodeURIComponent(rawSource)
+                  : sourceName || "Fonte";
+
+              return (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (onSelectCitation) {
+                      onSelectCitation(resolvedSource, paragraphId);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded bg-[#1c1c1c] hover:bg-[#2a2a2a] border border-[#434343] hover:border-[#8d8d8d] text-[#e6e6e6] text-[11px] font-ui transition-colors cursor-pointer select-none align-baseline group active:scale-95"
+                  title={`Ver fonte original: ${resolvedSource} (#^${paragraphId})`}
+                >
+                  <span className="text-[#8d8d8d] group-hover:text-[#e6e6e6]">#^</span>
+                  <span className="font-semibold text-[#e6e6e6]">
+                    {paragraphId.replace(/^p/, "p")}
+                  </span>
+                </button>
+              );
+            }
+
+            // Check for Obsidian concept wikilinks
+            if (href?.startsWith("lh-concept://")) {
+              const conceptName = decodeURIComponent(
+                href.replace("lh-concept://", "")
+              );
+              return (
+                <span
+                  className="inline-block text-[#e6e6e6] underline decoration-dotted decoration-[#434343] hover:decoration-[#e6e6e6] font-medium cursor-help mx-0.5"
+                  title={`Nota do Conceito no Vault: [[${conceptName}]]`}
+                >
+                  {children}
+                </span>
+              );
+            }
+
+            // Regular link
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#e6e6e6] underline decoration-[#434343] hover:decoration-[#e6e6e6] transition-colors"
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {processedContent}
+      </ReactMarkdown>
+    </div>
+  );
+}
