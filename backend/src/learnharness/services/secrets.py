@@ -20,15 +20,22 @@ def secrets_path() -> Path:
     return Path(base).expanduser() / "learnharness" / "secrets.json"
 
 
+class SecretStoreCorrupt(RuntimeError):
+    """secrets.json exists but cannot be parsed; never overwrite it blindly."""
+
+
 def _load() -> dict[str, str]:
     path = secrets_path()
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        # Returning {} here would let the next write erase every other stored token.
+        raise SecretStoreCorrupt(f"Cannot read {path}; fix or remove it manually") from exc
+    if not isinstance(data, dict):
+        raise SecretStoreCorrupt(f"{path} must contain a JSON object")
+    return {str(k): str(v) for k, v in data.items()}
 
 
 def _store(data: dict[str, str]) -> None:
