@@ -17,7 +17,6 @@ import {
   RefreshCw,
   Route,
   Save,
-  Server,
   Terminal,
 } from "lucide-react";
 import type {
@@ -25,12 +24,13 @@ import type {
   EffortLevel,
   EngineKind,
   HarnessConfig,
-  McpServerConfig,
   ModelSlots,
   TrackConfig,
   TrackMode,
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
+import { McpServerManager } from "@/components/mcp-server-manager";
+import { GithubTrackLinker } from "@/components/github-track-linker";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
 const DEFAULT_REPO_PATH = "";
@@ -60,9 +60,8 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState<"pt-br" | "en">("pt-br");
   const [vaultPath, setVaultPath] = useState<string>(DEFAULT_VAULT_PATH);
 
-  const [praxisActive, setPraxisActive] = useState<boolean>(false);
-  const [praxisUrl, setPraxisUrl] = useState<string>("http://127.0.0.1:8765/sse");
-  const [customMcps, setCustomMcps] = useState<McpServerConfig[]>([]);
+  // Servidores MCP são geridos pelas rotas /api/import/mcp/servers (McpServerManager).
+  const [selectedMcp, setSelectedMcp] = useState<string | null>(null);
 
   const [trackMode, setTrackMode] = useState<TrackMode>("free");
   const [trackRepoPath, setTrackRepoPath] = useState<string>(DEFAULT_REPO_PATH);
@@ -87,16 +86,6 @@ export default function SettingsPage() {
           if (res.config.track.goal_description)
             setGoalDescription(res.config.track.goal_description);
         }
-        if (res.config.content_mcps) {
-          const praxis = res.config.content_mcps.find((m) => m.name === "praxis");
-          if (praxis) {
-            setPraxisActive(praxis.active);
-            if (praxis.url) setPraxisUrl(praxis.url);
-          }
-          setCustomMcps(
-            res.config.content_mcps.filter((m) => m.name !== "praxis")
-          );
-        }
       }
     } catch (err) {
       console.error("Failed to load settings:", err);
@@ -113,19 +102,23 @@ export default function SettingsPage() {
     void loadSettings();
   }, []);
 
+  // Após vincular um repositório GitHub como Trilha, o backend já gravou
+  // track.repo_path/mode: relê só a trilha para que "Salvar" não a sobrescreva.
+  const refreshTrack = async () => {
+    try {
+      const res = await getSetupStatus();
+      if (res.config?.track) {
+        setTrackMode(res.config.track.mode);
+        if (res.config.track.repo_path) setTrackRepoPath(res.config.track.repo_path);
+      }
+    } catch {
+      /* O toast global já informa a falha. */
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setStatusMessage(null);
-
-    const content_mcps: McpServerConfig[] = [];
-    if (praxisActive) {
-      content_mcps.push({
-        name: "praxis",
-        url: praxisUrl,
-        active: true,
-      });
-    }
-    content_mcps.push(...customMcps);
 
     const track: TrackConfig = {
       mode: trackMode,
@@ -149,7 +142,7 @@ export default function SettingsPage() {
       },
       slots,
       track,
-      content_mcps,
+      // content_mcps é omitido: os servidores são salvos individualmente pelo McpServerManager.
     };
 
     try {
@@ -596,55 +589,15 @@ export default function SettingsPage() {
               <div className="space-y-6">
                 <div>
                   <h2 className="font-title text-base font-bold text-white">
-                    Servidores MCP de Conteúdo
+                    {t.mcpSettingsTitle}
                   </h2>
-                  <p className="text-xs text-[#8d8d8d] mt-0.5">
-                    Permite ao botão &quot;↑ Import&quot; listar e ingerir aulas de
-                    plataformas e repositórios externos.
-                  </p>
+                  <p className="text-xs text-[#8d8d8d] mt-0.5">{t.mcpSettingsHint}</p>
                 </div>
-
-                {/* Praxis MCP */}
-                <div className="p-4 bg-[#1c1c1c] border border-[#434343] rounded space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <Server className="w-4 h-4 text-white" />
-                      <div>
-                        <div className="font-ui text-xs font-semibold text-white">
-                          Praxis AI Engineering MCP (mcp__praxis__*)
-                        </div>
-                        <div className="text-xs text-[#8d8d8d]">
-                          Sincronização semanal de aulas, desafios e gabaritos
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPraxisActive((prev) => !prev)}
-                      className={`px-3 py-1 rounded font-ui text-xs border cursor-pointer transition-colors ${
-                        praxisActive
-                          ? "bg-[#2a2a2a] border-white text-white"
-                          : "bg-[#141414] border-[#434343] text-[#8d8d8d]"
-                      }`}
-                    >
-                      {praxisActive ? "Ativado" : "Desativado"}
-                    </button>
-                  </div>
-
-                  {praxisActive && (
-                    <div className="space-y-1.5 pt-2 border-t border-[#434343]">
-                      <label className="font-ui text-[10.5px] text-[#8d8d8d]">
-                        Endpoint SSE do Servidor
-                      </label>
-                      <input
-                        type="text"
-                        value={praxisUrl}
-                        onChange={(e) => setPraxisUrl(e.target.value)}
-                        className="w-full bg-[#141414] border border-[#434343] rounded px-3 py-1.5 font-ui text-xs text-[#e6e6e6]"
-                      />
-                    </div>
-                  )}
-                </div>
+                <McpServerManager
+                  className="bg-[#1c1c1c] border border-[#434343] rounded min-h-[320px]"
+                  selected={selectedMcp}
+                  onSelect={setSelectedMcp}
+                />
               </div>
             )}
 
@@ -684,6 +637,14 @@ export default function SettingsPage() {
                       </code>
                       , integrando mentoria e teoria no ritmo 2:1.
                     </p>
+                    {trackMode === "repo_binary" && (
+                      <div
+                        className="mt-3 pt-3 border-t border-[#434343]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <GithubTrackLinker onLinked={() => void refreshTrack()} />
+                      </div>
+                    )}
                     {trackMode === "repo_binary" && (
                       <div className="mt-3 pt-2.5 border-t border-[#434343]">
                         <label className="font-ui text-[10.5px] text-[#8d8d8d] block mb-1">

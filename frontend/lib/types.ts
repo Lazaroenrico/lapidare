@@ -348,3 +348,94 @@ export interface CatalogLessonItem {
   imported: boolean;
   local_source_path?: string;
 }
+
+// --- 9. Import multi-fonte (Fase 3B): contrato de API ---
+
+export type McpTransport = "http" | "sse" | "stdio";
+
+/** Servidor MCP de conteúdo como devolvido pela API (o token nunca volta). */
+export interface McpImportServer {
+  name: string;
+  transport: McpTransport;
+  url: string | null;
+  command: string | null;
+  args: string[];
+  enabled: boolean;
+  has_auth: boolean;
+  catalog_tool?: string | null;
+  content_tool?: string | null;
+  content_id_argument?: string | null;
+}
+
+/** Corpo de `POST /api/import/mcp/servers` (cria ou substitui por `name`). */
+export interface McpServerUpsert {
+  name: string;
+  transport: McpTransport;
+  url?: string;
+  command?: string;
+  args?: string[];
+  enabled?: boolean;
+  auth_token?: string;
+  catalog_tool?: string;
+  content_tool?: string;
+  content_id_argument?: string;
+}
+
+export interface McpServerTestResult {
+  ok: boolean;
+  tools: string[];
+  resources: number;
+  error?: string | null;
+}
+
+export interface McpImportItem {
+  id: string;
+  title: string;
+  kind: string;
+  description: string;
+  is_new: boolean;
+}
+
+export interface ImportedSource {
+  source_path: string;
+  paragraph_count: number;
+  title: string;
+}
+
+export interface ImportResult {
+  imported: ImportedSource[];
+  session_id: string | null;
+}
+
+export interface GithubRepoRef {
+  owner: string;
+  name: string;
+  ref: string;
+  commit: string;
+  subpath: string;
+}
+
+export interface GithubPreviewFile {
+  path: string;
+  title: string;
+  size: number;
+}
+
+export interface GithubPreview {
+  repo: GithubRepoRef;
+  files: GithubPreviewFile[];
+  truncated: boolean;
+}
+
+export interface GithubImportRequest {
+  url: string;
+  paths: string[];
+  start_session: boolean;
+  use_as_track: boolean;
+  /** Confirma a substituição de uma Trilha existente após um 409. */
+  replace_track?: boolean;
+}
+
+export interface GithubImportResult extends ImportResult {
+  track_job_id: string | null;
+}

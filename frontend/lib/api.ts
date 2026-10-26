@@ -9,7 +9,15 @@ import type {
   CalibrationResult,
   CatalogLessonItem,
   DrawingReviewResult,
+  GithubImportRequest,
+  GithubImportResult,
+  GithubPreview,
   GraphSnapshot,
+  ImportResult,
+  McpImportItem,
+  McpImportServer,
+  McpServerTestResult,
+  McpServerUpsert,
   HarnessConfig,
   HintStep,
   PracticeAttemptGrade,
@@ -19,6 +27,18 @@ import type {
   SessionRecord,
   SetupStatusResponse,
 } from "./types";
+import {
+  buildDeleteMcpServer,
+  buildGithubImport,
+  buildGithubPreview,
+  buildImportMcpItems,
+  buildListMcpItems,
+  buildListMcpServers,
+  buildLocalImport,
+  buildTestMcpServer,
+  buildUpsertMcpServer,
+  type RequestSpec,
+} from "./import-wire";
 
 const BASE_URL = "";
 
@@ -34,9 +54,30 @@ export class ApiError extends Error {
   }
 }
 
+export interface FetchJsonOptions {
+  /** Não dispara o toast global `harness:error` (quem chama mostra o erro inline). */
+  silent?: boolean;
+}
+
+function errorDetail(errBody: unknown): string | null {
+  if (typeof errBody !== "object" || errBody === null || !("detail" in errBody)) return null;
+  const detail = (errBody as { detail: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: unknown }).msg) : String(d)))
+      .join("; ");
+  }
+  if (typeof detail === "object" && detail !== null && "message" in detail) {
+    return String((detail as { message: unknown }).message);
+  }
+  return JSON.stringify(detail);
+}
+
 async function fetchJson<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  { silent = false }: FetchJsonOptions = {}
 ): Promise<T> {
   const url = `${BASE_URL}${endpoint}`;
   const headers = new Headers(options.headers);
@@ -54,16 +95,43 @@ async function fetchJson<T>(
     const raw = await res.text();
     let errBody: unknown = raw;
     try { errBody = JSON.parse(raw); } catch { /* Keep plain-text response. */ }
-    const msg =
-      typeof errBody === "object" && errBody !== null && "detail" in errBody
-        ? String((errBody as { detail: unknown }).detail)
-        : `Request to ${endpoint} failed with status ${res.status}`;
-    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("harness:error", {detail: msg}));
+    const msg = errorDetail(errBody) ?? `Request to ${endpoint} failed with status ${res.status}`;
+    if (!silent && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("harness:error", {detail: msg}));
     throw new ApiError(msg, res.status, errBody);
   }
 
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
+
+/** Executa um RequestSpec puro (lib/import-wire) com erros inline (silent). */
+function send<T>(spec: RequestSpec, signal?: AbortSignal): Promise<T> {
+  return fetchJson<T>(spec.path, { method: spec.method, body: spec.body, signal }, { silent: true });
+}
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+// --- Import multi-fonte (Fase 3B) ---
+// Todas silenciosas: os componentes de import mostram o erro inline.
+
+export const listMcpServers = () => send<McpImportServer[]>(buildListMcpServers());
+export const upsertMcpServer = (input: McpServerUpsert) =>
+  send<McpImportServer>(buildUpsertMcpServer(input));
+export const deleteMcpServer = (name: string) => send<void>(buildDeleteMcpServer(name));
+export const testMcpServer = (name: string) => send<McpServerTestResult>(buildTestMcpServer(name));
+export const listMcpItems = (name: string, signal?: AbortSignal) =>
+  send<McpImportItem[]>(buildListMcpItems(name), signal);
+export const importMcpItems = (name: string, itemIds: string[], startSession: boolean) =>
+  send<ImportResult>(buildImportMcpItems(name, itemIds, startSession));
+export const previewGithubRepo = (url: string, signal?: AbortSignal) =>
+  send<GithubPreview>(buildGithubPreview(url), signal);
+export const importGithubRepo = (req: GithubImportRequest, signal?: AbortSignal) =>
+  send<GithubImportResult>(buildGithubImport(req), signal);
+export const importLocalFile = (file: File, title: string, startSession: boolean) =>
+  send<ImportResult>(buildLocalImport(file, file.name, title, startSession));
 
 // --- Setup & Configuration ---
 
@@ -188,7 +256,8 @@ export async function importSource(payload: {
     {
       method: "POST",
       body: JSON.stringify(payload),
-    }
+    },
+    { silent: true }
   );
 }
 
