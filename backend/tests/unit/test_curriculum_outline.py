@@ -67,7 +67,8 @@ def test_outline_degrades_but_stays_whole_under_budget(tmp_path: Path) -> None:
 
     tiny = build_curriculum_outline(tmp_path, budget=6_000)
     assert len(tiny) <= 6_000
-    assert "files):" in tiny  # grouped per directory as a last resort
+    assert "lessons):" in tiny  # grouped per phase as a last resort
+    assert "phases/09-phase-9/" in tiny  # ...and still spans the whole curriculum
 
 
 def test_outline_skips_artifacts_strips_badges_and_keeps_every_phase(tmp_path):
