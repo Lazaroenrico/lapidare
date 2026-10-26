@@ -9,6 +9,7 @@ Enforces Vault Invariants:
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ from learnharness.vault.safety import (
     safe_path,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _slugify(text: str) -> str:
     """Helper to convert string into a clean identifier."""
@@ -42,11 +45,11 @@ def _extract_wikilinks(text: str) -> list[str]:
 def _format_wikilinks(links: list[str]) -> str:
     """Format a list of strings as Obsidian wikilinks: [[A]], [[B]]."""
     unique_links: list[str] = []
-    for l in links:
-        clean = l.strip().strip("[]")
+    for link in links:
+        clean = link.strip().strip("[]")
         if clean and clean not in unique_links:
             unique_links.append(clean)
-    return ", ".join(f"[[{l}]]" for l in unique_links)
+    return ", ".join(f"[[{link}]]" for link in unique_links)
 
 
 def _split_frontmatter(content: str) -> tuple[dict[str, any], str, str]:
@@ -62,9 +65,11 @@ def _split_frontmatter(content: str) -> tuple[dict[str, any], str, str]:
             body = content[end_idx + 5 :]
             try:
                 fm_data = yaml.safe_load(raw_fm) or {}
-                if not isinstance(fm_data, dict):
-                    fm_data = {}
-            except Exception:
+            except yaml.YAMLError as exc:
+                # User-authored frontmatter: tolerate it, but never silently.
+                logger.warning("Ignoring unparseable note frontmatter: %s", exc)
+                fm_data = {}
+            if not isinstance(fm_data, dict):
                 fm_data = {}
             return fm_data, content[: end_idx + 5], body
     return {}, "", content
@@ -147,8 +152,6 @@ def parse_concept_note(path: Path) -> ConceptNode:
 
     mechanism = sections_dict.get("Mecanismo", sections_dict.get("Mechanism", "")).strip()
     practice = sections_dict.get("Na prática", sections_dict.get("In Practice", "")).strip()
-    divergence = sections_dict.get("Onde as fontes divergem", "").strip()
-    discovery = sections_dict.get("Como eu poderia ter descoberto isso", "").strip()
     mistakes_text = "\n".join(
         b for h, b in sections if h.strip() in {"## Erros que eu cometi", "## Mistakes I Made"}
     )
@@ -367,8 +370,11 @@ def scan_all_concepts(vault_path: Path, concepts_dir: str = "Conceitos") -> list
             node = parse_concept_note(file_path)
             node.vault_rel_path = str(file_path.relative_to(vault_path))
             nodes.append(node)
-        except Exception:
-            continue
+        except (OSError, ValueError) as exc:
+            # OSError: unreadable/symlinked note (PermissionError from safe_path);
+            # ValueError: UnicodeDecodeError or pydantic ValidationError.
+            # One bad note must not hide the whole graph, but it is logged.
+            logger.warning("Skipping unparseable concept note %s: %s", file_path, exc)
 
     # Deterministic sorting by title
     nodes.sort(key=lambda n: n.title.lower())

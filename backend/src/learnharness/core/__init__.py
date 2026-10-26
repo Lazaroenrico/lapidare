@@ -62,6 +62,10 @@ from learnharness.core.ports import (
 )
 
 __all__ = [
+    # Ports
+    "AgentEnginePort",
+    # Events
+    "BackgroundJobStatus",
     # Contracts
     "CalibrationBand",
     "CalibrationResult",
@@ -69,6 +73,7 @@ __all__ = [
     "ConceptStatus",
     "ConfidenceBand",
     "ConnectorStatus",
+    "ContentMcpPort",
     "DenseBlockDimensions",
     "DrawingReviewResult",
     "EffortLevel",
@@ -97,21 +102,16 @@ __all__ = [
     "SessionMode",
     "SessionPhase",
     "SessionRecord",
+    "SseEventType",
+    "SseFrame",
     "TeachContextKind",
     "TrackConfig",
     "TrackItem",
     "TrackMode",
     "VaultFolderMap",
+    "VaultPort",
     # Calibration
     "compute_confidence_band",
     "evaluate_calibration",
     "validate_quiz_options_evenness",
-    # Events
-    "BackgroundJobStatus",
-    "SseEventType",
-    "SseFrame",
-    # Ports
-    "AgentEnginePort",
-    "ContentMcpPort",
-    "VaultPort",
 ]

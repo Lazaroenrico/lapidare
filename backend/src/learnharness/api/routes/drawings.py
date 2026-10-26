@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +19,8 @@ from learnharness.vault.excalidraw import (
     load_drawing,
     save_drawing,
 )
+
+logger = logging.getLogger(__name__)
 
 drawings_router = APIRouter(prefix="/api/drawings", tags=["drawings"])
 
@@ -63,8 +67,8 @@ async def get_drawing_endpoint(slug: str, request: Request) -> dict[str, Any]:
 
     try:
         data = load_drawing(state.vault_path, slug)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found") from exc
 
     title = data["text_elements"].get("titulo01", data["slug"])
     prompt = data["text_elements"].get("enunciado01", "")
@@ -95,8 +99,9 @@ async def save_drawing_endpoint(slug: str, payload: SaveDrawingPayload, request:
             raw_b64 = raw_b64.split("base64,")[1]
         try:
             png_bytes = base64.b64decode(raw_b64)
-        except Exception:
-            pass
+        except binascii.Error as exc:
+            # The scene is the source of truth; a bad PNG preview is dropped, not fatal.
+            logger.warning("Ignoring invalid PNG export for drawing %s: %s", slug, exc)
 
     scene_json = {
         "type": "excalidraw",
@@ -113,8 +118,8 @@ async def save_drawing_endpoint(slug: str, payload: SaveDrawingPayload, request:
             scene_json=scene_json,
             png_bytes=png_bytes,
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found") from exc
 
     state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"drawing": slug})
     return {"success": True}
@@ -127,8 +132,8 @@ async def review_drawing_endpoint(slug: str, request: Request) -> dict[str, Any]
 
     try:
         data = load_drawing(state.vault_path, slug)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Drawing '{slug}' not found") from exc
 
     title = data["text_elements"].get("titulo01", slug)
     elements_count = len(data["scene"].get("elements", []))

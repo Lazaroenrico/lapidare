@@ -61,9 +61,6 @@ class SseHub:
             except asyncio.QueueFull:
                 logger.warning("Subscriber queue is full. Evicting slowest subscriber.")
                 dead_subscribers.append(queue)
-            except Exception as exc:
-                logger.warning("Failed to enqueue frame: %s", exc)
-                dead_subscribers.append(queue)
 
         for dead in dead_subscribers:
             self._subscribers.discard(dead)

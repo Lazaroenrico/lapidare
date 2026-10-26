@@ -8,6 +8,7 @@ Creates memory retrieval prompts and handles bidirectional sync with Obsidian.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -26,11 +27,13 @@ from learnharness.vault.safety import (
     safe_path,
 )
 
+logger = logging.getLogger(__name__)
+
 try:
     import lzstring
 
     _lz = lzstring.LZString()
-except Exception:
+except ImportError:
     _lz = None
 
 
@@ -52,9 +55,11 @@ def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
             body = content[end_idx + 5 :]
             try:
                 fm_data = yaml.safe_load(raw_fm) or {}
-                if not isinstance(fm_data, dict):
-                    fm_data = {}
-            except Exception:
+            except yaml.YAMLError as exc:
+                # User-authored frontmatter: tolerate it, but never silently.
+                logger.warning("Ignoring unparseable drawing frontmatter: %s", exc)
+                fm_data = {}
+            if not isinstance(fm_data, dict):
                 fm_data = {}
             return fm_data, content[: end_idx + 5], body
     return {}, "", content
@@ -371,7 +376,7 @@ def save_drawing(
             content = merge_managed_block(
                 content, "drawing:review", f"## Revisão\n{review_markdown}"
             )
-            fm, raw_fm, body = _split_frontmatter(content)
+            _fm, raw_fm, body = _split_frontmatter(content)
             if raw_fm:
                 if re.search(r"^revisado:", raw_fm, re.MULTILINE):
                     updated = re.sub(r"^(revisado:)[^\n]*", r"\1 true", raw_fm, flags=re.MULTILINE)

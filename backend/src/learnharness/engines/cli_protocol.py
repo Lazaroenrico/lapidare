@@ -1,6 +1,7 @@
 """Bounded NDJSON subprocess transport shared by official Google CLIs."""
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -63,17 +64,13 @@ async def json_events(
         raise EngineError(f"Provider timed out after {timeout:g}s") from exc
     finally:
         if process.returncode is None:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             try:
                 await asyncio.wait_for(process.wait(), 2)
             except TimeoutError:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 await process.wait()
         for task in (input_task, stderr_task):
             task.cancel()

@@ -8,17 +8,22 @@ Zero destructive overwrites: format is strictly append-only.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from learnharness.core.contracts.graph import GraphEdge, GraphSnapshot, LogicalChain
 from learnharness.core.contracts.quiz import CalibrationResult
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.vault.markdown_ast import scan_all_concepts
 from learnharness.vault.safety import append_line, safe_component, safe_path
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify(text: str) -> str:
@@ -51,10 +56,11 @@ def append_session_event(
     _, sessions_dir = _ensure_harness_dir(vault_path)
     file_path = safe_path(sessions_dir, f"{safe_component(session_id)}.jsonl")
 
-    if isinstance(record_or_event, SessionRecord):
-        data = record_or_event.model_dump(mode="json")
-    else:
-        data = record_or_event
+    data = (
+        record_or_event.model_dump(mode="json")
+        if isinstance(record_or_event, SessionRecord)
+        else record_or_event
+    )
 
     line = json.dumps(data, ensure_ascii=False) + "\n"
     append_line(file_path, line)
@@ -68,16 +74,24 @@ def load_session(vault_path: Path, session_id: str) -> SessionRecord | None:
     if not file_path.exists():
         return None
 
-    lines = [l.strip() for l in file_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [
+        raw.strip() for raw in file_path.read_text(encoding="utf-8").splitlines() if raw.strip()
+    ]
     if not lines:
         return None
 
     last_record: SessionRecord | None = None
 
-    for line in lines:
+    for lineno, line in enumerate(lines, start=1):
         try:
             entry = json.loads(line)
-        except Exception:
+        except json.JSONDecodeError as exc:
+            # A truncated/corrupt line (e.g. crash mid-append) must not hide the
+            # rest of the append-only history; skip it but leave a trace.
+            logger.warning("Skipping malformed JSONL line %d in %s: %s", lineno, file_path, exc)
+            continue
+        if not isinstance(entry, dict):
+            logger.warning("Skipping non-object JSONL line %d in %s", lineno, file_path)
             continue
 
         if "mode" in entry and ("id" in entry or "session_id" in entry):
@@ -86,24 +100,29 @@ def load_session(vault_path: Path, session_id: str) -> SessionRecord | None:
                 if "session_id" in entry and "id" not in entry:
                     entry["id"] = entry["session_id"]
                 last_record = SessionRecord.model_validate(entry)
-            except Exception:
-                pass
+            except ValidationError as exc:
+                logger.warning(
+                    "Skipping invalid session snapshot at line %d in %s: %s", lineno, file_path, exc
+                )
         elif last_record is not None:
             # Incremental event
             event_type = entry.get("event")
             if event_type == "message" and "message" in entry:
                 try:
                     msg = SessionMessage.model_validate(entry["message"])
+                except ValidationError as exc:
+                    logger.warning(
+                        "Skipping invalid session message at line %d in %s: %s",
+                        lineno,
+                        file_path,
+                        exc,
+                    )
+                else:
                     last_record.messages.append(msg)
-                except Exception:
-                    pass
             elif event_type == "quiz_pending":
                 last_record.pending_quiz_id = entry.get("quiz_id")
             elif event_type == "plan_update" and "plan" in entry:
-                try:
-                    last_record.plan = entry["plan"]
-                except Exception:
-                    pass
+                last_record.plan = entry["plan"]
 
     return last_record
 
@@ -136,10 +155,7 @@ def append_quiz_log(
     harness_dir, _ = _ensure_harness_dir(vault_path)
     file_path = safe_path(harness_dir, "quiz-log.jsonl")
 
-    if isinstance(result, CalibrationResult):
-        data = result.model_dump(mode="json")
-    else:
-        data = result
+    data = result.model_dump(mode="json") if isinstance(result, CalibrationResult) else result
 
     if not data.get("timestamp"):
         data["timestamp"] = datetime.now().isoformat()
@@ -157,15 +173,14 @@ def load_quiz_logs(vault_path: Path) -> list[CalibrationResult]:
         return []
 
     results: list[CalibrationResult] = []
-    for line in file_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
         if not line:
             continue
         try:
-            data = json.loads(line)
-            results.append(CalibrationResult.model_validate(data))
-        except Exception:
-            continue
+            results.append(CalibrationResult.model_validate(json.loads(line)))
+        except ValueError as exc:  # json.JSONDecodeError and pydantic.ValidationError
+            logger.warning("Skipping malformed quiz-log line %d in %s: %s", lineno, file_path, exc)
 
     return results
 
@@ -183,10 +198,7 @@ def append_chain(
     harness_dir, _ = _ensure_harness_dir(vault_path)
     file_path = safe_path(harness_dir, "chains.jsonl")
 
-    if isinstance(chain, LogicalChain):
-        data = chain.model_dump(mode="json")
-    else:
-        data = chain
+    data = chain.model_dump(mode="json") if isinstance(chain, LogicalChain) else chain
 
     if not data.get("created_at"):
         data["created_at"] = datetime.now().isoformat()
@@ -204,15 +216,14 @@ def load_chains(vault_path: Path) -> list[LogicalChain]:
         return []
 
     chains: list[LogicalChain] = []
-    for line in file_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
         if not line:
             continue
         try:
-            data = json.loads(line)
-            chains.append(LogicalChain.model_validate(data))
-        except Exception:
-            continue
+            chains.append(LogicalChain.model_validate(json.loads(line)))
+        except ValueError as exc:  # json.JSONDecodeError and pydantic.ValidationError
+            logger.warning("Skipping malformed chain line %d in %s: %s", lineno, file_path, exc)
 
     return chains
 
