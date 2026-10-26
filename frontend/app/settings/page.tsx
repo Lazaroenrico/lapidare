@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import type {
   ConnectorStatus,
-  EffortLevel,
   EngineKind,
   HarnessConfig,
   ModelSlots,
@@ -32,6 +31,8 @@ import { completeSetup, getSetupStatus } from "@/lib/api";
 import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { GithubTrackLinker } from "@/components/github-track-linker";
+import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
+import { normalizeSlots } from "@/lib/config-wire";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
 const DEFAULT_REPO_PATH = "";
@@ -52,11 +53,13 @@ export default function SettingsPage() {
 
   // Form State
   const [apiKey, setApiKey] = useState<string>("");
-  const [slots, setSlots] = useState<ModelSlots>({
-    strong: { engine: "agy", model: "gemini-2.5-pro", effort: "high" },
-    fast: { engine: "agy", model: "gemini-2.5-flash", effort: "low" },
-    background: { engine: "agy", model: "gemini-2.5-flash", effort: "medium" },
-  });
+  // Never invent model ids: the loaded config wins, otherwise `auto` (account default).
+  const [slots, setSlots] = useState<ModelSlots>(() => normalizeSlots(undefined));
+  const connector = (engine: EngineKind) => connectors.find((c) => c.engine === engine);
+  // Session-only: engines whose slot test succeeded in this window.
+  const [verifiedEngines, setVerifiedEngines] = useState<Set<EngineKind>>(new Set());
+  const markVerified = (engine: EngineKind) =>
+    setVerifiedEngines((prev) => (prev.has(engine) ? prev : new Set(prev).add(engine)));
 
   const [language, setLanguage] = useState<"pt-br" | "en">("pt-br");
   const [vaultPath, setVaultPath] = useState<string>(DEFAULT_VAULT_PATH);
@@ -77,7 +80,7 @@ export default function SettingsPage() {
       if (res.config) {
         if (res.config.language) setLanguage(res.config.language);
         if (res.config.vault_path) setVaultPath(res.config.vault_path);
-        if (res.config.slots) setSlots(res.config.slots);
+        if (res.config.slots) setSlots(normalizeSlots(res.config.slots));
         if (res.config.track) {
           setTrackMode(res.config.track.mode);
           if (res.config.track.repo_path)
@@ -321,9 +324,10 @@ export default function SettingsPage() {
                           Google Antigravity CLI (agy)
                         </span>
                       </div>
-                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-success/10 text-success border border-success/40 rounded">
-                        {t.detected}
-                      </span>
+                      <ConnectorStateBadge
+                        available={connector("agy")?.available}
+                        verified={verifiedEngines.has("agy")}
+                      />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {t.agyDescription}{" "}
@@ -343,9 +347,10 @@ export default function SettingsPage() {
                           @google/gemini-cli (ACP)
                         </span>
                       </div>
-                      <span className="text-[10px] font-ui px-1.5 py-0.5 bg-accent text-muted-foreground border border-border rounded">
-                        Login with Google
-                      </span>
+                      <ConnectorStateBadge
+                        available={connector("gemini")?.available}
+                        verified={verifiedEngines.has("gemini")}
+                      />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {t.geminiCliDescription}
@@ -357,11 +362,17 @@ export default function SettingsPage() {
 
                 {/* API Key Fallback */}
                 <div className="p-4 bg-card border border-border rounded space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    <Key className="w-4 h-4 text-muted-foreground" />
-                    <span className="font-ui text-xs font-semibold text-foreground">
-                      Google AI Studio / Vertex AI (SDK Fallback)
-                    </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-ui text-xs font-semibold text-foreground">
+                        Google AI Studio / Vertex AI (SDK Fallback)
+                      </span>
+                    </div>
+                    <ConnectorStateBadge
+                      available={connector("sdk")?.available}
+                      verified={verifiedEngines.has("sdk")}
+                    />
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {t.apiKeyHint}{" "}
@@ -382,115 +393,12 @@ export default function SettingsPage() {
                   <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
                     {t.slotsHeading}
                   </span>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-ui text-xs">
-                    {/* Strong Slot */}
-                    <div className="p-3 bg-background border border-border rounded space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-foreground">
-                          Strong Slot
-                        </span>
-                        <span className="text-[9px] text-muted-foreground">
-                          Teacher / Practice
-                        </span>
-                      </div>
-                      <select
-                        value={slots.strong.engine}
-                        onChange={(e) =>
-                          setSlots((prev) => ({
-                            ...prev,
-                            strong: {
-                              ...prev.strong,
-                              engine: e.target.value as EngineKind,
-                            },
-                          }))
-                        }
-                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
-                      >
-                        <option value="agy">agy (Argon)</option>
-                        <option value="gemini">gemini-cli (ACP)</option>
-                        <option value="sdk">google-genai SDK</option>
-                      </select>
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
-                        <span>{t.effort}</span>
-                        <select
-                          value={slots.strong.effort || "high"}
-                          onChange={(e) =>
-                            setSlots((prev) => ({
-                              ...prev,
-                              strong: {
-                                ...prev.strong,
-                                effort: e.target.value as EffortLevel,
-                              },
-                            }))
-                          }
-                          className="bg-card border border-border rounded px-2 py-0.5 text-xs text-foreground"
-                        >
-                          <option value="low">low</option>
-                          <option value="medium">medium</option>
-                          <option value="high">high</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Fast Slot */}
-                    <div className="p-3 bg-background border border-border rounded space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-foreground">
-                          Fast Slot
-                        </span>
-                        <span className="text-[9px] text-muted-foreground">
-                          {t.fastSlotRole}
-                        </span>
-                      </div>
-                      <select
-                        value={slots.fast.engine}
-                        onChange={(e) =>
-                          setSlots((prev) => ({
-                            ...prev,
-                            fast: {
-                              ...prev.fast,
-                              engine: e.target.value as EngineKind,
-                            },
-                          }))
-                        }
-                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
-                      >
-                        <option value="agy">agy (Flash)</option>
-                        <option value="gemini">gemini-cli (ACP)</option>
-                        <option value="sdk">google-genai SDK</option>
-                      </select>
-                    </div>
-
-                    {/* Background Slot */}
-                    <div className="p-3 bg-background border border-border rounded space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-foreground">
-                          Background Slot
-                        </span>
-                        <span className="text-[9px] text-muted-foreground">
-                          LangGraph Pipelines
-                        </span>
-                      </div>
-                      <select
-                        value={slots.background.engine}
-                        onChange={(e) =>
-                          setSlots((prev) => ({
-                            ...prev,
-                            background: {
-                              ...prev.background,
-                              engine: e.target.value as EngineKind,
-                            },
-                          }))
-                        }
-                        className="w-full bg-card border border-border rounded p-1.5 text-xs text-foreground"
-                      >
-                        <option value="agy">agy (Flash)</option>
-                        <option value="gemini">gemini-cli (ACP)</option>
-                        <option value="sdk">google-genai SDK</option>
-                      </select>
-                    </div>
-                  </div>
+                  <ModelSlotsEditor
+                    slots={slots}
+                    onChange={setSlots}
+                    apiKey={apiKey}
+                    onEngineVerified={markVerified}
+                  />
                 </div>
               </div>
             )}

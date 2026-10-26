@@ -1,8 +1,35 @@
-import type { HarnessConfig, SetupStatusResponse } from './types';
+import type { EngineKind, HarnessConfig, ModelSlotConfig, ModelSlots, SetupStatusResponse, WireEngine } from './types';
 
 type Wire = Record<string, any>;
 const engineToWire: Record<string, string> = { agy: 'agy', gemini: 'gemini_cli', sdk: 'genai_sdk' };
 const engineFromWire: Record<string, string> = { agy: 'agy', gemini_cli: 'gemini', genai_sdk: 'sdk' };
+
+export const AUTO_MODEL = 'auto';
+const SLOT_NAMES = ['strong', 'fast', 'background'] as const;
+const EFFORT_SUFFIX = /-(low|medium|high|xhigh|max)$/;
+
+export const engineWire = (engine: EngineKind | string): WireEngine =>
+  (engineToWire[engine] || engine) as WireEngine;
+
+/** Ids such as `gemini-3.8-flash-low` already pin the reasoning effort. */
+export const modelPinsEffort = (model: string) => model !== AUTO_MODEL && EFFORT_SUFFIX.test(model);
+
+export function encodeSlot(slot: ModelSlotConfig) {
+  return {engine: engineWire(slot.engine), model_id: slot.model?.trim() || AUTO_MODEL, effort: slot.effort};
+}
+
+/** Fill missing slots/models with `auto`; agy never accepts the legacy gemini-2.5-* ids. */
+export function normalizeSlots(slots: Partial<ModelSlots> | undefined, engine: EngineKind = 'agy'): ModelSlots {
+  const out = {} as ModelSlots;
+  for (const name of SLOT_NAMES) {
+    const slot = slots?.[name];
+    const slotEngine = slot?.engine || engine;
+    let model = slot?.model?.trim() || AUTO_MODEL;
+    if (slotEngine === 'agy' && model.startsWith('gemini-2.5-')) model = AUTO_MODEL;
+    out[name] = {engine: slotEngine, model, effort: slot?.effort || (name === 'fast' ? 'low' : 'medium')};
+  }
+  return out;
+}
 
 /** The API boundary alone translates legacy presentation names to canonical contracts. */
 export function encodeConfig(config: Partial<HarnessConfig>, apiKey?: string) {
@@ -18,9 +45,7 @@ export function encodeConfig(config: Partial<HarnessConfig>, apiKey?: string) {
       templates_dir: vault_folders.templates, viz_dir: vault_folders.viz,
       map_file: config.language === 'en' ? '00 Map.md' : '00 Mapa.md',
     },
-    slots: slots && Object.fromEntries(Object.entries(slots).map(([name, slot]) => [name, {
-      engine: engineToWire[slot.engine] || slot.engine, model_id: slot.model, effort: slot.effort,
-    }])),
+    slots: slots && Object.fromEntries(Object.entries(slots).map(([name, slot]) => [name, encodeSlot(slot)])),
     track: track && {
       mode: track.mode === 'repo_binary' ? 'repo_leveling' : track.mode,
       repo_path: track.repo_path, goal_description: track.goal_description,

@@ -15,6 +15,29 @@ export interface ModelSlotConfig {
   effort?: EffortLevel;
 }
 
+/** Backend engine names (wire contract). */
+export type WireEngine = "agy" | "gemini_cli" | "genai_sdk";
+
+/** GET /api/setup/models?engine=… */
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+export interface ModelCatalog {
+  engine: WireEngine;
+  models: ModelOption[];
+  source: "agy" | "api" | "static";
+  error: string | null;
+}
+
+/** POST /api/setup/connectors/test (200). Failures arrive as 502/422 `{detail}`. */
+export interface ConnectorTestResult {
+  ok: true;
+  engine: WireEngine;
+  model_id: string;
+  latency_ms: number;
+}
+
 export interface ModelSlots {
   strong: ModelSlotConfig;
   fast: ModelSlotConfig;

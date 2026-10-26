@@ -1,4 +1,4 @@
-import { decodeConfig, decodeSetup, encodeConfig } from "./config-wire";
+import { decodeConfig, decodeSetup, encodeConfig, encodeSlot, engineWire } from "./config-wire";
 /**
  * Typed HTTP client helper functions calling the /api/* backend routes.
  * Follows notify -> fetch architecture without polling.
@@ -9,6 +9,10 @@ import type {
   BackgroundJobStatus,
   CalibrationResult,
   CatalogLessonItem,
+  ConnectorTestResult,
+  EngineKind,
+  ModelCatalog,
+  ModelSlotConfig,
   DrawingReviewResult,
   GithubImportRequest,
   GithubImportResult,
@@ -152,6 +156,26 @@ export async function completeSetup(
 }
 
 /** Estado da permissão global `mcp(harness/*)` do agy (erros inline, silent). */
+/** Lista de modelos do motor (agy: `agy models`; demais: API ou lista estática). */
+export const getModels = (engine: EngineKind, signal?: AbortSignal) =>
+  fetchJson<ModelCatalog>(
+    `/api/setup/models?engine=${encodeURIComponent(engineWire(engine))}`,
+    { signal },
+    { silent: true },
+  );
+
+/** Gasta um prompt mínimo para provar auth + modelo do slot (pode levar 10–30 s). */
+export const testConnector = (slot: ModelSlotConfig, apiKey?: string, signal?: AbortSignal) =>
+  fetchJson<ConnectorTestResult>(
+    "/api/setup/connectors/test",
+    {
+      method: "POST",
+      body: JSON.stringify({ slot: encodeSlot(slot), ...(apiKey?.trim() ? { api_key: apiKey.trim() } : {}) }),
+      signal,
+    },
+    { silent: true },
+  );
+
 export const getAgyPermission = () =>
   fetchJson<AgyPermissionStatus>("/api/setup/agy-permission", {}, { silent: true });
 
