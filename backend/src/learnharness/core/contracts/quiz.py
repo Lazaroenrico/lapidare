@@ -78,6 +78,9 @@ class CalibrationResult(BaseModel):
     confidence: int
     confidence_band: ConfidenceBand
     calibration_band: CalibrationBand
+    # Mode of the quiz that produced this answer. None only for legacy records written
+    # before the field existed; consumers must treat None as "not CHECK evidence".
+    mode: QuizMode | None = None
     learner_thinking: str
     pedagogical_directive: str
     explanation: str
