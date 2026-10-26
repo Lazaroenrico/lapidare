@@ -254,12 +254,9 @@ def test_build_system_prompt() -> None:
         language="pt-BR",
         phase="probing",
     )
-    assert "Principle i" in prompt_free
-    assert "Verdades Incondicionais" in prompt_free
-    assert "Principle ii" in prompt_free
-    assert "QuestionDock" in prompt_free
-    assert "PREDICTION" in prompt_free
-    assert "CHECK" in prompt_free
+    assert "probe_done" in prompt_free
+    assert "floor" in prompt_free and "ceiling" in prompt_free
+    assert "one question per turn" in prompt_free.lower()
 
     # 2. TEACH mode - Dense Source Ingestion
     prompt_dense = build_system_prompt(
