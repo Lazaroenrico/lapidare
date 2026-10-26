@@ -17,6 +17,7 @@ dependencies = [
     "lzstring>=1.0.4",
     "python-multipart>=0.0.12,<1",
     "mcp>=2.3,<3",
+    "pypdf>=6.21.2",
 ]
 
 [dependency-groups]

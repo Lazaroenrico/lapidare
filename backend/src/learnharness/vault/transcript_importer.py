@@ -31,6 +31,42 @@ def _clean_safe_filename(title: str) -> str:
     return re.sub(r"\s+", " ", clean)
 
 
+_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+
+
+def _split_paragraphs(raw_text: str) -> list[str]:
+    """Split on blank lines, but never inside a fenced code block (``` or ~~~)."""
+    paragraphs: list[str] = []
+    current: list[str] = []
+    fence: str | None = None
+    for line in raw_text.splitlines():
+        match = _FENCE.match(line)
+        if fence is None and match:
+            fence = match.group(1)
+        elif fence is not None and match:
+            marker = match.group(1)
+            # A closing fence uses the same character, is at least as long and has no info string.
+            if marker[0] == fence[0] and len(marker) >= len(fence) and line.strip() == marker:
+                fence = None
+        if fence is None and not line.strip():
+            if current:
+                paragraphs.append("\n".join(current).strip())
+                current = []
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append("\n".join(current).strip())
+    return [p for p in paragraphs if p]
+
+
+def _anchor(paragraph: str, idx: int) -> str:
+    """Append ^pN; a block ending in a code fence gets the id on its own line (Obsidian syntax)."""
+    last = paragraph.rsplit("\n", 1)[-1]
+    if _FENCE.match(last) and "\n" in paragraph:
+        return f"{paragraph}\n^p{idx}"
+    return f"{paragraph} ^p{idx}"
+
+
 def import_transcript_text(
     vault_path: Path,
     raw_text: str,
@@ -43,6 +79,7 @@ def import_transcript_text(
     force: bool = False,
     subdir: str | None = None,
     provenance: dict[str, Any] | None = None,
+    filename: str | None = None,
 ) -> tuple[Path, int]:
     """Import a raw transcript or document into Fontes/ with ^pN citations.
 
@@ -50,6 +87,7 @@ def import_transcript_text(
     Raises FileExistsError if target exists and force is False.
     ``subdir`` places the file under ``<sources_dir>/<subdir>`` (each component validated);
     ``provenance`` adds frontmatter keys (e.g. source_kind, source_url, commit, mcp_server).
+    ``filename`` overrides the title-derived file stem (e.g. a repository path stem).
     Returns (target_file_path, paragraph_count).
     """
     vault_path = Path(vault_path).resolve()
@@ -64,14 +102,14 @@ def import_transcript_text(
             Path(folders.sources_dir)
             / ("Mentorship" if folders.sources_dir == "Sources" else "Mentoria"),
         )
-    safe_title = safe_component(_clean_safe_filename(title))
+    safe_title = safe_component(_clean_safe_filename(filename or title))
     if prefix:
         safe_component(prefix)
     filename = f"{prefix} {safe_title}.md" if prefix else f"{safe_title}.md"
     target_file = safe_path(vault_path, target_dir.relative_to(vault_path) / filename)
 
     # Split paragraphs by double newline (or single newline if text has no double newlines)
-    raw_paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw_text) if p.strip()]
+    raw_paragraphs = _split_paragraphs(raw_text)
     if len(raw_paragraphs) <= 1 and "\n" in raw_text and len(raw_text) > 400:
         raw_paragraphs = [p.strip() for p in raw_text.splitlines() if p.strip()]
 
@@ -82,7 +120,7 @@ def import_transcript_text(
         # Strip existing ^p\d+ tag if already present
         clean_p = re.sub(r"\s*\^p\d+\s*$", "", p).strip()
         total_words += len(clean_p.split())
-        numbered_paragraphs.append(f"{clean_p} ^p{idx}")
+        numbered_paragraphs.append(_anchor(clean_p, idx))
 
     today = datetime.now().strftime("%Y-%m-%d")
     fm_data = {
@@ -103,6 +141,7 @@ def import_transcript_text(
     if provenance:
         # Provenance never overrides the integrity fields computed above.
         fm_data.update({k: v for k, v in provenance.items() if k not in fm_data or k == "origem"})
+        fm_data.setdefault("imported_at", datetime.now().astimezone().isoformat(timespec="seconds"))
     fm_str = yaml.dump(fm_data, allow_unicode=True, default_flow_style=None).strip()
 
     stem_name = target_file.stem
@@ -188,7 +227,7 @@ def get_source_paragraph(
 
     content = target_file.read_text(encoding="utf-8")
     # Parse paragraphs
-    raw_paras = [p.strip() for p in re.split(r"\n\s*\n", content) if p.strip()]
+    raw_paras = _split_paragraphs(content)
 
     target_idx: int | None = None
     target_text = ""
