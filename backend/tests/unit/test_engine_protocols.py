@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from learnharness.engines.agy_engine import AgyStreamEngine
 from learnharness.engines.cli_protocol import EngineError
-from learnharness.engines.gemini_engine import GeminiAcpEngine
+from learnharness.engines.gemini_engine import GeminiHeadlessEngine
 from learnharness.engines.genai_sdk_engine import GenAiSdkEngine
 
 
@@ -44,7 +44,7 @@ for e in [{'type':'init'}, {'type':'message','role':'user','content':'ignore'},
  print(json.dumps(e),flush=True)
 """,
     )
-    engine = GeminiAcpEngine(binary, work_dir=tmp_path)
+    engine = GeminiHeadlessEngine(binary, work_dir=tmp_path)
     assert (
         await collect(engine, history=[SimpleNamespace(role="user", content="earlier")])
         == "Hello world"
@@ -76,7 +76,7 @@ print(json.dumps({'event':'result','result':{'status':'SUCCESS','structured_outp
 async def test_gemini_failure_is_not_success(tmp_path, events):
     binary = executable(tmp_path, "print(" + repr("\n".join(map(json.dumps, events))) + ")")
     with pytest.raises(EngineError):
-        await collect(GeminiAcpEngine(binary))
+        await collect(GeminiHeadlessEngine(binary))
 
 
 async def test_invalid_structured_output_raises(tmp_path):
@@ -87,7 +87,7 @@ print('{"type":"result","status":"success"}')
 """,
     )
     with pytest.raises(ValidationError):
-        await GeminiAcpEngine(binary).run_structured("task", Answer)
+        await GeminiHeadlessEngine(binary).run_structured("task", Answer)
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -97,7 +97,7 @@ async def test_timeout_and_cancellation_reap_child(tmp_path, cancel):
         tmp_path,
         f"import os,time\nopen({str(pidfile)!r},'w').write(str(os.getpid()))\ntime.sleep(30)\n",
     )
-    task = asyncio.create_task(collect(GeminiAcpEngine(binary, timeout=0.3)))
+    task = asyncio.create_task(collect(GeminiHeadlessEngine(binary, timeout=0.3)))
     for _ in range(100):
         if pidfile.exists():
             break
@@ -113,7 +113,7 @@ async def test_timeout_and_cancellation_reap_child(tmp_path, cancel):
 async def test_nonzero_exit_and_malformed_json(tmp_path):
     for body in ["import sys;sys.exit(2)", "print('not json')"]:
         with pytest.raises(EngineError):
-            await collect(GeminiAcpEngine(executable(tmp_path, body)))
+            await collect(GeminiHeadlessEngine(executable(tmp_path, body)))
 
 
 async def test_sdk_history_tools_and_image(monkeypatch):
@@ -154,6 +154,51 @@ async def test_sdk_history_tools_and_image(monkeypatch):
     assert calls[0]["config"].tools
     await engine.review_drawing_multimodal(b"PNG", "diagram")
     assert calls[1]["contents"][1].inline_data.data == b"PNG"
+
+
+async def test_json_events_timeout_is_idle_not_total(tmp_path):
+    from learnharness.engines.cli_protocol import json_events
+
+    body = (
+        "import time,json\nfor i in range(6):\n"
+        " print(json.dumps({'i':i}),flush=True); time.sleep(0.15)\n"
+    )
+    events = [e async for e in json_events([executable(tmp_path, body)], timeout=0.5)]
+    assert [e["i"] for e in events] == list(range(6))  # ~0.9s total > 0.5s idle budget
+
+
+async def test_json_events_idle_clock_suspended_while_learner_answers(tmp_path, monkeypatch):
+    from learnharness.engines import cli_protocol
+
+    monkeypatch.setattr(cli_protocol, "SUSPEND_POLL_SECONDS", 0.05)
+    body = "import time,json\ntime.sleep(0.8)\nprint(json.dumps({'ok':1}),flush=True)\n"
+    binary = executable(tmp_path, body)
+    events = [
+        e async for e in cli_protocol.json_events([binary], timeout=0.3, is_suspended=lambda: True)
+    ]
+    assert events == [{"ok": 1}]
+    with pytest.raises(EngineError, match="idle"):
+        [e async for e in cli_protocol.json_events([binary], timeout=0.3)]
+
+
+async def test_headless_drawing_review_attaches_png_reference(tmp_path):
+    binary = executable(
+        tmp_path,
+        """import json,sys,os,re
+prompt=sys.argv[sys.argv.index('-p')+1]
+assert '--skip-trust' in sys.argv
+name=re.search(r'@(drawing-[0-9a-f]+[.]png) ', prompt).group(1)
+assert open(os.path.join(os.getcwd(), name),'rb').read()==b'PNGDATA'
+print(json.dumps({'type':'result','status':'success',
+ 'structured_output':{'slug':'diagram','summary_markdown':'Review'}}))
+""",
+    )
+    work = tmp_path / "work"
+    result = await GeminiHeadlessEngine(binary, work_dir=work).review_drawing_multimodal(
+        b"PNGDATA", "diagram"
+    )
+    assert result.slug == "diagram"
+    assert not list(work.glob("drawing-*.png"))
 
 
 def test_discovery_does_not_claim_authentication(monkeypatch):

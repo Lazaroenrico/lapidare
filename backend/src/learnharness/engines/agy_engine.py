@@ -5,10 +5,10 @@ from pathlib import Path
 
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.engines.detector import KNOWN_AGY_PATHS
-from learnharness.engines.gemini_engine import GeminiAcpEngine
+from learnharness.engines.gemini_engine import GeminiHeadlessEngine
 
 
-class AgyStreamEngine(GeminiAcpEngine):
+class AgyStreamEngine(GeminiHeadlessEngine):
     binary_name = "agy"
     known_paths = KNOWN_AGY_PATHS
 
@@ -73,3 +73,10 @@ class AgyStreamEngine(GeminiAcpEngine):
         if kind == "error":
             raise EngineError("Antigravity CLI reported a provider error")
         return "event", event
+
+    async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
+        # The Gemini CLI ``@<path>`` attachment syntax is not a documented agy feature.
+        raise EngineError(
+            "Image review is not supported by the Antigravity CLI connector; "
+            "use the Gemini CLI or google-genai connector"
+        )
