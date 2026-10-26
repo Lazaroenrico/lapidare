@@ -1402,29 +1402,3 @@ async def spawn_demo(
         parameters=parameters,
     )
     return res
-
-
-# Register with FastMCP if server is imported
-try:
-    from learnharness.mcp.server import mcp_server
-
-    @mcp_server.tool(name="spawn_demo")
-    async def _mcp_spawn_demo(
-        title: str,
-        topic: str,
-        description: str,
-        lesson_rel_path: str | None = None,
-        parameters: list[dict[str, Any]] | None = None,
-        vault_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Spawn an interactive HTML5 visual simulator and link to the lesson."""
-        return await spawn_demo(
-            title=title,
-            topic=topic,
-            description=description,
-            lesson_rel_path=lesson_rel_path,
-            parameters=parameters,
-            vault_path=vault_path,
-        )
-except ImportError:
-    pass

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 from uuid import uuid4
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
@@ -175,7 +176,7 @@ def _chain_id(session_id, premises, conclusion):
 # ============================================================================
 
 async def extractor_node(
-    state: ExtractionState, config: dict[str, Any] | None = None
+    state: ExtractionState, config: RunnableConfig | None = None
 ) -> dict[str, Any]:
     """Extractor node: extracts candidate ConceptNodes and LogicalChains.
     
@@ -346,7 +347,7 @@ async def extractor_node(
 
 
 async def auditor_node(
-    state: ExtractionState, config: dict[str, Any] | None = None
+    state: ExtractionState, config: RunnableConfig | None = None
 ) -> dict[str, Any]:
     """Auditor node: deduplicates against Vault, normalizes wikilinks, and verifies DAG acyclicity."""
     vault_path_str = state.get("vault_path", "")
@@ -498,7 +499,7 @@ async def auditor_node(
 
 
 async def merger_node(
-    state: ExtractionState, config: dict[str, Any] | None = None
+    state: ExtractionState, config: RunnableConfig | None = None
 ) -> dict[str, Any]:
     """Merger node: persists audited concepts to Conceitos/*.md and chains to .harness/chains.jsonl."""
     vault_path_str = state.get("vault_path", "")

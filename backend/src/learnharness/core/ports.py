@@ -5,7 +5,7 @@ no network calls, and no filesystem operations.
 """
 
 from collections.abc import AsyncIterator
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 from learnharness.core.contracts.config import HarnessConfig, ModelSlotConfig
 from learnharness.core.contracts.graph import ConceptNode, GraphSnapshot, LogicalChain
@@ -16,7 +16,14 @@ T = TypeVar("T")
 
 
 class AgentEnginePort(Protocol):
-    """Port interface for Google ecosystem agent connectors (agy, gemini-cli, genai-sdk)."""
+    """Port interface for Google ecosystem agent connectors (agy, gemini-cli, genai-sdk).
+
+    tool_transport tells the session runner how pedagogical tools reach the model:
+    "mcp" engines discover them through the bound /internal/mcp server (configure_runtime),
+    "inline" engines receive Python callables through stream_turn(tools=...).
+    """
+
+    tool_transport: Literal["mcp", "inline"]
 
     async def stream_turn(
         self,

@@ -247,7 +247,9 @@ class SessionService:
             work_dir.mkdir(parents=True, exist_ok=True)
             if hasattr(engine, "configure_runtime"):
                 engine.configure_runtime(work_dir, self.state.mcp_url, token)
-            tools = self.state.tool_functions(session_id)
+            # CLI engines reach the tools through the bound MCP server; only in-process
+            # engines receive callables directly.
+            tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
             history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
             context = json.dumps({"topic": session.title, "plan": session.plan.model_dump(), "answers": [a.model_dump() for a in session.answers.values()], "track": config.track.model_dump(mode="json") if session.track_item_id else None}, ensure_ascii=False)
             prompt = build_system_prompt(session.mode, session.context_kind, config.language, session.phase, extra_context=context)

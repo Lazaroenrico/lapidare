@@ -14,6 +14,8 @@ except ImportError:
 
 
 class GenAiSdkEngine:
+    tool_transport = "inline"
+
     def __init__(
         self,
         api_key=None,
@@ -92,7 +94,15 @@ class GenAiSdkEngine:
                 )
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt)]))
         config = types.GenerateContentConfig(
-            system_instruction="\n".join(instructions) or None, tools=tools or None
+            system_instruction="\n".join(instructions) or None,
+            tools=tools or None,
+            # A lesson turn chains plan_init, several pose_quiz waits and plan_advance;
+            # the SDK default of 10 remote calls truncates it mid-plan.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                maximum_remote_calls=50
+            )
+            if tools
+            else None,
         )
         async with asyncio.timeout(self.timeout):
             stream = await self.client.aio.models.generate_content_stream(

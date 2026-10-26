@@ -38,7 +38,8 @@ class AppState:
         self.tokens: dict[str, tuple[str, str]] = {}
         self.api_key: str | None = None
         self.engine_factory = engine_factory
-        self.mcp_url = os.environ.get("LEARNHARNESS_MCP_URL", "http://127.0.0.1:8000/internal/mcp/")
+        port = os.environ.get("LEARNHARNESS_PORT", "8000")
+        self.mcp_url = os.environ.get("LEARNHARNESS_MCP_URL", f"http://127.0.0.1:{port}/internal/mcp/")
         self.watcher = None
         self.started = False
         self.content_mcp_client = ContentMcpClient(servers=self.get_config().content_mcps)

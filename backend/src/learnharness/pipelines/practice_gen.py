@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any, TypedDict
 from uuid import uuid4
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
@@ -81,7 +82,7 @@ def _validate_problem(problem: PracticeProblem) -> None:
         raise ValueError("Hints must not disclose the committed solution")
 
 
-async def generator_node(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+async def generator_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     runtime = config.get("configurable", {})
     engine = runtime.get("engine")
     if engine is None:

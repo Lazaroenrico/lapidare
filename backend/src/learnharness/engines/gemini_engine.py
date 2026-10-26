@@ -10,6 +10,7 @@ from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
 
 class GeminiAcpEngine:
     binary_name = "gemini"
+    tool_transport = "mcp"
     known_paths = KNOWN_GEMINI_PATHS
 
     def __init__(
