@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import type {
   ConnectorStatus,
-  EffortLevel,
   EngineKind,
   HarnessConfig,
   McpServerConfig,
@@ -32,6 +31,8 @@ import type {
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
+import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
+import { normalizeSlots } from "@/lib/config-wire";
 
 interface SetupDialogProps {
   isOpen: boolean;
@@ -41,16 +42,8 @@ interface SetupDialogProps {
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
 
-// agy model ids are account-specific (`agy models`): "auto" lets the CLI pick its default.
-function defaultSlotsFor(engine: EngineKind): ModelSlots {
-  const strong = engine === "agy" ? "auto" : "gemini-2.5-pro";
-  const fast = engine === "agy" ? "auto" : "gemini-2.5-flash";
-  return {
-    strong: { engine, model: strong, effort: "medium" },
-    fast: { engine, model: fast, effort: "low" },
-    background: { engine, model: fast, effort: "medium" },
-  };
-}
+// Model ids are account-specific (`agy models`): "auto" lets the engine pick its default.
+const defaultSlotsFor = (engine: EngineKind): ModelSlots => normalizeSlots(undefined, engine);
 
 type DetectedConnector = ConnectorStatus & { recommended?: boolean };
 const DEFAULT_REPO_PATH = "";
@@ -65,6 +58,10 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   // Connectors detected from backend
   const [connectors, setConnectors] = useState<DetectedConnector[]>([]);
   const connector = (engine: EngineKind) => connectors.find((c) => c.engine === engine);
+  // Session-only: engines whose slot test succeeded in this dialog.
+  const [verifiedEngines, setVerifiedEngines] = useState<Set<EngineKind>>(new Set());
+  const markVerified = (engine: EngineKind) =>
+    setVerifiedEngines((prev) => (prev.has(engine) ? prev : new Set(prev).add(engine)));
 
   // Step 1: Engines & Model Slots
   const [apiKey, setApiKey] = useState<string>("");
@@ -108,7 +105,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
         if (res.config) {
           if (res.config.language) setLanguage(res.config.language);
           if (res.config.vault_path) setVaultPath(res.config.vault_path);
-          if (res.config.slots) setSlots(res.config.slots);
+          if (res.config.slots) setSlots(normalizeSlots(res.config.slots));
           if (res.config.track) {
             setTrackMode(res.config.track.mode);
             if (res.config.track.repo_path)
@@ -306,7 +303,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                           </p>
                         </div>
                       </div>
-                      <ConnectorBadge status={connector("agy")} t={t} />
+                      <ConnectorBadge status={connector("agy")} verified={verifiedEngines.has("agy")} t={t} />
                     </div>
 
                     {/* Gemini ACP Engine */}
@@ -330,7 +327,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                           </p>
                         </div>
                       </div>
-                      <ConnectorBadge status={connector("gemini")} t={t} />
+                      <ConnectorBadge status={connector("gemini")} verified={verifiedEngines.has("gemini")} t={t} />
                     </div>
 
                     {/* GenAI SDK fallback */}
@@ -347,7 +344,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                             </p>
                           </div>
                         </div>
-                        <ConnectorBadge status={connector("sdk")} t={t} />
+                        <ConnectorBadge status={connector("sdk")} verified={verifiedEngines.has("sdk")} t={t} />
                       </div>
                       <input
                         type="password"
@@ -361,120 +358,18 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
 
                   {slots.strong.engine === "agy" && <AgyPermissionCard />}
 
-                  {/* Model Slots & Reasoning Effort */}
+                  {/* Model Slots: engine, model, effort + connection test */}
                   <div className="p-3.5 bg-background border border-border rounded space-y-3">
                     <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
                       {t.sdSlotsTitle}
                     </span>
-
-                    <div className="grid grid-cols-3 gap-2 font-ui text-xs">
-                      {/* Strong Slot */}
-                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-foreground">
-                            {t.sdStrongSlot}
-                          </span>
-                          <span className="text-[9px] text-muted-foreground">
-                            Teacher / Practice
-                          </span>
-                        </div>
-                        <select
-                          value={slots.strong.engine}
-                          onChange={(e) =>
-                            setSlots((prev) => ({
-                              ...prev,
-                              strong: {
-                                ...prev.strong,
-                                engine: e.target.value as EngineKind,
-                              },
-                            }))
-                          }
-                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
-                        >
-                          <option value="agy">agy (Argon)</option>
-                          <option value="gemini">gemini-cli (ACP)</option>
-                          <option value="sdk">google-genai SDK</option>
-                        </select>
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
-                          <span>{t.sdEffort}</span>
-                          <select
-                            value={slots.strong.effort || "high"}
-                            onChange={(e) =>
-                              setSlots((prev) => ({
-                                ...prev,
-                                strong: {
-                                  ...prev.strong,
-                                  effort: e.target.value as EffortLevel,
-                                },
-                              }))
-                            }
-                            className="bg-background border border-border rounded px-1 text-[10px] text-foreground"
-                          >
-                            <option value="low">low</option>
-                            <option value="medium">medium</option>
-                            <option value="high">high</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Fast Slot */}
-                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-foreground">
-                            {t.sdFastSlot}
-                          </span>
-                          <span className="text-[9px] text-muted-foreground">
-                            {t.sdFastSlotHint}
-                          </span>
-                        </div>
-                        <select
-                          value={slots.fast.engine}
-                          onChange={(e) =>
-                            setSlots((prev) => ({
-                              ...prev,
-                              fast: {
-                                ...prev.fast,
-                                engine: e.target.value as EngineKind,
-                              },
-                            }))
-                          }
-                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
-                        >
-                          <option value="agy">agy (Flash)</option>
-                          <option value="gemini">gemini-cli (ACP)</option>
-                          <option value="sdk">google-genai SDK</option>
-                        </select>
-                      </div>
-
-                      {/* Background Slot */}
-                      <div className="p-2.5 bg-card border border-border rounded flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-foreground">
-                            Background
-                          </span>
-                          <span className="text-[9px] text-muted-foreground">
-                            LangGraph Pipelines
-                          </span>
-                        </div>
-                        <select
-                          value={slots.background.engine}
-                          onChange={(e) =>
-                            setSlots((prev) => ({
-                              ...prev,
-                              background: {
-                                ...prev.background,
-                                engine: e.target.value as EngineKind,
-                              },
-                            }))
-                          }
-                          className="bg-background border border-border rounded p-1 text-[11px] text-foreground"
-                        >
-                          <option value="agy">agy (Flash)</option>
-                          <option value="gemini">gemini-cli (ACP)</option>
-                          <option value="sdk">google-genai SDK</option>
-                        </select>
-                      </div>
-                    </div>
+                    <ModelSlotsEditor
+                      slots={slots}
+                      onChange={setSlots}
+                      apiKey={apiKey}
+                      onEngineVerified={markVerified}
+                      gridClassName="grid grid-cols-1 sm:grid-cols-3 gap-2"
+                    />
                   </div>
                 </div>
               )}
@@ -786,9 +681,11 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
 
 function ConnectorBadge({
   status,
+  verified,
   t,
 }: {
   status?: DetectedConnector;
+  verified: boolean;
   t: ReturnType<typeof useLocale>["t"];
 }) {
   return (
@@ -798,14 +695,7 @@ function ConnectorBadge({
           {t.setupRecommended}
         </span>
       )}
-      {status?.available ? (
-        <span className="flex items-center gap-1 text-foreground">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          {t.setupDetected}
-        </span>
-      ) : (
-        <span className="text-muted-foreground">{t.setupNotFound}</span>
-      )}
+      <ConnectorStateBadge available={status?.available} verified={verified} />
     </div>
   );
 }
