@@ -7,7 +7,7 @@ no network calls, and no filesystem operations.
 from collections.abc import AsyncIterator
 from typing import Any, Literal, Protocol, TypeVar
 
-from learnharness.core.contracts.config import HarnessConfig, ModelSlotConfig
+from learnharness.core.contracts.config import HarnessConfig, McpServerConfig, ModelSlotConfig
 from learnharness.core.contracts.graph import ConceptNode, GraphSnapshot, LogicalChain
 from learnharness.core.contracts.quiz import CalibrationResult
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
@@ -102,20 +102,38 @@ class VaultPort(Protocol):
 
 
 class ContentMcpPort(Protocol):
-    """Port interface for external educational content MCP servers (e.g. Praxis)."""
+    """Port interface for external educational content MCP servers (any server: Praxis, docs...).
 
-    async def is_available(self, server_name: str | None = None) -> bool:
-        """Check if content MCP server is configured and reachable."""
+    Implemented by ``mcp.content_client.ContentMcpClient``. Each call opens its own
+    connection (http, sse or stdio); remote content is data, never instructions.
+    """
+
+    def get_server(self, name: str) -> McpServerConfig:
+        """Return the configured server named ``name`` (raises KeyError when unknown)."""
         ...
 
-    async def list_available_lessons(
-        self, server_name: str | None = None
-    ) -> list[dict[str, Any]]:
-        """List lessons and transcripts available to import from MCP."""
+    def enabled_servers(self) -> list[McpServerConfig]:
+        """Configured servers with ``enabled=True``."""
         ...
 
-    async def fetch_lesson_content(
-        self, lesson_id: str, server_name: str | None = None
-    ) -> str:
-        """Fetch full markdown/transcript of a lesson from MCP."""
+    async def test(self, server: McpServerConfig) -> dict[str, Any]:
+        """Probe the server: ``{ok, tools: [str], resources: int, error?}`` (never raises)."""
+        ...
+
+    async def list_items(self, server: McpServerConfig) -> list[dict[str, Any]]:
+        """List importable items ``[{id, title, kind, description, is_new}]``."""
+        ...
+
+    async def fetch_item(self, server: McpServerConfig, item_id: str) -> str:
+        """Fetch the full text of one item."""
+        ...
+
+    async def fetch_items(
+        self, server: McpServerConfig, item_ids: list[str]
+    ) -> list[dict[str, str]]:
+        """Fetch several items over one connection: ``[{id, title, text}]``."""
+        ...
+
+    def imported_ids(self, server_name: str) -> set[str]:
+        """Item ids of ``server_name`` already present in the sources folder."""
         ...

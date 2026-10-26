@@ -38,6 +38,62 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 
 ---
 
+## Rodando Localmente
+
+Pré-requisitos: Python 3.12+ com [`uv`](https://docs.astral.sh/uv/), Node.js 20+, `git` e pelo menos um conector Google (`agy`, `gemini` ou uma `GEMINI_API_KEY`).
+
+```bash
+cd backend && uv sync && cd ..
+cd frontend && npm install && cd ..
+make dev            # ou: scripts/dev.sh
+```
+
+Abra `http://localhost:3000`. O `scripts/dev.sh` sobe o backend FastAPI em `127.0.0.1:8000` e o frontend Next.js em `3000`, já com o proxy `/api/*` e a URL do MCP interno ajustados. Variáveis úteis:
+
+| Variável | Para quê |
+|---|---|
+| `BACKEND_PORT` / `FRONTEND_PORT` | Portas do backend (padrão `8000`) e do frontend (padrão `3000`). |
+| `LEARNHARNESS_VAULT_PATH` | Vault a usar (ex.: `~/Documents/AI Engineering`). Sem ela, vale o Vault escolhido no Setup. |
+| `GEMINI_API_KEY` | Habilita o conector `google-genai` (fallback por API). |
+| `GITHUB_TOKEN` | Opcional: importar repositórios privados do GitHub (sem ela, usa `gh auth token` se o GitHub CLI estiver logado). Nunca vai para `argv` nem para o Vault. |
+
+Se as portas já estiverem ocupadas (outro projeto, Docker), o script avisa e não sobe nada. Escolha outras:
+
+```bash
+BACKEND_PORT=8100 FRONTEND_PORT=3100 LEARNHARNESS_VAULT_PATH=/tmp/vault-teste scripts/dev.sh
+```
+
+**Sobre o conector:** a partir do gemini-cli 0.62, contas pessoais do *Gemini Code Assist* são bloqueadas no `gemini` com a orientação de migrar para o Antigravity. Para usar a assinatura Google pessoal, prefira o **`agy`**; o `gemini --acp` continua suportado para Workspace/Code Assist Standard.
+
+---
+
+## Importando Conteúdo
+
+O botão `↑ Import` da Home leva tudo para `Fontes/` (somente-leitura, com parágrafos `^pN` e proveniência no frontmatter):
+
+- **Servidor MCP:** cadastre qualquer servidor em `Settings` (HTTP/streamable, SSE ou `stdio`), teste a conexão e importe os itens listados. Tokens ficam em `~/.config/learnharness/secrets.json`, nunca no Vault.
+- **Link do GitHub:** cole a URL de um repositório, pasta ou arquivo, por exemplo `https://github.com/rohitg00/ai-engineering-from-scratch`. O preview lista `.md`/`.txt`/`.ipynb`, e você escolhe o que importar. Marque **usar como Trilha** para gerar a trilha a partir do currículo inteiro. O clone fica em cache em `.harness/repos/`: um novo preview só baixa de novo se o repositório mudou (ou com `refresh`).
+- **Arquivos locais:** `.md`, `.txt` ou `.pdf` (até 20 MB), com opção de já abrir uma sessão `TEACH` sobre a fonte.
+
+---
+
+## Testes
+
+```bash
+make check          # tudo abaixo de uma vez
+
+cd backend
+uv run pytest -q
+uv run ruff check src tests
+
+cd frontend
+npm run typecheck
+npm test
+npm run build
+```
+
+---
+
 ## Documentação do Repositório
 
 - **[`AGENTS.md`](AGENTS.md)** — Guia rápido de contexto, invariantes e regras para agentes e desenvolvedores.
