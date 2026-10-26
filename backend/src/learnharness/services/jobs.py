@@ -2,16 +2,14 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-from typing import Any
 from uuid import uuid4
 
 from learnharness.core.contracts.practice import PracticeSet
 from learnharness.core.events import SseEventType
-from learnharness.vault.safety import append_line, safe_path
 from learnharness.services.sessions import now
+from learnharness.vault.safety import append_line, safe_path
 
 logger = logging.getLogger(__name__)
 

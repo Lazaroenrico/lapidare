@@ -43,8 +43,8 @@ class AppState:
         self.watcher = None
         self.started = False
         self.content_mcp_client = ContentMcpClient(servers=self.get_config().content_mcps)
-        from learnharness.services.sessions import SessionService
         from learnharness.services.jobs import JobManager
+        from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
         self.sessions = SessionService(self)
         self.jobs = JobManager(self)

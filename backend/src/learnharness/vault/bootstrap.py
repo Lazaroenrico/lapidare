@@ -8,6 +8,7 @@ Persists configuration into .harness/config.json with atomic writes.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,8 @@ from learnharness.core.contracts.config import (
     VaultFolderMap,
 )
 from learnharness.vault.safety import atomic_write, locked_path, safe_path, validate_folders
+
+logger = logging.getLogger(__name__)
 
 AULA_TEMPLATE_PT = """---
 tags: [aula]
@@ -222,7 +225,7 @@ def parse_track_tables(mapa_content: str) -> list[TrackItem]:
                 continue
             cols = [c.strip() for c in line.split("|")[1:-1]]
             if len(cols) >= 4:
-                raw_mod, raw_sources, raw_blocks, raw_status = cols[0], cols[1], cols[2], cols[3]
+                raw_mod, raw_blocks, raw_status = cols[0], cols[2], cols[3]
                 # Extract wikilink [[link|title]] or [[title]]
                 wiki_match = re.search(r"\[\[([^\|\]]+)(?:\|([^\]]+))?\]\]", raw_mod)
                 if wiki_match:
@@ -546,8 +549,8 @@ def bootstrap_vault(
             else ("Sessions" if language == "en" else "Sessões")
         )
     )
-    templates_dir = "Templates" if (vault_path / "Templates").exists() else "Templates"
-    viz_dir = "viz" if (vault_path / "viz").exists() else "viz"
+    templates_dir = "Templates"
+    viz_dir = "viz"
 
     folder_map = VaultFolderMap(
         map_file=map_file,
@@ -571,8 +574,10 @@ def bootstrap_vault(
         try:
             mapa_content = mapa_path.read_text(encoding="utf-8")
             track_items.extend(parse_track_tables(mapa_content))
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            # User-authored map: tolerate it (track stays empty), but never silently.
+            # ValueError covers UnicodeDecodeError and pydantic ValidationError.
+            logger.warning("Could not parse track tables from %s: %s", mapa_path, exc)
 
     # 2. Parse LEARNING.md if available
     learning_md_path: Path | None = None
@@ -588,8 +593,8 @@ def bootstrap_vault(
             # If no items from 00 Mapa.md, use learning_items; otherwise append granular queue
             if not track_items:
                 track_items = learning_items
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not parse study queue from %s: %s", learning_md_path, exc)
 
     active_id = determine_active_item_id(track_items)
 
@@ -597,10 +602,10 @@ def bootstrap_vault(
     existing_config: HarnessConfig | None = None
     config_file = harness_dir / "config.json"
     if config_file.exists():
-        try:
-            existing_config = load_config(vault_path)
-        except Exception:
-            existing_config = None
+        # Only reachable if config.json appeared concurrently (the entry path returns
+        # load_config early). A corrupt config must propagate, never be overwritten
+        # with defaults: that would silently drop model slots and MCP servers.
+        existing_config = load_config(vault_path)
 
     if existing_config:
         config = existing_config

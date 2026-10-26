@@ -43,10 +43,8 @@ async def get_paragraph(
 
     try:
         data = get_source_paragraph(state.vault_path, src, pid)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except (FileNotFoundError, KeyError) as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
     ctx_before = "\n\n".join(data.get("context_before", []))
     ctx_after = "\n\n".join(data.get("context_after", []))
@@ -73,18 +71,19 @@ async def get_catalog(request: Request) -> dict[str, Any]:
     lessons = await state.content_mcp_client.list_available_lessons()
 
     items = []
-    for l in lessons:
+    for lesson in lessons:
+        week = lesson.get("week", "")
         items.append(
             {
-                "id": l["id"],
-                "title": l["title"],
-                "week": int(l["week"].replace("S", "")) if l.get("week", "").startswith("S") and l["week"][1:].isdigit() else None,
-                "category": l.get("kind", "aula"),
-                "source_mcp": l.get("source_mcp", "praxis"),
+                "id": lesson["id"],
+                "title": lesson["title"],
+                "week": int(week[1:]) if week.startswith("S") and week[1:].isdigit() else None,
+                "category": lesson.get("kind", "aula"),
+                "source_mcp": lesson.get("source_mcp", "praxis"),
                 "has_transcript": True,
                 "has_code": True,
-                "imported": not l.get("is_new", True),
-                "local_source_path": l.get("imported_note"),
+                "imported": not lesson.get("is_new", True),
+                "local_source_path": lesson.get("imported_note"),
             }
         )
 

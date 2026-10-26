@@ -8,6 +8,8 @@ Filters out temporary files, obsidian workspace states, and langgraph SQLite che
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -18,6 +20,7 @@ except ImportError:
     _WATCHFILES_AVAILABLE = False
     Change = None
 
+logger = logging.getLogger(__name__)
 
 def is_ignored_path(path_str: str) -> bool:
     """Check if the changed path should be filtered out from notifications."""
@@ -28,9 +31,7 @@ def is_ignored_path(path_str: str) -> bool:
         return True
     if ".harness/langgraph.sqlite" in normalized:
         return True
-    if "/.git" in normalized or normalized.endswith("/.git"):
-        return True
-    return False
+    return "/.git" in normalized or normalized.endswith("/.git")
 
 
 class VaultWatcher:
@@ -60,10 +61,8 @@ class VaultWatcher:
         self._stop_event.set()
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
     async def _watch_loop(self) -> None:
@@ -83,13 +82,19 @@ class VaultWatcher:
 
                     if valid_paths and not self._stop_event.is_set():
                         try:
-                            await self.on_change(sorted(list(set(valid_paths))))
-                        except Exception:
-                            pass
+                            await self.on_change(sorted(set(valid_paths)))
+                        except Exception:  # callback is arbitrary; one failure must not kill the watcher
+                            logger.exception(
+                                "Vault change handler failed for %d path(s) in %s",
+                                len(valid_paths),
+                                self.vault_path,
+                            )
             except asyncio.CancelledError:
                 return
-            except Exception:
-                pass
+            except OSError:
+                # watchfiles surfaces filesystem errors (vault removed/unmounted,
+                # inotify limits) as OSError; stop watching but leave a trace.
+                logger.exception("Vault watcher stopped for %s", self.vault_path)
         else:
             # Fallback polling loop when watchfiles is not yet available
             try:

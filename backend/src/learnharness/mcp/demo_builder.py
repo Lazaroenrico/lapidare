@@ -1304,8 +1304,8 @@ def save_demo_to_vault(
                 match = re.search(r"^#\s+(.+)$", txt, re.MULTILINE)
                 if match:
                     lesson_title = match.group(1).strip()
-            except Exception:
-                pass
+            except (OSError, UnicodeDecodeError) as err:
+                logger.warning("Could not read lesson title from %s: %s", lesson_file, err)
 
         demo_link = f"[[viz/demos/{slug}.html|Simulador Interativo: {title}]]"
         section_md = (
@@ -1323,7 +1323,8 @@ def save_demo_to_vault(
                 node_section_md=section_md,
             )
             logger.info("Linked demo [[viz/demos/%s.html]] into %s", slug, lesson_rel_path)
-        except Exception as err:
+        except (OSError, ValueError, RuntimeError) as err:
+            # OSError incl. PermissionError from safe_path; RuntimeError incl. RevisionConflictError.
             logger.warning("Failed to link demo into lesson note %s: %s", lesson_rel_path, err)
 
     rel_path = f"viz/demos/{slug}.html"
@@ -1359,7 +1360,8 @@ def load_demo_from_vault(vault_path: Path | str, slug: str) -> dict[str, Any]:
     if json_match:
         try:
             meta = json.loads(json_match.group(1))
-        except Exception:
+        except json.JSONDecodeError as err:
+            logger.warning("Ignoring malformed demo metadata in %s: %s", target_path, err)
             meta = {}
 
     title = meta.get("title")

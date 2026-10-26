@@ -7,10 +7,13 @@ or local Praxis state catalogs (`.claude/state/praxis.json`).
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from learnharness.core.contracts.config import McpServerConfig
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PRAXIS_CATALOG = Path("/home/lazarodiza/Study/ai-engineer/.claude/state/praxis.json")
 
@@ -47,8 +50,11 @@ class ContentMcpClient:
                     )
                 if result:
                     return result
-            except Exception:
-                pass
+            except (OSError, ValueError, AttributeError) as exc:
+                # OSError: unreadable file; ValueError: bad JSON; AttributeError: unexpected shape.
+                logger.warning(
+                    "Ignoring unreadable content catalog %s: %s", self.local_catalog_path, exc
+                )
 
         # Fallback representative catalog when no external MCP is active yet
         return [

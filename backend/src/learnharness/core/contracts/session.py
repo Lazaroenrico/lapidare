@@ -7,7 +7,8 @@ Product Invariant: ONLY two session modes exist: TEACH and PRACTICE.
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
-from learnharness.core.contracts.quiz import QuizPayload, CalibrationResult
+
+from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload
 
 # Strictly ONLY these two modes exist across the entire platform!
 SessionMode = Literal["TEACH", "PRACTICE"]

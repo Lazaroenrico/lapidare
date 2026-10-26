@@ -9,7 +9,15 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from learnharness.api.state import get_app_state
-from learnharness.core.contracts.config import HarnessConfig, McpServerConfig, ModelSlotConfig, ModelSlots, TrackConfig, TrackMode, VaultFolderMap
+from learnharness.core.contracts.config import (
+    HarnessConfig,
+    McpServerConfig,
+    ModelSlotConfig,
+    ModelSlots,
+    TrackConfig,
+    TrackMode,
+    VaultFolderMap,
+)
 from learnharness.core.events import SseEventType
 from learnharness.engines.detector import detect_connectors
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
