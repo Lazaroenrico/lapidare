@@ -123,13 +123,16 @@ export type SessionMode = "TEACH" | "PRACTICE";
 
 export type TeachContextKind = "free_topic" | "dense_source" | "track_step" | "drawing_review";
 
+/** Teaching cycle phases (spec Fase 8 §3). */
+export type TeachPhase = "probing" | "planning" | "teaching" | "completed";
+
+/** Wire phase: the cycle phases plus legacy values kept only by old records. */
 export type SessionPhase =
-  | "probing"
-  | "planning"
-  | "teaching"
+  | TeachPhase
+  | "awaiting_answer"
+  | "consolidating"
   | "practice"
-  | "review"
-  | "completed";
+  | "review";
 
 export interface DenseBlockDimensions {
   what_was_said: string;
@@ -139,18 +142,36 @@ export interface DenseBlockDimensions {
   source_anchors: string[];
 }
 
+export type PlanNodeStatus = "pending" | "current" | "visited" | "mastered" | "needs_review";
+
+export type PlanNodeKind = "unconditional_truth" | "derived_step" | "goal";
+
 export interface PlanNode {
   id: string;
-  title: string;
-  summary?: string;
-  status: "pending" | "current" | "mastered" | "review";
-  source_block_idx?: number;
-  dependencies?: string[];
+  label: string;
+  kind: PlanNodeKind;
+  /** Prerequisite ids (edges prerequisite → this node). */
+  depends_on: string[];
+  status: PlanNodeStatus;
+  /** Dense-source 4 dimensions (decoded from the backend `four_dimensions`). */
+  dimensions?: DenseBlockDimensions;
 }
 
 export interface PlanDag {
+  approach_prose: string;
   nodes: PlanNode[];
-  current_node_id?: string;
+  updated_at?: string;
+}
+
+export interface ProbeStrand {
+  strand: string;
+  assessment: string;
+}
+
+export interface ProbeAssessment {
+  strands: ProbeStrand[];
+  summary: string | null;
+  created_at: string;
 }
 
 export interface SourceCitation {
@@ -160,13 +181,21 @@ export interface SourceCitation {
   block_title?: string;
 }
 
+export interface NodeSpan {
+  start: number;
+  node_id: string | null;
+}
+
 export interface SessionMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: string;
-  phase?: SessionPhase;
-  plan_update?: PlanDag;
+  created_at?: string;
+  node_id?: string | null;
+  /** Set on the user message that carries a question answer. */
+  quiz_id?: string | null;
+  node_spans?: NodeSpan[];
   source_citations?: SourceCitation[];
 }
 
@@ -201,50 +230,90 @@ export interface SessionRecord {
   source_file?: string;
   track_item_id?: string;
   pending_quiz?: QuizPayload | null;
+  /** Answered questions by quiz_id (extended CalibrationResult). */
+  answers: Record<string, CalibrationResult>;
+  /** Result of `probe_done` (diagnosis per strand). */
+  assessment: ProbeAssessment | null;
 }
 
-// --- 3. Quiz & Calibration Matrix ---
+// --- 3. Questions & Calibration ---
 
-export type QuizMode = "PREDICTION" | "CHECK";
+export type QuestionKind = "quiz" | "explain" | "ask";
+
+export type QuizMode = "PROBE" | "PREDICTION" | "CHECK";
 
 export type CalibrationBand =
-  | "calibrated" // Correct + Conf >= 70%
-  | "illusion_of_competence" // Wrong + Conf >= 70%
-  | "fragile_intuition" // Correct + Conf < 50%
-  | "conscious_gap"; // Wrong + Conf < 50% or "I don't know"
+  | "calibrated_mastery"
+  | "illusion_of_competence"
+  | "fragile_intuition"
+  | "conscious_gap"
+  | "moderate_correct"
+  | "moderate_error";
+
+export type RecallGrade = "correct" | "partial" | "incorrect";
 
 export interface QuizOption {
-  index: number;
+  value: string;
   label: string;
-  text: string;
+  description?: string | null;
 }
 
+/** Pending question as served by the API (never carries the answer key). */
 export interface QuizPayload {
-  id: string;
+  quiz_id: string;
   session_id: string;
-  mode: QuizMode;
+  node_id: string | null;
+  topic: string;
   question: string;
-  options: QuizOption[];
-  has_dont_know: boolean;
-  target_concept?: string;
-  plan_node_id?: string;
-  block_idx?: number;
+  details: string | null;
+  kind: QuestionKind;
+  mode: QuizMode | null;
+  choices: QuizOption[];
+  multi_select: boolean;
+  created_at: string;
 }
 
+/** Body of POST /api/chats/{id}/answer. */
 export interface QuizSubmission {
   quiz_id: string;
-  chosen_index: number;
-  confidence: number; // 0 to 100
-  learner_thinking?: string;
+  session_id: string;
+  chosen_indices: number[];
+  is_dont_know: boolean;
+  confidence: number | null;
+  learner_thinking: string;
+  reading_thinking: string;
+  text: string;
+  other_text: string;
 }
 
+/** Extended answer record (session.answers[quiz_id] and the POST /answer response). */
 export interface CalibrationResult {
-  is_correct: boolean;
-  correct_index: number;
-  chosen_index: number;
-  confidence: number;
-  band: CalibrationBand;
-  feedback_prose: string;
+  quiz_id: string;
+  kind: QuestionKind;
+  mode: QuizMode | null;
+  node_id: string | null;
+  topic: string;
+  question?: string;
+  /**
+   * Choice labels in ORIGINAL order, when the backend includes them
+   * (or the client remembered them from the pending question).
+   */
+  choices?: QuizOption[];
+  correct: boolean | null;
+  is_dont_know: boolean;
+  chosen_indices: number[];
+  correct_indices: number[];
+  confidence: number | null;
+  confidence_band?: string | null;
+  calibration_band?: CalibrationBand | null;
+  learner_thinking: string;
+  reading_thinking: string;
+  text: string;
+  other_text: string;
+  grade: RecallGrade | null;
+  grade_feedback: string;
+  explanation: string;
+  timestamp: string;
 }
 
 // --- 4. Knowledge Graph & Chains ---

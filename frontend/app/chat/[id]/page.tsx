@@ -20,7 +20,8 @@ import {
   Send,
   Sparkles,
 } from "lucide-react";
-import type { CalibrationResult, SessionRecord } from "@/lib/types";
+import type { SessionRecord } from "@/lib/types";
+import { buildTranscript, normalizePhase } from "@/lib/session-wire";
 import {
   createDemo,
   createDrawing,
@@ -33,6 +34,7 @@ import { useEventSubscription } from "@/components/server-events";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { PlanWindow } from "@/components/plan-window";
+import { AnsweredQuestionCard, PhaseChip, PhaseDivider, ProbeDoneCard } from "@/components/transcript-cards";
 import { SourceCitationPane } from "@/components/source-citation-pane";
 import { PracticeView } from "@/components/practice-view";
 import { DemoIframe } from "@/components/demo-iframe";
@@ -158,7 +160,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [session?.messages, session?.pending_quiz]);
+  }, [session?.messages.length, session?.pending_quiz?.quiz_id]);
 
   // Handle open citation drawer
   const handleOpenCitation = (sourceName: string, paragraphId: string) => {
@@ -356,7 +358,10 @@ export default function ChatPage({ params }: ChatPageProps) {
     );
   }
 
-  const isWaitingQuiz = session.status === "waiting_quiz" && session.pending_quiz;
+  const isWaitingQuiz = Boolean(session.pending_quiz);
+  const transcript = buildTranscript(session);
+  const teachPhase =
+    session.mode === "TEACH" ? normalizePhase(session.phase, Boolean(session.plan?.nodes.length)) : null;
   const execStatus = session.execution_status;
   const needsRecovery =
     session.recovery_required || execStatus === "failed" || execStatus === "interrupted";
@@ -382,6 +387,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                 {session.title || session.topic}
               </h1>
               {renderContextBadge()}
+              {teachPhase && <PhaseChip phase={teachPhase} />}
             </div>
 
             <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5">
@@ -446,21 +452,32 @@ export default function ChatPage({ params }: ChatPageProps) {
             onClose={() => setShowDemo(false)}
           />
         )}
-        {session.messages.length === 0 ? (
+        {transcript.length === 0 ? (
           <div className="py-16 text-center text-muted-foreground font-prose text-base">
             {t.lessonStarting}
           </div>
         ) : (
-          session.messages.map((message) => {
-            const isUser = message.role === "user";
-
-            if (isUser) {
+          transcript.map((item) => {
+            if (item.type === "divider") return <PhaseDivider key={item.key} phase={item.phase} />;
+            if (item.type === "probe_done") return <ProbeDoneCard key={item.key} assessment={item.assessment} />;
+            if (item.type === "answer") return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
+            if (item.type === "pending") {
               return (
-                <div
-                  key={message.id}
-                  className="flex justify-end my-2"
-                >
-                  <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm">
+                <QuestionDock
+                  key={item.key}
+                  quiz={item.quiz}
+                  sessionId={session.id}
+                  onAnswerSubmitted={() => {
+                    void fetchSessionData();
+                  }}
+                />
+              );
+            }
+            const message = item.message;
+            if (message.role === "user") {
+              return (
+                <div key={item.key} className="flex justify-end my-2">
+                  <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm whitespace-pre-wrap">
                     <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
                       {t.you}
                     </span>
@@ -472,19 +489,11 @@ export default function ChatPage({ params }: ChatPageProps) {
 
             // Assistant message: Render editorial whiteboard prose with KaTeX and Citations
             return (
-              <div
-                key={message.id}
-                className="my-3 flex flex-col gap-2"
-              >
+              <div key={item.key} className="my-3 flex flex-col gap-2">
                 <div className="flex items-center justify-between text-[11px] font-ui text-muted-foreground border-b border-accent pb-1 select-none">
                   <span className="tracking-wider uppercase font-semibold">
                     {t.teacherHarness}
                   </span>
-                  {message.phase && (
-                    <span className="capitalize text-[10px] px-1.5 py-0.2 bg-card border border-accent rounded">
-                      {t.phase(message.phase)}
-                    </span>
-                  )}
                 </div>
 
                 <LessonProse
@@ -495,19 +504,6 @@ export default function ChatPage({ params }: ChatPageProps) {
               </div>
             );
           })
-        )}
-
-        {/* 3. QuestionDock (If there is a pending quiz) */}
-        {session.pending_quiz && (
-          <div className="my-4">
-            <QuestionDock
-              quiz={session.pending_quiz}
-              sessionId={session.id}
-              onAnswerSubmitted={(result) => {
-                void fetchSessionData();
-              }}
-            />
-          </div>
         )}
 
         <div ref={messagesEndRef} />
