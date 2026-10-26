@@ -53,6 +53,19 @@ class SessionService:
         self.state = state
         self.locks: dict[str, asyncio.Lock] = {}
         self.tasks: dict[str, asyncio.Task] = {}
+        # In-flight assistant text per session: [message_id, text, flushed_length].
+        self.streaming: dict[str, list] = {}
+
+    async def flush_streaming(self, session_id: str) -> None:
+        """Persist text streamed so far before a tool changes the plan state.
+
+        Lesson-note sections are filed by the plan node current at flush time; without this,
+        prose written right before plan_advance/pose_quiz could land under the next node.
+        """
+        entry = self.streaming.get(session_id)
+        if entry and entry[1] and len(entry[1]) != entry[2]:
+            entry[2] = len(entry[1])
+            await self._flush(session_id, entry[0], entry[1])
 
     def lock(self, session_id: str) -> asyncio.Lock:
         return self.locks.setdefault(session_id, asyncio.Lock())
@@ -156,6 +169,7 @@ class SessionService:
         return str(matches[0].relative_to(self.state.vault_path))
 
     async def pose(self, session_id: str, quiz: QuizPayload):
+        await self.flush_streaming(session_id)
         async with self.lock(session_id):
             session = self.get(session_id)
             if session.pending_quiz:
@@ -276,6 +290,7 @@ class SessionService:
             session.answers[qid].mode = mode
 
     async def set_plan(self, session_id: str, plan: PlanDag):
+        await self.flush_streaming(session_id)
         async with self.lock(session_id):
             session = self.get(session_id)
             if session.phase == "completed":
@@ -298,6 +313,7 @@ class SessionService:
             return plan.model_dump()
 
     async def advance(self, session_id, node_id, status):
+        await self.flush_streaming(session_id)
         async with self.lock(session_id):
             session = self.get(session_id)
             node = next((n for n in session.plan.nodes if n.id == node_id), None)
@@ -382,12 +398,16 @@ class SessionService:
             message_id = f"msg-{uuid4().hex}"
             text = ""
             last_flush = 0.0
+            streaming = self.streaming[session_id] = [message_id, "", 0]
             async for chunk in stream:
                 text += chunk
+                streaming[1] = text
                 current_time = asyncio.get_running_loop().time()
                 if current_time - last_flush >= 0.2:
+                    streaming[2] = len(text)
                     await self._flush(session_id, message_id, text)
                     last_flush = current_time
+            self.streaming.pop(session_id, None)
             if text:
                 await self._flush(session_id, message_id, text)
             session = self.get(session_id)
@@ -408,6 +428,7 @@ class SessionService:
             session.error = self.state.redact(str(exc))
             self.save(session)
         finally:
+            self.streaming.pop(session_id, None)
             if completed:
                 await self._release_runtime(session_id)
 
