@@ -6,16 +6,35 @@ import json
 import logging
 import re
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from learnharness.core.calibration import evaluate_calibration, is_mastery_evidence
+from learnharness.core.calibration import (
+    apply_grade,
+    compact_answer,
+    evaluate_calibration,
+    is_mastery_evidence,
+    submission_matches,
+)
 from learnharness.core.contracts.config import EngineKind
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
-from learnharness.core.contracts.session import NodeSpan, PlanDag, SessionMessage, SessionRecord
+from learnharness.core.contracts.session import (
+    LEGACY_PHASES,
+    NodeSpan,
+    PlanDag,
+    ProbeAssessment,
+    SessionMessage,
+    SessionRecord,
+)
 from learnharness.core.events import SseEventType
+from learnharness.core.plan_mermaid import (
+    STICKY_STATUSES,
+    PlanSyntaxError,
+    derive_plan_statuses,
+    mermaid_to_plan_nodes,
+)
 from learnharness.engines.cli_protocol import EngineError
-from learnharness.prompts.loader import build_system_prompt
+from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
     append_quiz_log,
     append_session_event,
@@ -43,7 +62,22 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-TURN_RULES = "Use pose_quiz for every graded question; never put a quiz in prose. Initialize a valid plan with plan_init after diagnosis. Use plan_advance after checks. Do not invent citations. If prior answers exist, react to their calibration before advancing. PRACTICE gives one hint at a time, never the solution."
+TURN_RULES = (
+    "Every question goes through a question tool, never in prose, one per turn: probe/recall while "
+    "diagnosing, then exactly one probe_done; after it, plan_init (mermaid), present the plan and end "
+    "the turn; then quiz/explain with type predict|check and a plan node_id; ask_user_question for "
+    "anything ungraded. Grade every recall/explain answer with grade_recall before commenting on it. "
+    "Use plan_advance (mastered | needs_review) after checks. Do not invent citations. If prior answers "
+    "exist, react to their calibration before advancing. PRACTICE gives one hint at a time, never the "
+    "solution."
+)
+
+
+def prompt_family(session: SessionRecord) -> str:
+    """Which prompt set the session needs now: ``prober``, ``teacher`` or ``practice``."""
+    if session.mode == "PRACTICE":
+        return "practice"
+    return "prober" if session.phase == "probing" else "teacher"
 
 
 class SessionConflict(ValueError):
@@ -62,7 +96,7 @@ class SessionService:
         """Persist text streamed so far before a tool changes the plan state.
 
         Lesson-note sections are filed by the plan node current at flush time; without this,
-        prose written right before plan_advance/pose_quiz could land under the next node.
+        prose written right before plan_advance/quiz could land under the next node.
         """
         entry = self.streaming.get(session_id)
         if entry and entry[1] and len(entry[1]) != entry[2]:
@@ -78,7 +112,20 @@ class SessionService:
             raise KeyError(session_id)
         if session.pending_quiz_id and not session.pending_quiz:
             session.recovery_required = True
+        self._normalize_phase(session)
         return session
+
+    @staticmethod
+    def _normalize_phase(session: SessionRecord) -> None:
+        """Map pre-Fase 8 phases onto probing -> planning -> teaching (waiting lives in execution_status)."""
+        if session.mode != "TEACH" or session.phase == "completed":
+            return
+        if session.phase in LEGACY_PHASES:
+            session.phase = "teaching"
+        if (session.phase == "teaching" and not session.plan.nodes and session.assessment is None
+                and session.context_kind != "drawing_review"):
+            # Old answer() flipped a mid-diagnosis session to "teaching" after any answer.
+            session.phase = "probing"
 
     def save(self, session: SessionRecord) -> None:
         session.sequence += 1
@@ -170,24 +217,83 @@ class SessionService:
             raise ValueError("Source not found or ambiguous")
         return str(matches[0].relative_to(self.state.vault_path))
 
-    async def pose(self, session_id: str, quiz: QuizPayload):
+    def _guard_question(self, session: SessionRecord, quiz: QuizPayload) -> None:
+        """Phase/state rules for posing ``quiz``; refusals teach the model how to fix the call."""
+        if session.phase == "completed":
+            raise SessionConflict("The session is completed; no more questions.")
+        if quiz.mode == "PROBE":
+            if session.phase != "probing":
+                raise SessionConflict(
+                    "probe/recall are diagnosis tools and the diagnosis is over (probe_done was called); "
+                    "ask teaching questions with quiz/explain and a plan node_id."
+                )
+            return
+        if quiz.kind == "ask" or quiz.mode is None:
+            return
+        # quiz / explain with type predict|check
+        if session.context_kind == "drawing_review" and not session.plan.nodes:
+            quiz.node_id = None  # A drawing review follow-up has no plan to anchor to.
+            return
+        if session.phase == "probing":
+            raise SessionConflict(
+                "Still diagnosing: use probe/recall (no node_id), then call probe_done; "
+                "teaching questions come after plan_init."
+            )
+        if not session.plan.nodes:
+            raise SessionConflict("Call plan_init before teaching questions (quiz/explain).")
+        ids = [n.id for n in session.plan.nodes]
+        if quiz.node_id not in ids:
+            raise SessionConflict(f"Unknown node_id {quiz.node_id!r}; use one of: {', '.join(ids)}.")
+
+    def _question_node_ids(self, session: SessionRecord) -> list[str | None]:
+        """Node ids of quiz/explain questions posed so far, oldest first (pending last)."""
+        asked = [a.node_id for a in session.answers.values() if a.kind in ("quiz", "explain")]
+        if session.pending_quiz and session.pending_quiz.kind in ("quiz", "explain"):
+            asked.append(session.pending_quiz.node_id)
+        return asked
+
+    def _derive_statuses(self, session: SessionRecord) -> None:
+        """Persist derived current/visited/pending (sticky mastered/needs_review win)."""
+        statuses = derive_plan_statuses(session.plan.nodes, self._question_node_ids(session))
+        for node in session.plan.nodes:
+            node.status = statuses[node.id]
+
+    async def pose(self, session_id: str, quiz: QuizPayload) -> dict[str, Any]:
+        """Persist ``quiz`` as pending, open the dock and block until the learner answers.
+
+        Returns the compact answer for the model (``core.calibration.compact_answer``).
+        """
         await self.flush_streaming(session_id)
         async with self.lock(session_id):
             session = self.get(session_id)
             if session.pending_quiz:
-                if session.pending_quiz.model_dump(exclude={"quiz_id", "created_at"}) != quiz.model_dump(exclude={"quiz_id", "created_at"}):
-                    raise SessionConflict("A different quiz is already pending")
-                quiz = session.pending_quiz
+                if session.pending_quiz.model_dump(exclude={"quiz_id", "created_at", "session_id", "topic"}) != quiz.model_dump(exclude={"quiz_id", "created_at", "session_id", "topic"}):
+                    raise SessionConflict("A question is still pending; wait for the learner's answer before asking another.")
+                quiz = session.pending_quiz  # Idempotent re-pose (e.g. a reconnecting tool call).
+            else:
+                self._guard_question(session, quiz)
             quiz.session_id = session_id
+            quiz.created_at = quiz.created_at or now()
+            if not quiz.topic:
+                node = next((n for n in session.plan.nodes if n.id == quiz.node_id), None)
+                quiz.topic = node.label if node else session.title
             session.pending_quiz = quiz
             session.pending_quiz_id = quiz.quiz_id
-            session.phase = "awaiting_answer"
+            if session.phase == "planning" and quiz.node_id and quiz.kind in ("quiz", "explain"):
+                session.phase = "teaching"  # The first node-tagged question is the seam.
+            self._derive_statuses(session)
             session.execution_status = "waiting"
             # Register before notifying; a very fast browser answer cannot race this future.
             future = self.state.dock_registry.open_dock(session_id, quiz)
             self.save(session)
             self.state.sse_hub.broadcast(SseEventType.DOCK_OPENED, {"session_id": session_id})
-        return (await future).model_dump()
+            if session.plan.nodes:
+                self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
+        await future
+        result = self.get(session_id).answers.get(quiz.quiz_id)
+        if result is None:
+            raise SessionConflict("The question was closed without an answer")
+        return compact_answer(result)
 
     async def open_quiz(self, session_id: str, quiz: QuizPayload, *, replace_pending: bool = False) -> QuizPayload:
         """Persist ``quiz`` as pending and open the dock without awaiting the answer.
@@ -212,37 +318,39 @@ class SessionService:
             session.pending_quiz = quiz
             session.pending_quiz_id = quiz.quiz_id
             session.recovery_required = False
-            session.phase = "awaiting_answer"
             session.execution_status = "waiting"
             self.save(session)
             self.state.sse_hub.broadcast(SseEventType.DOCK_OPENED, {"session_id": session_id})
         return quiz
+
+    def _auto_master(self, session: SessionRecord, result: CalibrationResult) -> None:
+        """CHECK evidence masters its node when every prerequisite is already mastered."""
+        if not result.node_id or not is_mastery_evidence(result, result.node_id):
+            return
+        target = next((n for n in session.plan.nodes if n.id == result.node_id), None)
+        if target and all(any(n.id == dep and n.status == "mastered" for n in session.plan.nodes) for dep in target.depends_on):
+            target.status = "mastered"
 
     async def answer(self, submission: QuizSubmission) -> CalibrationResult:
         async with self.lock(submission.session_id):
             session = self.get(submission.session_id)
             old = session.answers.get(submission.quiz_id)
             if old:
-                if (old.chosen_index, old.confidence, old.is_dont_know, old.learner_thinking) != (submission.chosen_index, submission.confidence, submission.is_dont_know, submission.learner_thinking):
+                if not submission_matches(old, submission):
                     raise SessionConflict("Quiz already answered with different input")
                 return old
             quiz = session.pending_quiz
             if not quiz or quiz.quiz_id != submission.quiz_id:
                 raise SessionConflict("Quiz does not match the persisted pending question")
-            if submission.chosen_index is not None and not 0 <= submission.chosen_index < len(quiz.choices):
-                raise ValueError("Choice index is out of bounds")
             result = evaluate_calibration(submission, quiz)
             session.answers[quiz.quiz_id] = result
             session.pending_quiz = None
             session.pending_quiz_id = None
             session.recovery_required = False
-            session.phase = "teaching"
             session.execution_status = "running" if self.is_running(session.id) else "idle"
-            session.messages.append(SessionMessage(id=f"answer-{quiz.quiz_id}", role="user", content=json.dumps({"quiz": quiz.question, **result.model_dump()}, ensure_ascii=False), created_at=now(), quiz_id=quiz.quiz_id))
-            if quiz.mode == "CHECK" and result.calibration_band == "calibrated_mastery" and quiz.node_id:
-                target = next((n for n in session.plan.nodes if n.id == quiz.node_id), None)
-                if target and all(any(n.id == dep and n.status == "mastered" for n in session.plan.nodes) for dep in target.depends_on):
-                    target.status = "mastered"
+            session.messages.append(SessionMessage(id=f"answer-{quiz.quiz_id}", role="user", content=json.dumps({"quiz": quiz.question, **compact_answer(result)}, ensure_ascii=False), created_at=now(), quiz_id=quiz.quiz_id))
+            self._auto_master(session, result)
+            self._derive_statuses(session)
             self.save(session)  # Authoritative commit precedes the derived quiz-log.
             self._ensure_quiz_logs(session)
             pending = self.state.dock_registry.get_pending_quiz(session.id)
@@ -253,11 +361,143 @@ class SessionService:
             self.schedule(session.id)
         return result
 
+    async def grade(self, session_id: str, question_id: str, verdict: str, feedback: str) -> dict[str, Any]:
+        """Record the model's grade of an explain/recall answer (``grade_recall``)."""
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            result = session.answers.get(question_id)
+            if result is None:
+                pending = session.pending_quiz and session.pending_quiz.quiz_id == question_id
+                raise SessionConflict(
+                    "That question has not been answered yet." if pending
+                    else f"Unknown question_id {question_id!r}; grade the question_id returned by explain/recall."
+                )
+            if result.kind != "explain":
+                raise SessionConflict("grade_recall only grades explain/recall answers; quiz answers are graded automatically.")
+            if result.grade is not None:
+                if (result.grade, result.grade_feedback) == (verdict, feedback):
+                    return {"ok": True, "question_id": question_id, "grade": verdict}
+                raise SessionConflict("This answer was already graded.")
+            graded = apply_grade(result, verdict, feedback)  # type: ignore[arg-type]
+            session.answers[question_id] = graded
+            self._auto_master(session, graded)
+            self._derive_statuses(session)
+            self.save(session)
+            self._ensure_quiz_logs(session)
+        return {"ok": True, "question_id": question_id, "grade": verdict}
+
+    async def probe_done(self, session_id: str, assessment: ProbeAssessment) -> dict[str, Any]:
+        """Close the diagnosis: record the assessment, move to planning and arm the handoff."""
+        await self.flush_streaming(session_id)
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if session.assessment is not None or session.phase != "probing":
+                raise SessionConflict("probe_done was already called; the diagnosis is closed.")
+            if session.pending_quiz:
+                raise SessionConflict("A question is still pending; wait for the answer before probe_done.")
+            assessment.created_at = assessment.created_at or now()
+            session.assessment = assessment
+            session.phase = "planning"
+            session.handoff_pending = True
+            self.save(session)
+        return {
+            "ok": True,
+            "next": "Diagnosis recorded. Say one closing sentence and end your turn; "
+                    "planning starts automatically in the next turn.",
+        }
+
+    async def init_plan(self, session_id: str, mermaid: str, approach_prose: str = "",
+                        node_details: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+        """``plan_init``: (re)write the plan from mermaid; kept ids keep their progress."""
+        session = self.get(session_id)
+        if session.phase == "probing":
+            raise SessionConflict("Call probe_done before plan_init: the diagnosis comes first.")
+        if session.phase == "completed":
+            raise SessionConflict("Session is completed")
+        try:
+            nodes = mermaid_to_plan_nodes(mermaid, session.plan.nodes, node_details)
+        except PlanSyntaxError:
+            raise
+        except ValueError as exc:  # Malformed node_details fields.
+            raise PlanSyntaxError([f"node_details: {exc}"]) from exc
+        plan = PlanDag(approach_prose=approach_prose, nodes=nodes, updated_at=now())
+        await self.set_plan(session_id, plan)
+        return {
+            "ok": True,
+            "node_ids": [n.id for n in nodes],
+            "reminder": "These are the only valid node_id values for quiz/explain from now on. "
+                        "Present the plan in prose and end your turn; do not teach yet."
+            if self.get(session_id).phase == "planning" else
+            "Plan updated; these are the valid node_id values.",
+        }
+
+    async def set_plan(self, session_id: str, plan: PlanDag):
+        await self.flush_streaming(session_id)
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if session.phase == "completed":
+                raise SessionConflict("Session is completed")
+            if session.source_path:
+                source = self.source_text(session)
+                for node in plan.nodes:
+                    for ref in plan_paragraph_refs(node):
+                        if not re.search(rf"\^{re.escape(ref)}(?![\w-])", source):
+                            raise ValueError(f"Unknown source paragraph: {ref}")
+            sticky = {n.id: n.status for n in session.plan.nodes if n.status in STICKY_STATUSES}
+            for node in plan.nodes:  # Ids are permanent: a re-plan keeps their progress.
+                if node.id in sticky and node.status not in STICKY_STATUSES:
+                    node.status = sticky[node.id]
+            session.plan = plan
+            self._derive_statuses(session)
+            if plan.nodes and session.handoff_pending:
+                session.handoff_pending = False  # The teacher's planning turn did its job.
+            self.save(session)
+            self._refresh_lesson_note(session)
+            self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
+            return plan.model_dump()
+
+    async def advance(self, session_id, node_id, status):
+        await self.flush_streaming(session_id)
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if status not in ("mastered", "needs_review"):
+                raise SessionConflict("status must be 'mastered' or 'needs_review'; 'current' is derived from your questions.")
+            if session.phase != "teaching":
+                raise SessionConflict("plan_advance is for teaching: plan with plan_init, then ask quiz/explain with a node_id first.")
+            node = next((n for n in session.plan.nodes if n.id == node_id), None)
+            if node is None:
+                raise SessionConflict(f"Unknown node_id {node_id!r}; use one of: {', '.join(n.id for n in session.plan.nodes)}.")
+            if status == "mastered" and any(not any(n.id == dep and n.status == "mastered" for n in session.plan.nodes) for dep in node.depends_on):
+                raise SessionConflict("Prerequisites are not mastered")
+            if status == "mastered":
+                self._recover_answer_modes(session)
+            if status == "mastered" and not any(is_mastery_evidence(a, node_id) for a in session.answers.values()):
+                raise SessionConflict("Mastery requires a calibrated check (a CHECK quiz answered correctly with high confidence, or a CHECK explain graded correct)")
+            node.status = status
+            self._derive_statuses(session)
+            session.plan.updated_at = now()
+            completed = bool(session.plan.nodes) and all(n.status == "mastered" for n in session.plan.nodes)
+            if completed:
+                session.phase = "completed"
+                session.execution_status = "completed"
+            self.save(session)
+            self._refresh_lesson_note(session)
+            self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
+        if status == "mastered":
+            self.state.jobs.extraction(session, node_id)
+        if completed and session.track_item_id:
+            await self.state.tracks.complete(session.track_item_id)
+        return {
+            "ok": True, "node_id": node_id, "status": status, "phase": session.phase,
+            "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes],
+        }
+
     def _ensure_quiz_logs(self, session):
         from learnharness.vault.jsonl_store import load_quiz_logs
         existing = {(q.session_id, q.quiz_id) for q in load_quiz_logs(self.state.vault_path)}
         for answer in session.answers.values():
-            if (answer.session_id, answer.quiz_id) not in existing:
+            # Only graded answers are calibration evidence (ask / ungraded explain are not).
+            if answer.correct is not None and (answer.session_id, answer.quiz_id) not in existing:
                 append_quiz_log(self.state.vault_path, answer)
 
     def _recover_answer_modes(self, session: SessionRecord) -> None:
@@ -291,56 +531,6 @@ class SessionService:
         for qid, mode in modes.items():
             session.answers[qid].mode = mode
 
-    async def set_plan(self, session_id: str, plan: PlanDag):
-        await self.flush_streaming(session_id)
-        async with self.lock(session_id):
-            session = self.get(session_id)
-            if session.phase == "completed":
-                raise SessionConflict("Session is completed")
-            if session.plan.nodes:
-                if session.plan.model_dump(exclude={"updated_at"}) == plan.model_dump(exclude={"updated_at"}):
-                    return session.plan.model_dump()
-                raise SessionConflict("An initialized plan cannot be replaced")
-            if session.source_path:
-                source = self.source_text(session)
-                for node in plan.nodes:
-                    for ref in plan_paragraph_refs(node):
-                        if not re.search(rf"\^{re.escape(ref)}(?![\w-])", source):
-                            raise ValueError(f"Unknown source paragraph: {ref}")
-            session.plan = plan
-            session.phase = "teaching"
-            self.save(session)
-            self._refresh_lesson_note(session)
-            self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
-            return plan.model_dump()
-
-    async def advance(self, session_id, node_id, status):
-        await self.flush_streaming(session_id)
-        async with self.lock(session_id):
-            session = self.get(session_id)
-            node = next((n for n in session.plan.nodes if n.id == node_id), None)
-            if node is None:
-                raise ValueError("Unknown plan node")
-            if status in ("current", "mastered") and any(not any(n.id == dep and n.status == "mastered" for n in session.plan.nodes) for dep in node.depends_on):
-                raise SessionConflict("Prerequisites are not mastered")
-            if status == "mastered":
-                self._recover_answer_modes(session)
-            if status == "mastered" and not any(is_mastery_evidence(a, node_id) for a in session.answers.values()):
-                raise SessionConflict("Mastery requires a calibrated check")
-            node.status = status
-            session.plan.updated_at = now()
-            completed = bool(session.plan.nodes) and all(n.status == "mastered" for n in session.plan.nodes)
-            if completed:
-                session.phase = "completed"
-                session.execution_status = "completed"
-            self.save(session)
-            self._refresh_lesson_note(session)
-        if status == "mastered":
-            self.state.jobs.extraction(session, node_id)
-        if completed and session.track_item_id:
-            await self.state.tracks.complete(session.track_item_id)
-        return session.plan.model_dump()
-
     def source_text(self, session):
         if not session.source_path:
             return ""
@@ -358,15 +548,30 @@ class SessionService:
     def schedule(self, session_id):
         if self.is_running(session_id):
             return
-        self.tasks[session_id] = asyncio.create_task(self.run(session_id))
+        self.tasks[session_id] = asyncio.create_task(self._drive(session_id))
 
-    async def run(self, session_id):
+    async def _drive(self, session_id):
+        """Run turns back to back while one asks for a follow-up (the post-diagnosis handoff)."""
+        while await self.run(session_id):
+            pass
+
+    @staticmethod
+    def _handoff_due(session: SessionRecord) -> bool:
+        return (session.handoff_pending and session.phase == "planning"
+                and not session.plan.nodes and not session.pending_quiz)
+
+    async def run(self, session_id) -> bool:
+        """Execute one agent turn. Returns True when a follow-up handoff turn is due."""
         completed = False
+        follow_up = False
         try:
             session = self.get(session_id)
             if session.pending_quiz or session.recovery_required or session.phase == "completed":
                 completed = session.phase == "completed"
-                return
+                return False
+            # A turn that starts with the handoff armed is the teacher's planning turn.
+            handoff_run = self._handoff_due(session)
+            family = prompt_family(session)
             session.execution_id = uuid4().hex
             session.execution_status = "running"
             session.error = None
@@ -395,17 +600,36 @@ class SessionService:
             # CLI engines reach the tools through the bound MCP server; only in-process
             # engines receive callables directly.
             tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
-            context = json.dumps({"topic": session.title, "plan": session.plan.model_dump(), "answers": [a.model_dump() for a in session.answers.values()], "track": config.track.model_dump(mode="json") if session.track_item_id else None}, ensure_ascii=False)
-            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase, extra_context=context)
+            context = json.dumps({
+                "topic": session.title, "phase": session.phase,
+                "assessment": session.assessment.model_dump(mode="json") if session.assessment else None,
+                "plan": session.plan.model_dump(),
+                "answers": [a.model_dump(mode="json") for a in session.answers.values()],
+                "track": config.track.model_dump(mode="json") if session.track_item_id else None,
+            }, ensure_ascii=False)
+            overrides = load_overrides(self.state.vault_path, config)
+            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
+                                         extra_context=context, overrides=overrides)
             system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
+            handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
                 # with a compact history) and per turn only what is new.
-                history, prompt = self._persistent_turn(session)
+                history, prompt = self._persistent_turn(session, handoff=handoff)
+                if session.prompt_phase is not None and session.prompt_phase != family:
+                    # A live process still holds the previous phase's rules (prober -> teacher).
+                    prompt = ("UPDATED INSTRUCTIONS (they replace your previous system instructions):\n"
+                              + system + "\n" + TURN_RULES + "\n\n" + prompt)
+                if session.prompt_phase != family:
+                    current = self.get(session_id)
+                    current.prompt_phase = family
+                    self.save(current)
                 stream = engine.stream_turn(prompt, session_id, history=history, slot=config.slots.strong, tools=tools, system_instruction=system + "\n" + TURN_RULES)
             else:
                 history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
                 prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + TURN_RULES
+                if handoff:
+                    prompt += "\n\nNOW:\n" + handoff
                 stream = engine.stream_turn(prompt, session_id, slot=config.slots.strong, tools=tools)
             message_id = f"msg-{uuid4().hex}"
             text = ""
@@ -423,8 +647,11 @@ class SessionService:
             if text:
                 await self._flush(session_id, message_id, text)
             session = self.get(session_id)
+            if handoff_run:
+                session.handoff_pending = False  # One planning turn; a retry needs the learner.
+            follow_up = not handoff_run and self._handoff_due(session)
             if session.phase != "completed":
-                session.execution_status = "waiting" if session.pending_quiz else "idle"
+                session.execution_status = "waiting" if session.pending_quiz else ("queued" if follow_up else "idle")
             completed = session.phase == "completed"
             self.save(session)
         except asyncio.CancelledError:
@@ -443,19 +670,23 @@ class SessionService:
             self.streaming.pop(session_id, None)
             if completed:
                 await self._release_runtime(session_id)
+        return follow_up
 
     @staticmethod
-    def _persistent_turn(session):
+    def _persistent_turn(session, handoff: str | None = None):
         """Split persisted messages into ``(history, new-content prompt)``.
 
         New content is everything after the last assistant message (quiz answers, learner
-        input); the plan status travels each turn because answers can master nodes.
+        input); the plan status travels each turn because answers can master nodes. The
+        post-diagnosis ``handoff`` instruction, when given, is the turn's request.
         """
         messages = list(session.messages)
         last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
         history, new = messages[: last + 1], messages[last + 1:]
         state = json.dumps({"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}, ensure_ascii=False)
-        if new:
+        if handoff:
+            body = handoff
+        elif new:
             body = "\n\n".join(f"{m.role}: {m.content}" for m in new)
         elif messages:
             body = "Continue the session from where it stopped."

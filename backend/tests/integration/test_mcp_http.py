@@ -24,7 +24,8 @@ from learnharness.api.app import create_app
 from learnharness.api.state import AppState
 from learnharness.vault.bootstrap import bootstrap_vault, load_config, save_config
 
-EXPECTED_TOOLS = {"pose_quiz", "plan_init", "plan_advance", "track_foundation", "spawn_demo"}
+EXPECTED_TOOLS = {"probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
+                  "grade_recall", "plan_advance", "track_foundation", "spawn_demo"}
 
 
 class IdleEngine:
@@ -103,11 +104,29 @@ async def test_missing_or_unknown_token_is_rejected(server: dict[str, Any]) -> N
     assert bad_token.status_code == 401
 
 
-async def test_valid_token_lists_the_five_tools(server: dict[str, Any]) -> None:
+async def test_valid_token_lists_the_harness_tools(server: dict[str, Any]) -> None:
     _, token = await _session_with_token(server["state"])
     async with _client(server["mcp"], token) as client:
         tools = await client.list_tools()
     assert {t.name for t in tools} == EXPECTED_TOOLS
+    from learnharness.engines.gemini_acp import HARNESS_TOOLS
+    from learnharness.mcp.runtime_server import HARNESS_TOOL_NAMES
+    assert HARNESS_TOOLS == HARNESS_TOOL_NAMES == EXPECTED_TOOLS  # ACP permission allow-list stays in sync.
+    probe = next(t for t in tools if t.name == "probe")
+    properties = list(probe.input_schema["properties"])
+    assert properties.index("explanation") < properties.index("correct")  # Why before the answer.
+    assert set(probe.input_schema["required"]) == {"question", "options", "explanation", "correct"}
+
+
+async def test_refusal_reaches_the_model_as_a_corrective_tool_error(server: dict[str, Any]) -> None:
+    _, token = await _session_with_token(server["state"])
+    arguments = {"type": "check", "node_id": "x", "question": "?", "options": ["a", "b"],
+                 "explanation": "e", "correct": "A"}
+    async with _client(server["mcp"], token) as client:
+        with pytest.raises(ToolError, match="probe/recall"):
+            await client.call_tool("quiz", arguments)
+        with pytest.raises(ToolError, match="probe_done before plan_init"):
+            await client.call_tool("plan_init", {"mermaid": "graph TD\n  a[A]"})
 
 
 async def test_stale_token_cannot_call_tools(server: dict[str, Any]) -> None:
@@ -118,33 +137,36 @@ async def test_stale_token_cannot_call_tools(server: dict[str, Any]) -> None:
     state.sessions.save(session)
     async with _client(server["mcp"], token) as client:
         with pytest.raises(ToolError, match="stale"):
-            await client.call_tool("plan_init", {"approach_prose": "x", "nodes": [{"id": "a", "label": "A"}]})
+            await client.call_tool("plan_init", {"approach_prose": "x", "mermaid": "graph TD\n  a[A]"})
     assert state.sessions.get(session_id).plan.nodes == []
 
 
-async def test_pose_quiz_blocks_until_rest_answer(server: dict[str, Any]) -> None:
+async def test_probe_blocks_until_rest_answer(server: dict[str, Any]) -> None:
     state = server["state"]
     session_id, token = await _session_with_token(state)
     arguments = {
-        "mode": "CHECK", "topic": "Atenção", "question": "Softmax normaliza o quê?",
-        "choices": [{"value": "a", "label": "Os scores"}, {"value": "b", "label": "Os pesos de V"}],
-        "correct_index": 0, "explanation": "Softmax normaliza os scores QK^T.",
+        "question": "Softmax normaliza o quê?",
+        # Models sometimes JSON-encode lists; the tool heals it.
+        "options": '[{"value": "a", "label": "Os scores"}, {"value": "b", "label": "Os pesos de V"}]',
+        "explanation": "Softmax normaliza os scores QK^T.", "correct": "Os scores",
     }
     async with _client(server["mcp"], token) as client, httpx.AsyncClient(base_url=server["base"]) as http:
-        call = asyncio.create_task(client.call_tool("pose_quiz", arguments))
+        call = asyncio.create_task(client.call_tool("probe", arguments))
 
         async def pending():
             body = (await http.get(f"/api/chats/{session_id}")).json()
             return body["pending_quiz"]
 
         quiz = await _wait_until(pending)
-        assert not call.done(), "pose_quiz must block until the learner answers"
+        assert not call.done(), "probe must block until the learner answers"
+        assert quiz["mode"] == "PROBE" and "explanation" not in quiz
 
-        answer = await http.post(f"/api/chats/{session_id}/answer", json={"quiz_id": quiz["quiz_id"], "chosen_index": 0, "confidence": 85})
+        answer = await http.post(f"/api/chats/{session_id}/answer", json={"quiz_id": quiz["quiz_id"], "chosen_indices": [0], "confidence": 85})
         assert answer.status_code == 200
         result = (await asyncio.wait_for(call, timeout=5)).structured_content
 
     assert result["correct"] is True
     assert result["confidence"] == 85
     assert result["calibration_band"] == "calibrated_mastery"
-    assert result["quiz_id"] == quiz["quiz_id"]
+    assert result["question_id"] == quiz["quiz_id"]
+    assert result["answers"] == [{"index": 0, "label": "Os scores"}]

@@ -2,7 +2,7 @@
 
 Runs against isolated tmp_path Vaults (never the user's Obsidian Vault) with a scripted
 FakeEngine injected through ``AppState(engine_factory=...)``. The server never invents
-pedagogical content: quizzes appear only because the engine calls ``pose_quiz``.
+pedagogical content: quizzes appear only because the engine calls ``quiz``/``probe``.
 """
 
 from __future__ import annotations
@@ -51,16 +51,15 @@ def test_graph_snapshot(client: TestClient) -> None:
 
 
 TOKENS_QUIZ = {
-    "mode": "PREDICTION",
-    "topic": "Tokens e Embeddings",
+    "type": "predict",
     "question": "Como a latência de decodificação cresce com o tamanho do contexto sem KV cache?",
-    "choices": [
+    "options": [
         {"value": "a", "label": "Linearmente, sem gargalo"},
         {"value": "b", "label": "Constante"},
         {"value": "c", "label": "Quadraticamente no total da sequência"},
     ],
-    "correct_index": 2,
     "explanation": "Cada passo recomputa a atenção sobre todos os tokens anteriores.",
+    "correct": "c",
     "node_id": "node-tokens",
 }
 
@@ -73,12 +72,13 @@ def _get_chat(client: TestClient, session_id: str) -> dict:
 
 def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: FakeEngine,
                                              configured_vault: Path) -> None:
-    """Engine-driven quiz: plan_init -> pose_quiz (blocks) -> answer -> illusion_of_competence."""
+    """Engine-driven quiz: probe_done -> plan_init -> quiz (blocks) -> answer -> illusion_of_competence."""
     fake_engine.script_turn(
         "Vamos diagnosticar o que você já sabe.",
+        tool("probe_done", strands=[{"strand": "atenção", "assessment": "Sabe o que é um token; não sabe o custo."}]),
         tool("plan_init", approach_prose="Diagnóstico antes da formalização.",
-             nodes=[{"id": "node-tokens", "label": "Custo de decodificação", "kind": "goal"}]),
-        tool("pose_quiz", **TOKENS_QUIZ),
+             mermaid="graph TD\n  node-tokens[Custo de decodificação]"),
+        tool("quiz", **TOKENS_QUIZ),
         "Vamos ver um contraexemplo.",
     )
     fake_engine.script_turn("O limite assintótico vem da soma 1 + 2 + ... + N.")
@@ -89,7 +89,7 @@ def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: Fa
     session_id = create_res.json()["id"]
     assert create_res.json()["topic"] == "Tokens e Embeddings"
 
-    # 2. Wait until the engine's pose_quiz call is persisted and exposed.
+    # 2. Wait until the engine's quiz call is persisted and exposed.
     session_data = poll_until(lambda: _get_chat(client, session_id), lambda d: d["pending_quiz"] is not None)
     assert session_data["id"] == session_id
     assert session_data["status"] == "waiting_quiz"
@@ -98,7 +98,12 @@ def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: Fa
     assert quiz["question"] == TOKENS_QUIZ["question"]
     assert quiz["plan_node_id"] == "node-tokens"
     assert len(quiz["options"]) == 3
-    assert "correct_index" not in quiz  # The answer key never reaches the browser.
+    # The answer key never reaches the browser.
+    assert not {"correct_index", "correct_indices", "committed_answer", "explanation"} & set(quiz)
+    assert (quiz["kind"], quiz["mode"], quiz["collapsed"]) == ("quiz", "PREDICTION", False)
+    assert session_data["phase"] == "teaching"
+    assert session_data["assessment"]["strands"][0]["strand"] == "atenção"
+    assert session_data["plan"]["nodes"][0]["status"] == "current"
 
     # 3. Wrong answer with HIGH confidence -> illusion_of_competence.
     ans_res = client.post(
@@ -119,7 +124,7 @@ def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: Fa
     after = poll_until(lambda: _get_chat(client, session_id),
                        lambda d: d["pending_quiz"] is None and d["execution_status"] == "idle")
     assert after["status"] == "active"
-    assert fake_engine.tool_results[-1][0] == "pose_quiz"
+    assert fake_engine.tool_results[-1][0] == "quiz"
     assert fake_engine.tool_results[-1][1]["calibration_band"] == "illusion_of_competence"
     assert any("contraexemplo" in m["content"] for m in after["messages"] if m["role"] == "assistant")
     quiz_log = (configured_vault / ".harness/quiz-log.jsonl").read_text(encoding="utf-8").splitlines()
@@ -141,7 +146,10 @@ def test_chats_teaching_flow_and_calibration(client: TestClient, fake_engine: Fa
                        lambda d: any("1 + 2" in m["content"] for m in d["messages"]))
     assert final["messages"][-1]["role"] == "assistant"
     assert len(fake_engine.stream_calls) == 2
-    assert "pose_quiz" in fake_engine.stream_calls[0]["tools"]
+    assert {"probe", "recall", "quiz", "explain", "probe_done"} <= set(fake_engine.stream_calls[0]["tools"])
+    answers = final["answers"]
+    assert answers[0]["chosen_indices"] == [0] and answers[0]["correct_indices"] == [2]
+    assert answers[0]["question"] == TOKENS_QUIZ["question"] and len(answers[0]["choices"]) == 3
 
 
 def test_chat_engine_failure_is_reported_not_masked(client: TestClient, fake_engine: FakeEngine) -> None:

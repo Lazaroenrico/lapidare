@@ -41,9 +41,11 @@ logger = logging.getLogger(__name__)
 
 ACP_PROTOCOL_VERSION = 1
 HARNESS_SERVER = "harness"
-HARNESS_TOOLS = frozenset(
-    {"pose_quiz", "plan_init", "plan_advance", "track_foundation", "spawn_demo"}
-)
+# Mirrors learnharness.mcp.runtime_server.HARNESS_TOOL_NAMES (asserted by tests).
+HARNESS_TOOLS = frozenset({
+    "probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
+    "grade_recall", "plan_advance", "track_foundation", "spawn_demo",
+})
 IDLE_CLOSE_SECONDS = 600
 CANCEL_GRACE_SECONDS = 2.0
 HISTORY_MAX_MESSAGES = 24

@@ -175,7 +175,7 @@ async def test_spawn_demo_tool_is_non_blocking_and_links_lesson(app_state, fake_
         return await original(**kwargs)
 
     fake_engine.run_structured = gated_run_structured  # type: ignore[method-assign]
-    spawn_demo = app_state.tool_functions(session.id)[4]
+    spawn_demo = {t.__name__: t for t in app_state.tool_functions(session.id)}["spawn_demo"]
     result = await asyncio.wait_for(spawn_demo("Produto Escalar Visual", "produto escalar"), timeout=1)
     assert result["status"] == "queued" and result["job_id"].startswith("job-")
     assert app_state.active_jobs[result["job_id"]]["kind"] == "demo_builder"

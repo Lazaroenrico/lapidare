@@ -1,6 +1,6 @@
 """End-to-end TEACH flow over the real FastAPI app with a scripted in-process engine.
 
-Covers: plan_init -> pose_quiz (blocks) -> REST answer -> quiz-log -> plan_advance(mastered)
+Covers: probe_done -> plan_init -> quiz (blocks) -> REST answer -> quiz-log -> plan_advance(mastered)
 -> extraction job -> Conceitos/ note, while Fontes/ stays byte-identical. Also covers the
 HTTP error mapping for an unconfigured vault and redaction of provider secrets.
 """
@@ -39,21 +39,20 @@ class ScriptedTeachEngine:
         if self.turns > 1:  # Sessions rescheduled after the scripted turn have nothing to add.
             return
         assert tools is not None, "inline engines must receive the bound tool callables"
-        pose_quiz, plan_init, plan_advance = tools[0], tools[1], tools[2]
+        by_name = {t.__name__: t for t in tools}
         yield "## Produto Escalar\n\nDefinição: soma dos produtos coordenada a coordenada.\n"
-        self.tool_results["plan"] = await plan_init(
+        self.tool_results["probe_done"] = await by_name["probe_done"](
+            [{"strand": "álgebra linear", "assessment": "Piso: vetores. Teto: produto escalar."}])
+        self.tool_results["plan"] = await by_name["plan_init"](
+            f"graph TD\n  dot[{CONCEPT_TITLE}] --> attn[Atenção]",
             "Primeiro o produto escalar, depois a atenção.",
-            [
-                {"id": "dot", "label": CONCEPT_TITLE, "kind": "unconditional_truth"},
-                {"id": "attn", "label": "Atenção", "kind": "goal", "depends_on": ["dot"]},
-            ],
         )
-        self.tool_results["quiz"] = await pose_quiz(
-            "CHECK", CONCEPT_TITLE, "Quanto vale (1,2)·(3,4)?",
+        self.tool_results["quiz"] = await by_name["quiz"](
+            "check", "dot", "Quanto vale (1,2)·(3,4)?",
             [{"value": "a", "label": "11"}, {"value": "b", "label": "10"}],
-            0, "1*3 + 2*4 = 11.", node_id="dot",
+            "1*3 + 2*4 = 11.", "a",
         )
-        self.tool_results["advance"] = await plan_advance("dot", "mastered")
+        self.tool_results["advance"] = await by_name["plan_advance"]("dot", "mastered")
         yield "Ótimo, você dominou o produto escalar.\n"
 
     async def run_structured(self, prompt, schema, slot=None, system_instruction=None):
@@ -161,7 +160,7 @@ async def _run_teach_flow(tmp_path: Path) -> dict[str, Any]:
 
     assert engine.tool_results["quiz"]["correct"] is True
     assert engine.tool_results["quiz"]["confidence"] == 85
-    assert {n["id"]: n["status"] for n in engine.tool_results["advance"]["nodes"]} == {"dot": "mastered", "attn": "pending"}
+    assert {n["id"]: n["status"] for n in engine.tool_results["advance"]["plan"]} == {"dot": "mastered", "attn": "pending"}
     assert final["error"] is None
     assert final["pending_quiz"] is None
     assert len(quiz_log.read_text(encoding="utf-8").splitlines()) == 1

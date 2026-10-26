@@ -71,7 +71,7 @@ class PendingDockRegistry:
         self._pending_futures.pop(session_id, None)
 
         logger.info(
-            "Resolved QuestionDock for session %s (band=%s, correct=%s, conf=%d%%)",
+            "Resolved QuestionDock for session %s (band=%s, correct=%s, conf=%s)",
             session_id,
             calibration_result.calibration_band,
             calibration_result.correct,

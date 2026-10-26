@@ -234,3 +234,5 @@ class HarnessConfig(BaseModel):
     slots: ModelSlots = Field(default_factory=ModelSlots)
     content_mcps: list[McpServerConfig] = Field(default_factory=list)
     track: TrackConfig = Field(default_factory=TrackConfig)
+    # Prompt segment path -> use the Vault override in .harness/prompts/<path> (Fase 8).
+    prompt_overrides: dict[str, bool] = Field(default_factory=dict)
