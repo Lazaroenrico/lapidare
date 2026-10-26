@@ -1,7 +1,9 @@
 """Validated setup, provider probes and canonical configuration responses."""
 from __future__ import annotations
 
+import asyncio
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from learnharness.api.state import get_app_state
 from learnharness.core.contracts.config import (
+    EngineKind,
     HarnessConfig,
     McpServerConfig,
     ModelSlotConfig,
@@ -20,9 +23,12 @@ from learnharness.core.contracts.config import (
     default_slots,
 )
 from learnharness.core.events import SseEventType
+from learnharness.engines.cli_protocol import EngineError
 from learnharness.engines.detector import detect_connectors, get_default_engine
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import atomic_write, safe_path, validate_folders
+
+CONNECTOR_TEST_TIMEOUT = 90.0
 
 setup_router = APIRouter(prefix="/api/setup", tags=["setup"])
 
@@ -71,16 +77,40 @@ async def get_setup_status(request: Request):
     return {"initialized": config.configured, "configured": config.configured, "config": _serialize_config_for_frontend(config) if config.configured else None, "connectors": connectors}
 
 
+@setup_router.get("/models")
+async def get_models(engine: EngineKind, request: Request):
+    """Models the connector actually offers this account (``agy models``, the SDK list, or static)."""
+    from learnharness.engines.models import list_models
+
+    state = get_app_state(request.app)
+    return await list_models(engine, api_key=state.api_key)
+
+
 @setup_router.post("/connectors/test")
 async def test_connector(payload: ConnectorProbePayload, request: Request):
+    """Spend one tiny structured prompt to prove auth + model + output parsing end to end."""
     state = get_app_state(request.app)
     if payload.api_key:
         state.api_key = payload.api_key.get_secret_value()
     engine = state.engine(payload.slot)
-    result = await engine.run_structured(prompt='Return {"ready":true} to verify this configured model connection.', schema=ProbeResult, slot=payload.slot)
-    if not result.ready:
-        raise ValueError("Provider did not confirm readiness")
-    return {"engine": payload.slot.engine, "model_id": payload.slot.model_id, "authenticated": True}
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(
+            engine.run_structured(
+                prompt='Responda somente com o JSON {"ready": true}.', schema=ProbeResult, slot=payload.slot
+            ),
+            CONNECTOR_TEST_TIMEOUT,
+        )
+    except TimeoutError as exc:
+        raise EngineError(f"Sem resposta em {CONNECTOR_TEST_TIMEOUT:g} s") from exc
+    # Any schema-valid answer proves the connection; the boolean's value is the model's whim.
+    return {
+        "ok": True,
+        "engine": payload.slot.engine,
+        "model_id": payload.slot.model_id,
+        "latency_ms": round((time.monotonic() - started) * 1000),
+        "authenticated": True,
+    }
 
 
 @setup_router.post("/complete")
