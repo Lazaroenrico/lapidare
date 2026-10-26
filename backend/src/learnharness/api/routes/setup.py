@@ -17,9 +17,10 @@ from learnharness.core.contracts.config import (
     TrackConfig,
     TrackMode,
     VaultFolderMap,
+    default_slots,
 )
 from learnharness.core.events import SseEventType
-from learnharness.engines.detector import detect_connectors
+from learnharness.engines.detector import detect_connectors, get_default_engine
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import atomic_write, safe_path, validate_folders
 
@@ -94,12 +95,17 @@ async def complete_setup(payload: SetupCompletePayload, request: Request):
     requested_folders = payload.folders or payload.vault_folders
     if requested_folders:
         validate_folders(target, requested_folders)
+    first_setup = not (target / ".harness" / "config.json").is_file()
     config = bootstrap_vault(target, language=payload.language, repo_path=repo_path)
     config.language = payload.language
     if requested_folders:
         config.folders = requested_folders
     if payload.slots:
         config.slots = payload.slots
+    elif first_setup:
+        # First setup without explicit slots: use the connector that actually works here
+        # (agy before gemini CLI, whose individual accounts are blocked since 0.62).
+        config.slots = default_slots(get_default_engine())
     if track:
         # Adopt parsed queues unless an explicit replacement queue was provided.
         if "queue" not in track.model_fields_set and config.track.queue:

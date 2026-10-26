@@ -183,7 +183,8 @@ async def test_persistent_process_sends_only_new_content(fake_binary, tmp_path, 
     argv = starts[0]["argv"]
     assert argv[:5] == ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"]
     assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-low"
-    assert argv[argv.index("--effort") + 1] == "low"
+    # The model id pins the effort; real agy rejects --effort alongside it.
+    assert "--effort" not in argv
     assert starts[0]["cwd"] == str(tmp_path / "work")
     assert "regras" in prompts[0] and "historico-antigo" in prompts[0]
     assert prompts[1] == "segunda"

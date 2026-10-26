@@ -325,3 +325,17 @@ def test_extract_route_queues_engine_backed_job(client: TestClient, fake_engine:
     # The engine was actually invoked (no "requires a configured engine" error).
     assert fake_engine.structured_calls
     assert "configured engine" not in (done["error"] or "")
+
+
+def test_first_setup_without_slots_uses_recommended_connector(tmp_path, monkeypatch):
+    from starlette.testclient import TestClient
+
+    from learnharness.api.app import create_app
+    from learnharness.api.routes import setup as setup_routes
+    from learnharness.core.contracts.config import EngineKind
+
+    monkeypatch.setattr(setup_routes, "get_default_engine", lambda: EngineKind.AGY)
+    client = TestClient(create_app(vault_path=tmp_path / "Fresh"))
+    res = client.post("/api/setup/complete", json={"language": "pt-BR", "track": {"mode": "free"}})
+    assert res.status_code == 200
+    assert res.json()["config"]["slots"]["strong"]["engine"] == "agy"
