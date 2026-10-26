@@ -216,7 +216,19 @@ async def test_process_death_mid_turn_raises_and_next_turn_respawns(fake_binary,
     healthy, _ = make(fake_binary, tmp_path, pool)
     await collect(healthy, "y", history=[SimpleNamespace(role="user", content="h")], system_instruction="regras")
     starts = [e for e in read_log(log) if "start" in e]
-    assert len(starts) == 2
+    # The early death is retried once (still dead), then the next turn respawns.
+    assert len(starts) == 3
+
+
+async def test_early_death_is_respawned_transparently(fake_binary, tmp_path, pool):
+    engine, log = make(fake_binary, tmp_path, pool, mode="die_once")
+    text = await collect(engine, "x", history=[SimpleNamespace(role="user", content="h")], system_instruction="regras")
+    assert text == ""  # first replayed turn carries no text, but the turn completed
+    entries = read_log(log)
+    prompts = [e["prompt"] for e in entries if "prompt" in e]
+    assert len([e for e in entries if "start" in e]) == 2
+    assert "regras" in prompts[1]  # the respawned process is rehydrated
+    assert pool.get("s1") is not None
 
 
 async def test_run_structured_uses_isolated_workspace(fake_binary, tmp_path, monkeypatch):

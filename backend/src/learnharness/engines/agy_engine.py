@@ -215,6 +215,10 @@ class AgyProcess:
             await asyncio.gather(self._stderr_task, return_exceptions=True)
 
 
+class AgyDiedEarly(EngineError):
+    """agy exited during a turn before emitting text or calling a harness tool."""
+
+
 @dataclass
 class AgySession:
     connection: AgyProcess
@@ -338,10 +342,20 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                 except BaseException:
                     await self.pool.close(session_id)
                     raise
-                text = compose_prompt(prompt, history, system_instruction, fresh=fresh)
-                async with aclosing(self._turn(session_id, entry, text)) as chunks:
-                    async for chunk in chunks:
-                        yield chunk
+                for attempt in range(2):
+                    text = compose_prompt(prompt, history, system_instruction, fresh=fresh)
+                    try:
+                        async with aclosing(self._turn(session_id, entry, text)) as chunks:
+                            async for chunk in chunks:
+                                yield chunk
+                        break
+                    except AgyDiedEarly:
+                        # Killed before any text or harness tool call: nothing was observed,
+                        # so one transparent respawn cannot duplicate side effects.
+                        if attempt:
+                            raise
+                        logger.warning("Respawning agy for %s after an early exit", session_id)
+                        entry, fresh = await self._ensure(session_id, slot)
             finally:
                 self.pool.release(session_id)
 
@@ -358,6 +372,7 @@ class AgyStreamEngine(GeminiHeadlessEngine):
             return self._learner_pending()
 
         clean = False
+        progressed = False
         try:
             await connection.send({"event": "user", "message": {"content": text}})
             while True:
@@ -368,9 +383,16 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                     what="Antigravity CLI turn",
                 )
                 if not line:
-                    raise EngineError(
-                        f"agy process exited mid-turn (code {connection.returncode})"
+                    await asyncio.sleep(0.2)  # let the stderr drain catch the last lines
+                    # Local log only: stderr may hold user data, never sent to the UI.
+                    logger.warning(
+                        "agy exited mid-turn in %s (code %s); stderr tail:\n%s",
+                        session_id,
+                        connection.returncode,
+                        bytes(connection.stderr_tail[-4000:]).decode("utf-8", "replace"),
                     )
+                    error = EngineError if progressed else AgyDiedEarly
+                    raise error(f"agy process exited mid-turn (code {connection.returncode})")
                 if not line.strip():
                     continue
                 try:
@@ -385,8 +407,10 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                 elif kind == "text":
                     chunk = assembler.feed(*value)
                     if chunk:
+                        progressed = True
                         yield chunk
                 elif kind == "tool" and value["harness"]:
+                    progressed = True
                     if value["state"] == "ACTIVE":
                         harness_inflight.add(value["id"])
                     else:

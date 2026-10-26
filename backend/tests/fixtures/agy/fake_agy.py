@@ -1,6 +1,7 @@
 """Fake ``agy`` stream-json process replaying the real 1.4.7 transcript turn by turn.
 
-Env: ``FAKE_AGY_LOG`` (JSONL log of start/prompt), ``FAKE_AGY_MODE`` = replay | die.
+Env: ``FAKE_AGY_LOG`` (JSONL log of start/prompt), ``FAKE_AGY_MODE`` = replay | die | die_once
+(dies on the first process start only, tracked by a marker next to the log).
 """
 
 import json
@@ -41,6 +42,11 @@ def main():
         log({"pid": os.getpid(), "prompt": request["message"]["content"]})
         if mode == "die":
             sys.exit(7)
+        if mode == "die_once":
+            marker = Path(os.environ["FAKE_AGY_LOG"] + ".died")
+            if not marker.exists():
+                marker.touch()
+                sys.exit(7)
         for event in groups[index % len(groups)]:
             print(event, flush=True)
 
