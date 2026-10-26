@@ -374,24 +374,75 @@ async def _clone_into(url: str, target: Path, ref: str | None) -> None:
     await _run_git([*args, "--", url, str(target)], env=env, watch=target)
 
 
-async def ensure_clone(vault: Path, url: str, *, refresh: bool) -> RepoClone:
+async def remote_commit(url: str, ref: str | None) -> str | None:
+    """Commit the remote currently serves for ``ref`` (default branch when ``None``).
+
+    One cheap ``git ls-remote`` call; ``None`` when the ref is not advertised. A 40-hex ``ref``
+    is immutable and is returned as-is without touching the network.
+    """
+    if ref and _SHA.match(ref):
+        return ref
+    env = await _git_env(url)
+    patterns = ["HEAD"] if not ref else [f"refs/heads/{ref}", f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}"]
+    output = await _run_git(["ls-remote", "--", url, *patterns], env=env, timeout=LS_REMOTE_TIMEOUT_SECONDS)
+    advertised: dict[str, str] = {}
+    for line in output.splitlines():
+        sha, _, name = line.partition("\t")
+        if _SHA.match(sha.strip()):
+            advertised[name.strip()] = sha.strip()
+    # A clone of an annotated tag checks out the peeled commit, so prefer ``^{}``.
+    for name in ([*patterns[2:], *patterns[:2]] if ref else patterns):
+        if name in advertised:
+            return advertised[name]
+    return None
+
+
+async def _cached_commit(target: Path) -> str | None:
+    """HEAD of a cached checkout, or ``None`` when the cache is missing or corrupt."""
+    if not (target / ".git").is_dir():
+        return None
+    try:
+        commit = (await _run_git(["rev-parse", "--verify", "HEAD"], env=_base_env(), cwd=target, timeout=15)).strip()
+    except GitHubSourceError:
+        return None
+    return commit if _SHA.match(commit) else None
+
+
+async def ensure_clone(
+    vault: Path, url: str, *, refresh: bool = False, revalidate: bool = False
+) -> RepoClone:
     """Clone (or reuse) the repository behind a GitHub URL and list its text files.
 
-    ``refresh=True`` re-clones into a temporary directory and swaps it in atomically, so a
-    concurrent reader never observes a half-written checkout.
+    * ``refresh=True`` always re-clones.
+    * ``revalidate=True`` asks the remote (one ``git ls-remote``) which commit the ref points
+      to and re-clones only when it differs from the cached checkout; when the remote cannot
+      be reached the cached checkout is reused (local-first).
+    * otherwise an existing, healthy cache is reused without any network call.
+
+    Re-clones go into a temporary directory that is swapped in atomically under a per-cache
+    lock, so a concurrent reader never observes a half-written checkout.
     """
     vault = Path(vault).resolve()
     parsed = parse_github_url(url)
     ref, subpath = await resolve_ref(parsed)
     target = _cache_dir(vault, parsed.owner, parsed.repo, ref)
+    clone_url = clone_url_resolver(parsed.owner, parsed.repo)
     lock = _locks.setdefault(str(target), asyncio.Lock())
     async with lock:
-        if refresh or not (target / ".git").is_dir():
+        cached = await _cached_commit(target)
+        stale = refresh or cached is None
+        if not stale and revalidate:
+            try:
+                upstream = await remote_commit(clone_url, ref)
+            except GitHubSourceError:
+                upstream = cached  # offline or transient failure: keep serving the cache
+            stale = upstream != cached
+        if stale:
             repos = safe_path(vault, REPOS_DIR)
             repos.mkdir(parents=True, exist_ok=True)
             tmp = repos / f".tmp-{uuid4().hex}"
             try:
-                await _clone_into(clone_url_resolver(parsed.owner, parsed.repo), tmp, ref)
+                await _clone_into(clone_url, tmp, ref)
                 if _dir_size(tmp) > MAX_REPO_BYTES:
                     raise GitHubSourceError("Repository exceeds the size limit", 413)
                 trash = repos / f".trash-{uuid4().hex}"

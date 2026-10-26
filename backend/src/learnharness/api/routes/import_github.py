@@ -35,6 +35,7 @@ LOCAL_EXTENSIONS = {".md", ".markdown", ".txt", ".pdf"}
 
 class GitHubPreviewPayload(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+    refresh: bool = False  # force a fresh clone even when the cached commit is current
 
 
 class GitHubImportPayload(BaseModel):
@@ -71,10 +72,12 @@ def _broadcast(request: Request, imported: list[dict[str, Any]]) -> None:
 
 @import_github_router.post("/api/import/github/preview")
 async def github_preview(payload: GitHubPreviewPayload, request: Request) -> dict[str, Any]:
-    """Shallow-clone (refreshing the cache) and list importable text files."""
+    """List importable text files, re-cloning only when the remote commit changed."""
     state = get_app_state(request.app)
     try:
-        clone = await github_source.ensure_clone(state.vault_path, payload.url, refresh=True)
+        clone = await github_source.ensure_clone(
+            state.vault_path, payload.url, refresh=payload.refresh, revalidate=True
+        )
     except GitHubSourceError as exc:
         raise _http_error(exc) from exc
     return clone.preview()

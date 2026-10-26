@@ -250,7 +250,7 @@ def test_use_as_track_requires_replace_and_submits_job(api_client: TestClient, c
     assert config.track.mode == "repo_leveling"
     assert Path(config.track.repo_path) == clone
     assert config.track.queue[0].source_ref == str(clone / "lessons/01-intro.md")
-    assert "FILE lessons/01-intro.md" in fake_engine.structured_calls[0]["prompt"]
+    assert "lessons/01-intro.md — Introdução a Tokens" in fake_engine.structured_calls[0]["prompt"]
 
 
 def _tiny_pdf(text_lines: list[str]) -> bytes:
