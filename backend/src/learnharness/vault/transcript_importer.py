@@ -41,17 +41,24 @@ def import_transcript_text(
     is_markdown: bool = False,
     praxis_id: str | None = None,
     force: bool = False,
+    subdir: str | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[Path, int]:
     """Import a raw transcript or document into Fontes/ with ^pN citations.
 
     Never modifies words. Appends ^p1..^pN to each paragraph.
     Raises FileExistsError if target exists and force is False.
+    ``subdir`` places the file under ``<sources_dir>/<subdir>`` (each component validated);
+    ``provenance`` adds frontmatter keys (e.g. source_kind, source_url, commit, mcp_server).
     Returns (target_file_path, paragraph_count).
     """
     vault_path = Path(vault_path).resolve()
     folders = folder_map(vault_path)
     target_dir = safe_path(vault_path, folders.sources_dir)
-    if prefix or tipo in ["aula", "pre-aula", "mentoria"]:
+    if subdir:
+        parts = [safe_component(part) for part in Path(subdir).parts]
+        target_dir = safe_path(vault_path, Path(folders.sources_dir).joinpath(*parts))
+    elif prefix or tipo in ["aula", "pre-aula", "mentoria"]:
         target_dir = safe_path(
             vault_path,
             Path(folders.sources_dir)
@@ -93,6 +100,9 @@ def import_transcript_text(
         "palavras": total_words,
         "content_sha256": revision(raw_text),
     }
+    if provenance:
+        # Provenance never overrides the integrity fields computed above.
+        fm_data.update({k: v for k, v in provenance.items() if k not in fm_data or k == "origem"})
     fm_str = yaml.dump(fm_data, allow_unicode=True, default_flow_style=None).strip()
 
     stem_name = target_file.stem
@@ -101,7 +111,7 @@ def import_transcript_text(
 ---
 # {title}
 
-> [!info] Transcript bruto da mentoria, sem edição. Cite trechos com `[[{stem_name}#^p1]]`.
+> [!info] Fonte importada sem edição. Cite trechos com `[[{stem_name}#^p1]]`.
 > Aula explicada: {modulo or ""}
 
 {"\n\n".join(numbered_paragraphs)}
