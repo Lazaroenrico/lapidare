@@ -46,7 +46,7 @@ async def test_persistent_engine_gets_only_new_content_and_one_token(tmp_path, c
     await service.run(session.id)
     first = engine.calls[0]
     assert first.prompt.startswith("Begin the session.") and "CURRENT STATE" in first.prompt
-    assert first.history == [] and "pose_quiz" in first.system and "PERSISTED HISTORY" not in first.system
+    assert first.history == [] and "probe_done" in first.system and "PERSISTED HISTORY" not in first.system
 
     current = service.get(session.id)
     current.messages.append(SessionMessage(id="answer-q1", role="user", content="minha resposta", created_at="t"))

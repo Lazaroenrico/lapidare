@@ -86,9 +86,8 @@ async def test_adoption_and_teach_flow_leave_user_bytes_identical(tmp_path: Path
         "concepts": [{"title": "Produto Escalar", "unconditional_truth": "Soma dos produtos coordenada a coordenada."}],
         "chains": [],
     })
-    nodes = [
-        {
-            "id": "b1", "label": "Bloco 1 — Produto escalar", "kind": "unconditional_truth",
+    node_details = {
+        "b1": {
             "source_paragraphs": ["p1"],
             "four_dimensions": {
                 "said": "O produto escalar mede alinhamento ^p1.",
@@ -98,19 +97,20 @@ async def test_adoption_and_teach_flow_leave_user_bytes_identical(tmp_path: Path
                 "paragraph_refs": ["p1", "p2"],
             },
         },
-        {"id": "b2", "label": "Bloco 2 — Atenção", "kind": "goal", "depends_on": ["b1"], "source_paragraphs": ["p3"]},
-    ]
+        "b2": {"source_paragraphs": ["p3"]},
+    }
+    mermaid = "graph TD\n  b1[Bloco 1 — Produto escalar] --> b2[Bloco 2 — Atenção]"
     engine.script_turn(
         "Antes de começar: você já viu produto escalar?\n",
-        tool("plan_init", approach_prose="Primeiro o produto escalar, depois a atenção.", nodes=nodes),
-        tool("plan_advance", node_id="b1", status="current"),
+        tool("probe_done", strands=[{"strand": "álgebra linear", "assessment": "Conhece vetores."}]),
+        tool("plan_init", mermaid=mermaid, approach_prose="Primeiro o produto escalar, depois a atenção.",
+             node_details=node_details),
         "O produto escalar soma produtos coordenada a coordenada [[Fonte#^p1]].\n",
     )
     engine.script_turn(
-        tool("pose_quiz", mode="CHECK", topic="Produto escalar", question="(1,2)·(3,4)?",
-             choices=[{"label": "11"}, {"label": "10"}], correct_index=0, explanation="3+8", node_id="b1"),
+        tool("quiz", type="check", node_id="b1", question="(1,2)·(3,4)?",
+             options=[{"label": "11"}, {"label": "10"}], explanation="3+8", correct="11"),
         tool("plan_advance", node_id="b1", status="mastered"),
-        tool("plan_advance", node_id="b2", status="current"),
     )
     engine.script_turn("A atenção pondera valores pelo softmax [[Fonte#^p3]].\n")
 
@@ -126,7 +126,7 @@ async def test_adoption_and_teach_flow_leave_user_bytes_identical(tmp_path: Path
         quiz = await wait_until(lambda: state.sessions.get(sid).pending_quiz)
         await state.sessions.answer(QuizSubmission(quiz_id=quiz.quiz_id, session_id=sid, chosen_index=0, confidence=85))
         await wait_until(lambda: not state.sessions.is_running(sid)
-                         and state.sessions.get(sid).plan.nodes[1].status == "current")
+                         and state.sessions.get(sid).plan.nodes[0].status == "mastered")
         state.sessions.schedule(sid)
         await wait_until(lambda: not state.sessions.is_running(sid)
                          and any(m.content.startswith("A atenção") for m in state.sessions.get(sid).messages))

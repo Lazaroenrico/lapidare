@@ -34,8 +34,7 @@ from learnharness.core.plan_mermaid import (
     mermaid_to_plan_nodes,
 )
 from learnharness.engines.cli_protocol import EngineError
-from learnharness.prompts import loader as prompt_loader
-from learnharness.prompts.loader import build_system_prompt
+from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
     append_quiz_log,
     append_session_event,
@@ -73,25 +72,12 @@ TURN_RULES = (
     "solution."
 )
 
-HANDOFF_FALLBACK = (
-    "The diagnosis is complete (see the assessment in the session state). Plan the whole arc from it: "
-    "the minimal dependency tree from what this learner already holds to the goal. Call plan_init with "
-    "the mermaid map, present the approach in prose and end your turn without teaching yet; the "
-    "learner's next message accepts the plan or asks for changes."
-)
-
 
 def prompt_family(session: SessionRecord) -> str:
     """Which prompt set the session needs now: ``prober``, ``teacher`` or ``practice``."""
     if session.mode == "PRACTICE":
         return "practice"
     return "prober" if session.phase == "probing" else "teacher"
-
-
-def handoff_prompt(language: str) -> str:
-    """The planning-turn instruction sent after ``probe_done``."""
-    builder = getattr(prompt_loader, "build_handoff_prompt", None)
-    return builder(language) if builder else HANDOFF_FALLBACK
 
 
 class SessionConflict(ValueError):
@@ -110,7 +96,7 @@ class SessionService:
         """Persist text streamed so far before a tool changes the plan state.
 
         Lesson-note sections are filed by the plan node current at flush time; without this,
-        prose written right before plan_advance/pose_quiz could land under the next node.
+        prose written right before plan_advance/quiz could land under the next node.
         """
         entry = self.streaming.get(session_id)
         if entry and entry[1] and len(entry[1]) != entry[2]:
@@ -621,9 +607,11 @@ class SessionService:
                 "answers": [a.model_dump(mode="json") for a in session.answers.values()],
                 "track": config.track.model_dump(mode="json") if session.track_item_id else None,
             }, ensure_ascii=False)
-            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase, extra_context=context)
+            overrides = load_overrides(self.state.vault_path, config)
+            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
+                                         extra_context=context, overrides=overrides)
             system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
-            handoff = handoff_prompt(config.language) if handoff_run else None
+            handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
                 # with a compact history) and per turn only what is new.
