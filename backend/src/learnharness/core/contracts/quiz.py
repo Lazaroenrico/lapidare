@@ -79,7 +79,8 @@ class CalibrationResult(BaseModel):
     confidence_band: ConfidenceBand
     calibration_band: CalibrationBand
     # Mode of the quiz that produced this answer. None only for legacy records written
-    # before the field existed; consumers must treat None as "not CHECK evidence".
+    # before the field existed. Mastery gates treat None as "not CHECK evidence"
+    # (conservative); practice prioritization treats None as CHECK (keeps old ranking).
     mode: QuizMode | None = None
     learner_thinking: str
     pedagogical_directive: str
