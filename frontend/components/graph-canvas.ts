@@ -57,6 +57,8 @@ interface CanvasLink {
   source: Body;
   target: Body;
   kind: ConstellationLink["kind"];
+  /** Joins two different sessions: a weak spring and a faint line, so petals stay apart. */
+  cross: boolean;
 }
 
 interface NodeLabel {
@@ -112,6 +114,9 @@ const NEBULA_SCALE = 0.25;
 const NEBULA_PEAK = 0.6;
 /** Edge colour: a light grey-lavender hairline. */
 const EDGE_TONE: PaletteTone = ["mutedForeground", "foreground", 0.4];
+/** Links between sessions: spring factor and line opacity factor. */
+const CROSS_SPRING = 0.08;
+const CROSS_ALPHA = 0.3;
 /** Extra world distance between the flower's right edge and the ⇶ Roteiro region (their nebulae must not touch). */
 const ROADMAP_CLEARANCE = 120;
 /** Roadmap labels are screen px; this maps the world-unit node label size onto them. */
@@ -263,7 +268,7 @@ export class GraphCanvasEngine {
     for (const l of wiring.links) {
       const s = bodyMap.get(l.source);
       const t = bodyMap.get(l.target);
-      if (s && t && s !== t) this.links.push({ source: s, target: t, kind: l.kind });
+      if (s && t && s !== t) this.links.push({ source: s, target: t, kind: l.kind, cross: (s.cluster ?? "") !== (t.cluster ?? "") });
     }
 
     this.clusterLabels = new Map(clusters.map((c) => [c.id, c.label]));
@@ -572,7 +577,7 @@ export class GraphCanvasEngine {
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
       const rest = e.kind === "direct" ? s.linkDistance : s.linkDistance * JUNCTION_LINK_FACTOR;
       // Springs cool with alpha like every other force, so the radial rings win at rest.
-      const f = (d - rest) * s.attraction * this.alpha;
+      const f = (d - rest) * s.attraction * this.alpha * (e.cross ? CROSS_SPRING : 1);
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       e.source.vx += fx;
@@ -873,13 +878,16 @@ export class GraphCanvasEngine {
     ctx.lineCap = "round";
     ctx.strokeStyle = toneAlpha(EDGE_TONE, alpha);
     ctx.lineWidth = this.lineWidth();
-    ctx.beginPath();
-    for (const l of this.links) {
-      if (hot.links.has(l)) continue;
-      ctx.moveTo(l.source.x, l.source.y);
-      ctx.lineTo(l.target.x, l.target.y);
+    for (const cross of [false, true]) {
+      if (cross) ctx.strokeStyle = toneAlpha(EDGE_TONE, alpha * CROSS_ALPHA);
+      ctx.beginPath();
+      for (const l of this.links) {
+        if (l.cross !== cross || hot.links.has(l)) continue;
+        ctx.moveTo(l.source.x, l.source.y);
+        ctx.lineTo(l.target.x, l.target.y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
     if (hot.links.size > 0) {
       ctx.strokeStyle = withAlpha("foreground", 0.85);
       ctx.lineWidth = this.lineWidth(1.4);

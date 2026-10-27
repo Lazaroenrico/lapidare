@@ -76,14 +76,14 @@ export const GRAPH_SETTING_RANGES: Record<GraphSettingKey, SettingRange> = {
   regionIntensity: { min: 0, max: 1, step: 0.05, default: 0.5, group: "regions" },
   regionDilation: { min: 4, max: 80, step: 1, default: 30, group: "regions" },
   regionBlur: { min: 5, max: 120, step: 1, default: 45, group: "regions" },
-  ringRadius: { min: 40, max: 600, step: 5, default: 130, group: "layout" },
-  depthSpacing: { min: 15, max: 240, step: 5, default: 75, group: "layout" },
+  ringRadius: { min: 40, max: 600, step: 5, default: 170, group: "layout" },
+  depthSpacing: { min: 15, max: 240, step: 5, default: 95, group: "layout" },
   depthStrength: { min: 0, max: 0.3, step: 0.005, default: 0.08, group: "layout" },
-  repulsion: { min: 50, max: 4000, step: 25, default: 260, group: "physics" },
+  repulsion: { min: 50, max: 4000, step: 25, default: 400, group: "physics" },
   attraction: { min: 0.005, max: 0.2, step: 0.005, default: 0.04, group: "physics" },
   linkDistance: { min: 15, max: 200, step: 1, default: 50, group: "physics" },
   centerGravity: { min: 0, max: 0.05, step: 0.001, default: 0, group: "physics" },
-  clusterCohesion: { min: 0, max: 0.08, step: 0.002, default: 0.02, group: "physics" },
+  clusterCohesion: { min: 0, max: 0.08, step: 0.002, default: 0.014, group: "physics" },
   friction: { min: 0.05, max: 0.6, step: 0.01, default: 0.2, group: "physics" },
 };
 

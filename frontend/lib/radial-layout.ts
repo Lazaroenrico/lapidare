@@ -93,9 +93,9 @@ export interface RadialBody {
 }
 
 const TAU = Math.PI * 2;
-const DEFAULT_SECTOR_GAP = 0.05;
+const DEFAULT_SECTOR_GAP = 0.14;
 /** Sector containment is much stiffer than the cohesion pull. */
-const SECTOR_WALL = 0.35;
+const SECTOR_WALL = 0.9;
 /** Sector width ∝ size^SIZE_EXPONENT, so small sessions still get a readable slice. */
 const SIZE_EXPONENT = 0.75;
 /** Depth quantile of the connected nodes that the outer band sits just beyond. */
@@ -298,7 +298,8 @@ export function planRadial(
     };
     for (const tip of tips) if (!seen.has(tip)) walk(tip);
     for (const id of [...structured].sort()) if (!seen.has(id)) walk(id);
-    const margin = Math.min(0.08, width * 0.08);
+    // Seeds use the middle of the sector: petals start narrow, with dark gaps between them.
+    const margin = width * 0.12;
     order.forEach((id, i) => {
       angle.set(id, sector.start + margin + ((i + 0.5) / order.length) * (width - 2 * margin));
       radius.set(id, params.ringRadius + (depth.get(id) ?? 0) * params.depthSpacing);
