@@ -151,6 +151,7 @@ learnharness/
 │   │   │   ├── lesson_layout.py      # layout gerenciado da nota de aula (render puro)
 │   │   │   ├── slug.py               # ascii_slug: regra congelada de ids legados
 │   │   │   ├── frontmatter.py        # regra única (Obsidian) de frontmatter: CRLF, BOM, `---` em valores
+│   │   │   ├── turn_prompt.py        # o que um turno envia ao motor (one-shot | persistente)
 │   │   │   ├── events.py             # SseEventType + SseFrame
 │   │   │   └── ports.py              # Protocols: AgentEnginePort, VaultPort, ContentMcpPort
 │   │   ├── engines/                  # adaptadores dos 3 caminhos Google
@@ -160,7 +161,8 @@ learnharness/
 │   │   │   ├── cli_protocol.py       # EngineError, idle_wait, json_events, drain_stderr, terminate_group
 │   │   │   ├── detector.py · models.py · usage.py
 │   │   ├── mcp/
-│   │   │   ├── runtime_server.py     # ferramentas pedagógicas (FastMCP)
+│   │   │   ├── runtime_server.py     # guardas de modo, ordem publicada e servidor FastMCP
+│   │   │   ├── tools/                # ferramentas por família: questions · lesson · practice · jobs (+ inputs)
 │   │   │   ├── pending_dock.py       # asyncio.Future por pergunta pendente
 │   │   │   ├── content_client.py     # cliente de QUALQUER servidor MCP de conteúdo
 │   │   │   └── demo_builder.py       # geração/validação de simuladores HTML
