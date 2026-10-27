@@ -6,7 +6,6 @@ import json
 import logging
 from uuid import uuid4
 
-from learnharness.core.contracts.practice import PracticeSet
 from learnharness.core.events import SseEventType
 from learnharness.services.sessions import now
 from learnharness.vault.safety import append_line, safe_path
@@ -35,20 +34,6 @@ class JobManager:
     def load(self):
         for record in self._records("jobs.jsonl"):
             self.state.active_jobs[record["job_id"]] = record
-        practice_dir = safe_path(self.state.vault_path, ".harness/practice")
-        if practice_dir.exists():
-            for path in practice_dir.glob("*.jsonl"):
-                records = self._records(f"practice/{path.name}")
-                if records:
-                    item = PracticeSet.model_validate(records[-1])
-                    self.state.practice_sets[item.set_id] = item
-
-    def save_practice(self, item):
-        path = safe_path(self.state.vault_path, f".harness/practice/{item.set_id}.jsonl")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        append_line(path, item.model_dump_json() + "\n")
-        self.state.practice_sets[item.set_id] = item
-        self.state.sse_hub.broadcast(SseEventType.JOBS_UPDATED, {})
 
     def save(self, record):
         record["updated_at"] = now()
@@ -75,13 +60,7 @@ class JobManager:
             async with self.semaphore:
                 record["status"] = "running"
                 self.save(record)
-                config = self.state.get_config()
-                if record["kind"] == "practice_gen":
-                    from learnharness.pipelines.practice_gen import run_practice_generation_pipeline
-                    item = await run_practice_generation_pipeline(self.state.vault_path, topics=record["payload"].get("topics"), engine=self.state.engine(config.slots.background), slot=config.slots.background)
-                    self.save_practice(item)
-                    record["result_id"] = item.set_id
-                elif record["kind"] == "extraction":
+                if record["kind"] == "extraction":
                     # Payload: {session_id, topic, reason}; the service drains uncovered prose.
                     summary = await self.state.graph.extract_session(record["payload"]["session_id"])
                     record["result_id"] = record["payload"]["session_id"]

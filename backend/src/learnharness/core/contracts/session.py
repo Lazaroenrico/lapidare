@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from learnharness.core.contracts.config import EffortLevel, ModelSlotConfig
+from learnharness.core.contracts.practice import PracticeState
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload
 
 # Strictly ONLY these two modes exist across the entire platform!
@@ -124,6 +125,9 @@ class SessionMessage(BaseModel):
     demo_slug: str | None = None
     citations: list[str] = Field(default_factory=list)
     node_spans: list[NodeSpan] = Field(default_factory=list)
+    # PRACTICE learner inputs (Fase 9): what the message is and which problem it concerns.
+    practice_kind: Literal["attempt", "next", "dismiss"] | None = None
+    problem_id: str | None = None
 
 
 class TokenUsage(BaseModel):
@@ -199,6 +203,8 @@ class SessionRecord(BaseModel):
     usage: SessionUsage = Field(default_factory=SessionUsage)
     # Graph node ids the learner picked as context (Fase 8B; at most 64).
     graph_context: list[str] = Field(default_factory=list)
+    # PRACTICE sessions (Fase 9): the problems posed so far and the active one.
+    practice: PracticeState = Field(default_factory=PracticeState)
     created_at: str = ""
     updated_at: str = ""
 

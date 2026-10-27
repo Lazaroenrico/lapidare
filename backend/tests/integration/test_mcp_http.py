@@ -25,7 +25,8 @@ from learnharness.api.state import AppState
 from learnharness.vault.bootstrap import bootstrap_vault, load_config, save_config
 
 EXPECTED_TOOLS = {"probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
-                  "grade_recall", "plan_advance", "track_foundation", "spawn_demo"}
+                  "grade_recall", "plan_advance", "track_foundation", "spawn_demo", "problem", "conclude",
+                  "graph_search"}
 
 
 class IdleEngine:

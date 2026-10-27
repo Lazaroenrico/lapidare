@@ -25,9 +25,9 @@ class SseEventType(StrEnum):
 
 
 class BackgroundJobStatus(BaseModel):
-    """Status frame for background LangGraph agents (extraction, practice generation, demo builder)."""
+    """Status frame for background LangGraph agents (extraction, track generation, demo builder)."""
     job_id: str
-    kind: Literal["extraction", "practice_gen", "demo_builder"]
+    kind: Literal["extraction", "track_gen", "demo_builder"]
     status: Literal["running", "completed", "failed"]
     label: str
     session_id: str | None = None

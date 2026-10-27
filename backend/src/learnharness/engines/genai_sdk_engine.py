@@ -5,7 +5,7 @@ import os
 
 from pydantic import ValidationError
 
-from learnharness.core.contracts.practice import DrawingReviewResult
+from learnharness.core.contracts.drawing import DrawingReviewResult
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.engines.usage import genai_usage, report_usage
 

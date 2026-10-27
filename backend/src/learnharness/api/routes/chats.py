@@ -1,7 +1,7 @@
 """HTTP adapters for durable pedagogical sessions."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -11,6 +11,7 @@ from learnharness.core.contracts.config import EffortLevel
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import SessionMode, SessionRecord, slot_override_for
 from learnharness.core.plan_mermaid import derive_plan_statuses
+from learnharness.services.practice import attempt_prefix, next_request, public_practice
 from learnharness.services.sessions import SessionConflict, now
 from learnharness.vault.jsonl_store import list_sessions
 
@@ -35,7 +36,9 @@ class SessionSettingsPayload(BaseModel):
 
 
 class SendMessagePayload(BaseModel):
-    content: str = Field(min_length=1, max_length=100000)
+    """Learner input. PRACTICE adds ``attempt`` (on the active problem) and ``next`` (no content)."""
+    content: str = Field(default="", max_length=100000)
+    kind: Literal["text", "attempt", "next"] = "text"
 
 
 class QuizSubmissionPayload(BaseModel):
@@ -83,7 +86,7 @@ def _question_node_ids(session: SessionRecord, pending_quiz: QuizPayload | None)
 
 def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, Any]:
     pending_quiz = pending_quiz or session.pending_quiz
-    data = session.model_dump(mode="json", exclude={"pending_quiz", "answers", "applied_actions"})
+    data = session.model_dump(mode="json", exclude={"pending_quiz", "answers", "applied_actions", "practice"})
     data.update({
         "topic": session.title, "teach_context": session.context_kind,
         "source_file": session.source_path,
@@ -94,6 +97,8 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
         "error": session.error,
         "recovery_required": session.recovery_required or bool(session.pending_quiz_id and not session.pending_quiz),
         "messages": [{**m.model_dump(mode="json"), "timestamp": m.created_at} for m in session.messages],
+        # Fase 9: model_solution only appears once a problem is concluded.
+        "practice": public_practice(session),
     })
     statuses = derive_plan_statuses(session.plan.nodes, _question_node_ids(session, pending_quiz))
     data["plan"]["nodes"] = [{**n.model_dump(mode="json"), "status": statuses[n.id], "title": n.label, "dependencies": n.depends_on, "summary": n.four_dimensions.said if n.four_dimensions else ""} for n in session.plan.nodes]
@@ -162,14 +167,38 @@ async def send_chat_message(chat_id: str, payload: SendMessagePayload, request: 
 
     from learnharness.core.contracts.session import SessionMessage
     state = get_app_state(request.app)
+    if payload.kind != "next" and not payload.content.strip():
+        raise ValueError("Message content is empty")
+    language = state.get_config().language
     async with state.sessions.lock(chat_id):
         session = state.sessions.get(chat_id)
         if state.sessions.is_running(chat_id) or session.pending_quiz or session.recovery_required or session.phase == "completed":
             raise SessionConflict("Answer the pending question or resume the session before sending a message")
-        session.messages.append(SessionMessage(id=f"msg-{uuid4().hex}", role="user", content=payload.content, created_at=now()))
+        message = SessionMessage(id=f"msg-{uuid4().hex}", role="user", content=payload.content, created_at=now())
+        if payload.kind == "attempt":
+            problem = state.practice.add_attempt(session, payload.content)
+            message.content = attempt_prefix(language) + payload.content
+            message.practice_kind, message.problem_id = "attempt", problem.id
+        elif payload.kind == "next":
+            if session.mode != "PRACTICE":
+                raise SessionConflict("Only PRACTICE sessions take a next-problem request")
+            if session.practice.active_problem_id:
+                raise SessionConflict("Conclude or dismiss the active problem before asking for the next one")
+            message.content, message.practice_kind = next_request(language), "next"
+        session.messages.append(message)
         session.execution_status = "queued"
         state.sessions.save(session)
+        if payload.kind == "attempt":
+            state.sessions.refresh_lesson_note(session)
         state.sessions.schedule(chat_id)
+    return {"session": _serialize_session(session)}
+
+
+@chats_router.post("/{chat_id}/practice/dismiss")
+async def dismiss_practice_problem(chat_id: str, request: Request):
+    """Dismiss the active PRACTICE problem (outcome ``dismissed``, no log line, no new turn)."""
+    state = get_app_state(request.app)
+    session = await state.practice.dismiss(chat_id)
     return {"session": _serialize_session(session)}
 
 

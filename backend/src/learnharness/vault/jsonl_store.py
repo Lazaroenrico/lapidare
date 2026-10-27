@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from learnharness.core.contracts.graph import GraphEdge, GraphSnapshot, LogicalChain
+from learnharness.core.contracts.practice import PracticeLogEntry
 from learnharness.core.contracts.quiz import CalibrationResult
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.vault.markdown_ast import scan_all_concepts
@@ -183,6 +184,28 @@ def load_quiz_logs(vault_path: Path) -> list[CalibrationResult]:
             logger.warning("Skipping malformed quiz-log line %d in %s: %s", lineno, file_path, exc)
 
     return results
+
+
+def append_practice_log(vault_path: Path, entry: PracticeLogEntry) -> None:
+    """Append one ``conclude`` to .harness/practice-log.jsonl (Fase 9)."""
+    harness_dir, _ = _ensure_harness_dir(vault_path)
+    append_line(safe_path(harness_dir, "practice-log.jsonl"), entry.model_dump_json() + "\n")
+
+
+def load_practice_log(vault_path: Path) -> list[PracticeLogEntry]:
+    """All valid lines of .harness/practice-log.jsonl (malformed ones are skipped)."""
+    file_path = safe_path(Path(vault_path).resolve(), ".harness/practice-log.jsonl")
+    if not file_path.exists():
+        return []
+    entries: list[PracticeLogEntry] = []
+    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            entries.append(PracticeLogEntry.model_validate(json.loads(raw)))
+        except ValueError as exc:
+            logger.warning("Skipping malformed practice-log line %d in %s: %s", lineno, file_path, exc)
+    return entries
 
 
 # ==========================================

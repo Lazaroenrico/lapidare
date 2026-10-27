@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from learnharness.core.contracts.practice import PracticeAttemptGrade, PracticeProblem
 from tests.conftest import FakeEngine, poll_until, tool
 
 
@@ -221,101 +220,14 @@ def test_drawings_crud_and_review(client: TestClient) -> None:
     assert rev_res.status_code == 409
 
 
-def _practice_problem(prompt: str) -> PracticeProblem:
-    import json
-    topic = json.loads(prompt)["topic"]
-    return PracticeProblem.model_validate({
-        "problem_id": "provider-id", "topic": topic, "prompt": f"Explique o custo por passo de {topic}.",
-        "committed_solution": "Cada passo reutiliza K e V anteriores; o custo por passo é linear no contexto.",
-        "rubric": [{"id": "mechanism", "description": "Mecanismo correto", "max_points": 6},
-                   {"id": "limit", "description": "Limite correto", "max_points": 4}],
-        "hints": [{"level": f"R{i}", "label": f"Passo {i}", "prompt": f"Considere o token {i + 1}: o que muda?"}
-                  for i in range(6)],
-        "target_misconception": "Confundir valores em cache com tokens de saída",
-    })
-
-
-def _generate_set(client: TestClient, topics: list[str]) -> dict:
-    gen_res = client.post("/api/practice/generate", json={"topics": topics})
-    assert gen_res.status_code == 202
-    job = gen_res.json()
-    assert job["kind"] == "practice_gen" and job["payload"]["topics"] == topics
-    jobs = poll_until(lambda: client.get("/api/jobs").json(),
-                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] in ("completed", "failed")
-                                     for j in js))
-    done = next(j for j in jobs if j["job_id"] == job["job_id"])
-    assert done["status"] == "completed", done["error"]
-    sets = client.get("/api/practice/sets").json()
-    return next(s for s in sets if s["id"] == done["result_id"])
-
-
-def test_practice_generate_and_hint_ladder(client: TestClient, fake_engine: FakeEngine) -> None:
-    """Generate via the background job, climb R0..R5 one rung at a time, then grade with the engine."""
-    fake_engine.program(PracticeProblem, _practice_problem)
-    fake_engine.program(PracticeAttemptGrade, {
-        "problem_id": "provider-id", "score": 8, "max_score": 10,
-        "criterion_scores": {"mechanism": 5, "limit": 3}, "feedback": "Bom raciocínio.", "passed": True,
-    })
-    p_set = _generate_set(client, ["Decodificação Autoregressiva"])
-    set_id = p_set["id"]
-    problem = p_set["problems"][0]
-    problem_id = problem["id"]
-    assert problem["hints"] == []  # Nothing revealed before the learner asks.
-    assert "committed_solution" not in str(p_set) and "K e V anteriores" not in str(p_set)
-
-    url = f"/api/practice/sets/{set_id}/problems/{problem_id}/attempt"
-    for i in range(6):
-        hint_res = client.post(url, json={"answer": "", "request_hint": True})
-        assert hint_res.status_code == 200
-        hint = hint_res.json()["next_hint"]
-        assert hint["level"] == f"R{i}"
-        assert "K e V anteriores" not in str(hint)
-        revealed = next(s for s in client.get("/api/practice/sets").json() if s["id"] == set_id)
-        assert [h["level"] for h in revealed["problems"][0]["hints"]] == [f"R{j}" for j in range(i + 1)]
-    assert client.post(url, json={"answer": "", "request_hint": True}).status_code == 409
-
-    answer = "A decodificação autoregressiva consome um token por passo atualizando o KV cache incrementalmente."
-    grade_res = client.post(url, json={"answer": answer, "request_hint": False})
-    assert grade_res.status_code == 200
-    grade_data = grade_res.json()
-    assert grade_data["grade"]["score"] == 8
-    assert grade_data["grade"]["passed"] is True
-    assert grade_data["grade"]["rubric_scores"] == {"mechanism": 5, "limit": 3}
-    assert grade_data["next_hint"] is None
-    assert {c["schema"] for c in fake_engine.structured_calls} == {PracticeProblem, PracticeAttemptGrade}
-
-    # Hint progress and grade persist append-only under .harness/practice/.
-    persisted = next(s for s in client.get("/api/practice/sets").json() if s["id"] == set_id)
-    assert persisted["problems"][0]["grade"]["score"] == 8
-    assert persisted["completed"] is True
-
-
-def test_practice_grade_rejects_inconsistent_provider_output(client: TestClient, fake_engine: FakeEngine) -> None:
-    """A grade whose total disagrees with its criteria is a provider failure (502), never stored."""
-    fake_engine.program(PracticeProblem, _practice_problem)
-    fake_engine.program(PracticeAttemptGrade, [
-        {"problem_id": "x", "score": 10, "criterion_scores": {"mechanism": 5, "limit": 3},
-         "feedback": "x", "passed": True},
-        {"problem_id": "x", "score": 9, "criterion_scores": {"mechanism": 7, "limit": 2},
-         "feedback": "x", "passed": True},
-    ])
-    p_set = _generate_set(client, ["Atenção"])
-    url = f"/api/practice/sets/{p_set['id']}/problems/{p_set['problems'][0]['id']}/attempt"
-    assert client.post(url, json={"answer": "", "request_hint": False}).status_code == 422
-    for _ in range(2):
-        assert client.post(url, json={"answer": "minha resposta", "request_hint": False}).status_code == 502
-    stored = next(s for s in client.get("/api/practice/sets").json() if s["id"] == p_set["id"])
-    assert stored["problems"][0]["grade"] is None
-
-
-def test_practice_generation_provider_failure_marks_job_failed(client: TestClient, fake_engine: FakeEngine) -> None:
-    fake_engine.program(PracticeProblem, RuntimeError("provider unavailable"))
-    job = client.post("/api/practice/generate", json={"topics": ["Atenção"]}).json()
-    jobs = poll_until(lambda: client.get("/api/jobs").json(),
-                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] == "failed" for j in js))
-    failed = next(j for j in jobs if j["job_id"] == job["job_id"])
-    assert "provider unavailable" in failed["error"]
-    assert client.get("/api/practice/sets").json() == []
+def test_batch_problem_set_routes_are_gone(client: TestClient) -> None:
+    """Fase 9 replaced batch problem sets with PRACTICE sessions; demos/jobs routes stay."""
+    assert client.get("/api/practice/sets").status_code in (404, 405)
+    assert client.post("/api/practice/generate", json={"topics": ["x"]}).status_code in (404, 405)
+    assert client.post("/api/practice/sets/s/problems/p/attempt",
+                       json={"answer": "x"}).status_code in (404, 405)
+    assert client.get("/api/jobs").status_code == 200
+    assert client.get("/api/demos/nope").status_code == 404
 
 
 def test_extract_route_queues_engine_backed_job(client: TestClient, fake_engine: FakeEngine, app_state) -> None:
