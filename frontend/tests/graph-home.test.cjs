@@ -92,7 +92,7 @@ test('graph settings clamp, default and survive corrupt storage', () => {
   assert.equal(s.edgeWidth, 2);
   assert.equal(s.labelZoom, gs.GRAPH_SETTING_RANGES.labelZoom.default);
   assert.equal('bogus' in s, false);
-  assert.equal(gs.withSetting(s, 'nodeSize', 1).nodeSize, gs.GRAPH_SETTING_RANGES.nodeSize.min);
+  assert.equal(gs.withSetting(s, 'nodeSize', 0.1).nodeSize, gs.GRAPH_SETTING_RANGES.nodeSize.min);
   assert.equal(gs.isDefaultSettings(gs.parseGraphSettings(gs.serializeGraphSettings(gs.DEFAULT_GRAPH_SETTINGS))), true);
   for (const k of gs.GRAPH_SETTING_KEYS) {
     const r = gs.GRAPH_SETTING_RANGES[k];

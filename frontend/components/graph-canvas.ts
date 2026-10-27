@@ -1,13 +1,19 @@
 /**
- * 2D Canvas knowledge-graph engine — "constellation" look.
+ * 2D Canvas knowledge-graph engine — radial "flower" constellation.
  *
+ * - radial layout (lib/radial-layout): each cluster owns an angular sector around
+ *   an empty centre, derivation chains grow outward ring by ring (premises inside,
+ *   conclusions outside) and unconnected propositions scatter on an outer band;
+ *   the engine adds repulsion and link springs on top of those radial forces;
  * - tiny dot nodes joined by hairline straight threads (no arrowheads);
  * - chains with ≥ 2 premises meet at a virtual junction point before the
  *   conclusion (lib/graph-wire `buildConstellation`), which gives the branching,
  *   tree-like shape; junctions take part in the physics but are never drawn as
  *   nodes, labelled, picked or counted;
- * - one soft blurred nebula per cluster (birth session) behind its nodes;
- * - small unboxed labels from a zoom threshold (hovered/selected/focused always);
+ * - one soft blurred nebula per cluster (birth session): its nodes and edges
+ *   dilated, blurred, then tinted once (overlapping clusters blend);
+ * - micro labels under every node (world-sized: tiny at overview, legible on zoom),
+ *   full contrast from a zoom threshold (hovered/selected/focused always);
  * - hover brightens a node and its threads, the rest dims slightly;
  * - multi-selection ring (Shift/⌘-click toggles, plain click focuses);
  * - dragging pins a node and reports its position (persisted by the caller);
@@ -20,8 +26,9 @@
 import { palette, toneAlpha, withAlpha, type PaletteTone } from "@/lib/palette";
 import type { Point } from "@/lib/roadmap-layout";
 import { RoadmapLayer } from "./roadmap-canvas";
-import { DEFAULT_GRAPH_SETTINGS, type GraphSettings } from "@/lib/graph-settings";
-import { buildConstellation, type ConstellationLink } from "@/lib/graph-wire";
+import { DEFAULT_GRAPH_SETTINGS, GRAPH_SETTING_KEYS, isLayoutSetting, type GraphSettings } from "@/lib/graph-settings";
+import { buildConstellation, type ConstellationLink, type ConstellationWiring } from "@/lib/graph-wire";
+import { applyRadialForces, planRadial, seedPosition, unitHash, type RadialArc, type RadialPlan } from "@/lib/radial-layout";
 import type { ConceptNode, GraphCluster, GraphEdge, LogicalChain, RoadmapItem } from "@/lib/types";
 
 /** Anything the simulation moves. */
@@ -50,6 +57,16 @@ interface CanvasLink {
   source: Body;
   target: Body;
   kind: ConstellationLink["kind"];
+  /** Joins two different sessions: a weak spring and a faint line, so petals stay apart. */
+  cross: boolean;
+}
+
+interface NodeLabel {
+  node: CanvasNode;
+  /** 0 active, 1 neighbour of the active node, 2 rest, 3 dimmed. */
+  rank: number;
+  hot: boolean;
+  dimmed: boolean;
 }
 
 interface ClusterGroup {
@@ -58,7 +75,10 @@ interface ClusterGroup {
   nodes: CanvasNode[];
   junctions: JunctionBody[];
   centroid: Point;
-  top: number;
+  /** Where the session name goes: the outer tip of the cluster's petal, on its sector bisector. */
+  labelAt: Point;
+  /** Unit direction of the sector bisector (the label is pushed outward along it). */
+  labelDir: Point;
   tone: PaletteTone;
 }
 
@@ -73,26 +93,36 @@ export interface GraphCanvasCallbacks {
   onNodeMoved?: (id: string, pos: Point) => void;
 }
 
-/** Nebula tones cycle through the palette (very low alpha), never off-token colours. */
+/** Nebula tones by sector order (neighbours differ), mixed from palette tokens only. */
 const NEBULA_TONES: PaletteTone[] = [
-  "success",
-  "warning",
-  "danger",
   "mutedForeground",
-  ["success", "warning", 0.5],
-  ["danger", "foreground", 0.45],
-  ["warning", "danger", 0.5],
-  ["success", "foreground", 0.5],
+  ["success", "mutedForeground", 0.55],
+  ["warning", "success", 0.5],
+  ["border", "foreground", 0.25],
+  "warning",
+  ["success", "border", 0.35],
+  ["danger", "mutedForeground", 0.55],
+  ["mutedForeground", "success", 0.3],
+  ["warning", "danger", 0.4],
 ];
 const UI_FONT = "'JetBrains Mono', monospace";
 /** Minimum pick radius in screen px (dots are tiny). */
 const MIN_HIT_PX = 8;
-/** Nebula geometry in world units. */
-const NEBULA_RADIUS = 26;
-const NEBULA_CORE_RADIUS = 12;
-const NEBULA_BLUR = 22;
 /** The nebula buffer is rendered at a fraction of the viewport (it is blurred anyway). */
 const NEBULA_SCALE = 0.25;
+/** Peak opacity of a region at full intensity (applied once, after the blur). */
+const NEBULA_PEAK = 0.6;
+/** Edge colour: a light grey-lavender hairline. */
+const EDGE_TONE: PaletteTone = ["mutedForeground", "foreground", 0.4];
+/** Links between sessions: spring factor and line opacity factor. */
+const CROSS_SPRING = 0.08;
+const CROSS_ALPHA = 0.3;
+/** Extra world distance between the flower's right edge and the ⇶ Roteiro region (their nebulae must not touch). */
+const ROADMAP_CLEARANCE = 120;
+/** Roadmap labels are screen px; this maps the world-unit node label size onto them. */
+const ROADMAP_LABEL_SCALE = 2.7;
+/** Labels below this screen size are not drawn at all (unreadable dust). */
+const MIN_LABEL_PX = 1.1;
 /** Junctions repel less and sit closer, so premises visibly converge. */
 const JUNCTION_REPULSION = 0.3;
 const JUNCTION_LINK_FACTOR = 0.55;
@@ -102,7 +132,26 @@ const FIT_TOP = 100;
 const FIT_BOTTOM = 250;
 const FIT_MAX_ZOOM = 1.4;
 
-const shortLabel = (text: string) => (text.length > 36 ? `${text.slice(0, 35)}…` : text);
+/** Node label wrapped in up to three short lines (whole words when possible). */
+function labelLines(text: string, width = 18): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (const w of words) {
+    if (!line) line = w;
+    else if (line.length + 1 + w.length <= width) line += ` ${w}`;
+    else {
+      lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length > 3) {
+    lines.length = 3;
+    lines[2] = lines[2].length > width - 1 ? `${lines[2].slice(0, width - 1)}…` : `${lines[2]}…`;
+  }
+  return lines.map((l) => (l.length > width + 6 ? `${l.slice(0, width + 5)}…` : l));
+}
 
 export class GraphCanvasEngine {
   private canvas: HTMLCanvasElement;
@@ -127,6 +176,13 @@ export class GraphCanvasEngine {
   private pulsePhase = 0.35;
 
   private nebula: HTMLCanvasElement | null = null;
+  /** Per-cluster scratch buffer: the region is drawn opaque here, then blurred + tinted once. */
+  private scratch: HTMLCanvasElement | null = null;
+  /** Radial plan (sectors, depth rings, outer band) of the current data. */
+  private plan: RadialPlan | null = null;
+  private wiring: ConstellationWiring = { junctions: [], links: [] };
+  private labelCache = new Map<string, string[]>();
+  private labelWidth = new Map<string, number>();
 
   private selection = new Set<string>();
   private focusedId: string | null = null;
@@ -168,57 +224,39 @@ export class GraphCanvasEngine {
     const prev = new Map(this.nodes.map((n) => [n.id, n]));
     const prevJunctions = new Map(this.junctions.map((j) => [j.id, j]));
 
-    // Seed new nodes around one anchor per cluster so sessions start apart.
-    const clusterIds = [...new Set(rawNodes.map((n) => n.cluster ?? ""))];
-    const anchorRadius = 70 * Math.sqrt(Math.max(1, clusterIds.length));
-    const anchors = new Map<string, Point>(
-      clusterIds.map((id, i) => {
-        const a = (i / Math.max(1, clusterIds.length)) * Math.PI * 2;
-        return [id, clusterIds.length > 1 ? { x: Math.cos(a) * anchorRadius, y: Math.sin(a) * anchorRadius } : { x: 0, y: 0 }];
-      }),
-    );
-    const seeded = new Map<string, number>();
+    const wiring = buildConstellation(rawNodes, rawEdges, chains);
+    this.clusterOrder = clusters.map((c) => c.id);
+    this.wiring = wiring;
+    this.plan = this.buildPlan(rawNodes);
+    const plan = this.plan;
 
+    // Existing bodies keep their place (no jumps); persisted (dragged) ones are
+    // fixed; new ones start on their ring inside their cluster's sector.
     this.nodeMap.clear();
     this.nodes = rawNodes.map((n) => {
       const old = prev.get(n.id);
       const persisted = typeof n.x === "number" && typeof n.y === "number";
-      let x: number;
-      let y: number;
-      if (old) {
-        x = old.x;
-        y = old.y;
-      } else if (persisted) {
-        x = n.x as number;
-        y = n.y as number;
-      } else {
-        // Sunflower spiral around the cluster anchor (jitter breaks symmetric states).
-        const anchor = anchors.get(n.cluster ?? "") ?? { x: 0, y: 0 };
-        const k = seeded.get(n.cluster ?? "") ?? 0;
-        seeded.set(n.cluster ?? "", k + 1);
-        const angle = k * 2.399;
-        const radius = 12 * Math.sqrt(k + 1);
-        x = anchor.x + Math.cos(angle) * radius + (Math.random() - 0.5) * 6;
-        y = anchor.y + Math.sin(angle) * radius + (Math.random() - 0.5) * 6;
-      }
-      const node: CanvasNode = { ...n, x, y, vx: 0, vy: 0, fixed: persisted || (old?.fixed ?? false) };
+      const seed = old ?? (persisted ? { x: n.x as number, y: n.y as number } : seedPosition(plan, n.id) ?? { x: 0, y: 0 });
+      const node: CanvasNode = { ...n, x: seed.x, y: seed.y, vx: 0, vy: 0, fixed: persisted || (old?.fixed ?? false) };
       this.nodeMap.set(n.id, node);
       return node;
     });
+    this.labelCache.clear();
+    this.labelWidth.clear();
 
-    const wiring = buildConstellation(rawNodes, rawEdges, chains);
     this.junctions = wiring.junctions.map((j) => {
       const old = prevJunctions.get(j.id);
       const ends = [...j.premises, j.conclusion].map((id) => this.nodeMap.get(id)).filter((p): p is CanvasNode => !!p);
       const cx = ends.reduce((s, p) => s + p.x, 0) / Math.max(1, ends.length);
       const cy = ends.reduce((s, p) => s + p.y, 0) / Math.max(1, ends.length);
+      const jitter = (k: number) => (unitHash(j.id, k) - 0.5) * 4;
       return {
         id: j.id,
         premises: j.premises,
         conclusion: j.conclusion,
         cluster: j.cluster,
-        x: old?.x ?? cx + (Math.random() - 0.5) * 4,
-        y: old?.y ?? cy + (Math.random() - 0.5) * 4,
+        x: old?.x ?? cx + jitter(3),
+        y: old?.y ?? cy + jitter(4),
         vx: 0,
         vy: 0,
         fixed: false,
@@ -230,16 +268,28 @@ export class GraphCanvasEngine {
     for (const l of wiring.links) {
       const s = bodyMap.get(l.source);
       const t = bodyMap.get(l.target);
-      if (s && t && s !== t) this.links.push({ source: s, target: t, kind: l.kind });
+      if (s && t && s !== t) this.links.push({ source: s, target: t, kind: l.kind, cross: (s.cluster ?? "") !== (t.cluster ?? "") });
     }
 
     this.clusterLabels = new Map(clusters.map((c) => [c.id, c.label]));
-    this.clusterOrder = clusters.map((c) => c.id);
     this.updateClusters();
     for (const id of [...this.selection]) if (!this.nodeMap.has(id)) this.selection.delete(id);
     if (this.focusedId && !this.nodeMap.has(this.focusedId)) this.focusedId = null;
     this.reheat(prev.size === 0 ? 1 : 0.5);
     this.start();
+  }
+
+  /** Radial plan of the current graph: derivation arcs = direct links + junction premise→conclusion pairs. */
+  private buildPlan(nodes: readonly { id: string; cluster?: string }[]): RadialPlan {
+    const arcs: RadialArc[] = [];
+    for (const l of this.wiring.links) if (l.kind === "direct") arcs.push({ premise: l.source, conclusion: l.target });
+    for (const j of this.wiring.junctions) for (const p of j.premises) arcs.push({ premise: p, conclusion: j.conclusion });
+    const s = this.settings;
+    return planRadial(nodes, this.wiring.junctions, arcs, {
+      ringRadius: s.ringRadius,
+      depthSpacing: s.depthSpacing,
+      clusterOrder: this.clusterOrder,
+    });
   }
 
   /** ⇶ Roteiro: the steps to draw (null/empty = off), their track tone and the galaxy order. */
@@ -339,9 +389,18 @@ export class GraphCanvasEngine {
   }
 
   public setSettings(settings: GraphSettings) {
+    const prev = this.settings;
     this.settings = settings;
-    this.reheat(0.6);
-    this.start();
+    if (prev.ringRadius !== settings.ringRadius || prev.depthSpacing !== settings.depthSpacing) {
+      this.plan = this.buildPlan(this.nodes);
+    }
+    const physics = GRAPH_SETTING_KEYS.some((k) => isLayoutSetting(k) && prev[k] !== settings[k]);
+    if (physics) {
+      this.reheat(0.6);
+      this.start();
+    } else {
+      this.requestRender();
+    }
   }
 
   public setSelection(ids: readonly string[]) {
@@ -415,7 +474,9 @@ export class GraphCanvasEngine {
     const h = Math.max(maxY - minY + 60, 120);
     // Capped below the label zoom: the overview reads as a star map, labels come on zoom/hover.
     const cap = Math.min(FIT_MAX_ZOOM, this.settings.labelZoom * 0.9);
-    this.zoom = Math.max(this.minZoom, Math.min(cap, Math.min(this.availW(width) / w, availH / h)));
+    // Session names hang off the petal tips (screen-sized): keep room for them at the sides.
+    const pad = this.settings.clusterLabels >= 1 ? Math.min(150, this.availW(width) * 0.12) : 0;
+    this.zoom = Math.max(this.minZoom, Math.min(cap, Math.min((this.availW(width) - 2 * pad) / w, availH / h)));
     this.panX = this.insetLeft + this.availW(width) / 2 - ((minX + maxX) / 2) * this.zoom;
     this.panY = top + availH / 2 - ((minY + maxY) / 2) * this.zoom;
   }
@@ -484,9 +545,7 @@ export class GraphCanvasEngine {
   private step() {
     const s = this.settings;
     const kRepel = s.repulsion * this.alpha;
-    const kCenter = s.centerGravity * this.alpha;
-    const kCluster = s.clusterCohesion * this.alpha;
-    const damping = 0.82;
+    const damping = 1 - s.friction;
     const bodies = this.bodies;
     const n = bodies.length;
     const realCount = this.nodes.length;
@@ -517,7 +576,8 @@ export class GraphCanvasEngine {
       const dy = e.target.y - e.source.y;
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
       const rest = e.kind === "direct" ? s.linkDistance : s.linkDistance * JUNCTION_LINK_FACTOR;
-      const f = (d - rest) * s.attraction;
+      // Springs cool with alpha like every other force, so the radial rings win at rest.
+      const f = (d - rest) * s.attraction * this.alpha * (e.cross ? CROSS_SPRING : 1);
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       e.source.vx += fx;
@@ -526,12 +586,13 @@ export class GraphCanvasEngine {
       e.target.vy -= fy;
     }
 
-    for (const c of this.clusters) {
-      if (c.nodes.length < 2) continue;
-      for (const body of [...c.nodes, ...c.junctions]) {
-        body.vx += (c.centroid.x - body.x) * kCluster;
-        body.vy += (c.centroid.y - body.y) * kCluster;
-      }
+    if (this.plan) {
+      applyRadialForces(
+        bodies,
+        this.plan,
+        { depthStrength: s.depthStrength, clusterPull: s.clusterCohesion, centerPull: s.centerGravity },
+        this.alpha,
+      );
     }
 
     for (const body of bodies) {
@@ -540,8 +601,8 @@ export class GraphCanvasEngine {
         body.vy = 0;
         continue;
       }
-      body.vx = (body.vx - body.x * kCenter) * damping;
-      body.vy = (body.vy - body.y * kCenter) * damping;
+      body.vx *= damping;
+      body.vy *= damping;
       body.x += body.vx;
       body.y += body.vy;
     }
@@ -565,23 +626,35 @@ export class GraphCanvasEngine {
     for (const [id, members] of groups) {
       const { nodes } = members;
       if (nodes.length === 0) continue;
+      // The label sits on the petal (connected nodes), not pulled out by the outer band.
+      const core = nodes.filter((m) => !this.plan?.isolated.has(m.id));
+      const pts = core.length > 0 ? core : nodes;
       let cx = 0;
       let cy = 0;
-      let top = Infinity;
-      for (const m of nodes) {
+      for (const m of pts) {
         cx += m.x;
         cy += m.y;
-        top = Math.min(top, m.y);
       }
-      const order = this.clusterOrder.indexOf(id);
+      const sector = this.plan?.sectors.get(id);
+      const index = sector?.index ?? fallback++;
+      const centroid = { x: cx / pts.length, y: cy / pts.length };
+      let labelAt = centroid;
+      let labelDir = { x: 0, y: -1 };
+      if (sector) {
+        const radii = pts.map((m) => Math.hypot(m.x, m.y)).sort((a, b) => a - b);
+        const rim = radii[Math.floor((radii.length - 1) * 0.85)] ?? 0;
+        labelDir = { x: Math.cos(sector.mid), y: Math.sin(sector.mid) };
+        labelAt = { x: labelDir.x * rim, y: labelDir.y * rim };
+      }
       clusters.push({
         id,
         label: this.clusterLabels.get(id) ?? id,
         nodes,
         junctions: members.junctions,
-        centroid: { x: cx / nodes.length, y: cy / nodes.length },
-        top,
-        tone: NEBULA_TONES[(order >= 0 ? order : fallback++) % NEBULA_TONES.length],
+        centroid,
+        labelAt,
+        labelDir,
+        tone: NEBULA_TONES[index % NEBULA_TONES.length],
       });
     }
     this.clusters = clusters;
@@ -605,7 +678,7 @@ export class GraphCanvasEngine {
       x1 = Math.max(x1, n.x);
       y1 = Math.max(y1, n.y);
     }
-    this.roadmap.place({ x0, y0, x1, y1 });
+    this.roadmap.place({ x0, y0, x1: x1 + ROADMAP_CLEARANCE, y1 });
   }
 
   // --- Rendering -------------------------------------------------------------
@@ -645,7 +718,7 @@ export class GraphCanvasEngine {
         zoom: this.zoom,
         nodeSize: s.nodeSize,
         edgeWidth: s.edgeWidth,
-        labelSize: s.labelSize,
+        labelSize: s.labelSize * ROADMAP_LABEL_SCALE,
         labelZoom: s.labelZoom,
         regionIntensity: s.regionIntensity,
         hoveredId: this.hoveredId,
@@ -658,79 +731,117 @@ export class GraphCanvasEngine {
     this.renderNodes(ctx, hot);
   }
 
-  /** Soft blurred colour cloud per cluster, drawn in screen space from a low-res buffer. */
+  /**
+   * Soft colour cloud per cluster, drawn in screen space from a low-res buffer:
+   * the cluster's nodes and edges are dilated into an opaque silhouette on a
+   * scratch buffer, which is then blurred and tinted ONCE onto the nebula buffer
+   * (no alpha build-up inside a cluster; overlapping clusters blend).
+   */
   private renderNebulae(ctx: CanvasRenderingContext2D) {
     const intensity = this.settings.regionIntensity;
     if (intensity <= 0 || (this.clusters.length === 0 && !this.roadmap.enabled)) return;
     const { width, height } = this.viewport();
     const bw = Math.max(1, Math.ceil(width * NEBULA_SCALE));
     const bh = Math.max(1, Math.ceil(height * NEBULA_SCALE));
-    if (!this.nebula) this.nebula = document.createElement("canvas");
-    const buf = this.nebula;
-    if (buf.width !== bw || buf.height !== bh) {
-      buf.width = bw;
-      buf.height = bh;
-    }
-    const o = buf.getContext("2d");
-    if (!o) return;
+    const fit = (c: HTMLCanvasElement | null) => {
+      const buf = c ?? document.createElement("canvas");
+      if (buf.width !== bw || buf.height !== bh) {
+        buf.width = bw;
+        buf.height = bh;
+      }
+      return buf;
+    };
+    this.nebula = fit(this.nebula);
+    this.scratch = fit(this.scratch);
+    const o = this.nebula.getContext("2d");
+    const sc = this.scratch.getContext("2d");
+    if (!o || !sc) return;
     o.setTransform(1, 0, 0, 1, 0, 0);
     o.filter = "none";
+    o.globalAlpha = 1;
     o.clearRect(0, 0, bw, bh);
     const k = NEBULA_SCALE * this.zoom;
-    o.setTransform(k, 0, 0, k, this.panX * NEBULA_SCALE, this.panY * NEBULA_SCALE);
     const supportsFilter = typeof o.filter === "string";
-    const blurPx = Math.max(1.5, NEBULA_BLUR * k);
+    const blurPx = Math.max(1.5, this.settings.regionBlur * k);
+    const dilation = this.settings.regionDilation;
 
-    const layers: [number, number][] = [
-      [NEBULA_RADIUS, 0.2],
-      [NEBULA_CORE_RADIUS, 0.12],
-    ];
-    for (const c of this.clusters) {
-      for (const [radius, alpha] of layers) {
-        if (supportsFilter) {
-          // One union path per cluster: no alpha build-up inside a cluster; the blur makes it a cloud.
-          o.filter = `blur(${blurPx}px)`;
-          o.beginPath();
-          for (const p of c.nodes) {
-            o.moveTo(p.x + radius, p.y);
-            o.arc(p.x, p.y, radius, 0, Math.PI * 2);
-          }
-          o.fillStyle = toneAlpha(c.tone, alpha * intensity);
-          o.fill();
-        } else {
-          // Fallback without canvas filters: layered radial gradients.
-          for (const p of c.nodes) {
-            const r = radius * 2;
-            const g = o.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-            g.addColorStop(0, toneAlpha(c.tone, (alpha * intensity) / 2));
-            g.addColorStop(1, toneAlpha(c.tone, 0));
-            o.fillStyle = g;
-            o.fillRect(p.x - r, p.y - r, r * 2, r * 2);
-          }
-        }
-      }
+    const byCluster = new Map<string, CanvasLink[]>();
+    for (const l of this.links) {
+      const c = l.target.cluster ?? l.source.cluster;
+      if (!c || (l.source.cluster && l.source.cluster !== c)) continue;
+      if (!byCluster.has(c)) byCluster.set(c, []);
+      byCluster.get(c)!.push(l);
     }
+    for (const c of this.clusters) {
+      sc.setTransform(1, 0, 0, 1, 0, 0);
+      sc.clearRect(0, 0, bw, bh);
+      sc.setTransform(k, 0, 0, k, this.panX * NEBULA_SCALE, this.panY * NEBULA_SCALE);
+      const colour = toneAlpha(c.tone, 1);
+      sc.strokeStyle = colour;
+      sc.fillStyle = colour;
+      sc.lineCap = "round";
+      sc.lineWidth = dilation * 1.6;
+      sc.beginPath();
+      for (const l of byCluster.get(c.id) ?? []) {
+        sc.moveTo(l.source.x, l.source.y);
+        sc.lineTo(l.target.x, l.target.y);
+      }
+      sc.stroke();
+      sc.beginPath();
+      for (const p of c.nodes) {
+        const r = this.plan?.isolated.has(p.id) ? dilation * 0.45 : dilation;
+        sc.moveTo(p.x + r, p.y);
+        sc.arc(p.x, p.y, r, 0, Math.PI * 2);
+      }
+      sc.fill();
+      o.globalAlpha = Math.min(1, intensity * NEBULA_PEAK);
+      if (supportsFilter) o.filter = `blur(${blurPx}px)`;
+      o.drawImage(this.scratch, 0, 0);
+      o.filter = "none";
+    }
+    o.globalAlpha = 1;
+    o.setTransform(k, 0, 0, k, this.panX * NEBULA_SCALE, this.panY * NEBULA_SCALE);
     this.roadmap.drawNebulae(o, intensity, blurPx, supportsFilter);
     o.filter = "none";
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(buf, 0, 0, bw, bh, 0, 0, bw / NEBULA_SCALE, bh / NEBULA_SCALE);
+    ctx.drawImage(this.nebula, 0, 0, bw, bh, 0, 0, bw / NEBULA_SCALE, bh / NEBULA_SCALE);
     ctx.restore();
   }
 
+  /** Session names at the outer tip of their petals: screen-sized, fading out as node labels become legible. */
   private renderClusterLabels(ctx: CanvasRenderingContext2D) {
-    if (this.settings.regionIntensity <= 0 || this.zoom < 0.3) return;
-    const size = 9 / this.zoom;
+    const s = this.settings;
+    if (s.clusterLabels < 1) return;
+    const fade = Math.max(0, Math.min(1, 1.6 - this.zoom / (s.labelZoom * 0.5)));
+    if (fade <= 0.02) return;
+    const size = s.clusterLabelSize / this.zoom;
     ctx.save();
     ctx.font = `500 ${size}px ${UI_FONT}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillStyle = withAlpha("mutedForeground", 0.3 + 0.25 * this.settings.regionIntensity);
-    for (const c of this.clusters) {
+    ctx.fillStyle = withAlpha("foreground", 0.55 * fade);
+    const push = 14 / this.zoom;
+    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    // Largest sessions first; a name that would overlap one already drawn is skipped.
+    for (const c of [...this.clusters].sort((a, b) => b.nodes.length - a.nodes.length)) {
       if (c.nodes.length < 3 || !c.label) continue;
-      const label = c.label.length > 40 ? `${c.label.slice(0, 39)}…` : c.label;
+      const label = c.label.length > 34 ? `${c.label.slice(0, 33)}…` : c.label;
       const text = label.toUpperCase().split("").join(String.fromCharCode(0x200a));
-      ctx.fillText(text, c.centroid.x, c.top - 14 / this.zoom);
+      const { x: dx, y: dy } = c.labelDir;
+      // The text starts at the petal tip and grows outward; on the right side it
+      // grows inward while ⇶ Roteiro occupies that side.
+      const inward = dx > 0.35 && this.roadmap.enabled;
+      ctx.textAlign = dx > 0.35 ? (inward ? "right" : "left") : dx < -0.35 ? "right" : "center";
+      ctx.textBaseline = dy > 0.35 ? "top" : dy < -0.35 ? "bottom" : "middle";
+      const k = inward ? -push : push;
+      const x = c.labelAt.x + dx * k;
+      const y = c.labelAt.y + dy * k;
+      const w = ctx.measureText(text).width;
+      const x0 = ctx.textAlign === "left" ? x : ctx.textAlign === "right" ? x - w : x - w / 2;
+      const y0 = ctx.textBaseline === "top" ? y : ctx.textBaseline === "bottom" ? y - size : y - size / 2;
+      const box = { x0, y0, x1: x0 + w, y1: y0 + size };
+      if (placed.some((p) => p.x0 < box.x1 && box.x0 < p.x1 && p.y0 < box.y1 && box.y0 < p.y1)) continue;
+      placed.push(box);
+      ctx.fillText(text, x, y);
     }
     ctx.restore();
   }
@@ -762,18 +873,21 @@ export class GraphCanvasEngine {
   }
 
   private renderLinks(ctx: CanvasRenderingContext2D, hot: ReturnType<GraphCanvasEngine["hotState"]>) {
-    const base = withAlpha("mutedForeground", hot.dim ? 0.22 : 0.4);
+    const alpha = this.settings.edgeAlpha * (hot.dim ? 0.55 : 1);
     ctx.save();
     ctx.lineCap = "round";
-    ctx.strokeStyle = base;
+    ctx.strokeStyle = toneAlpha(EDGE_TONE, alpha);
     ctx.lineWidth = this.lineWidth();
-    ctx.beginPath();
-    for (const l of this.links) {
-      if (hot.links.has(l)) continue;
-      ctx.moveTo(l.source.x, l.source.y);
-      ctx.lineTo(l.target.x, l.target.y);
+    for (const cross of [false, true]) {
+      if (cross) ctx.strokeStyle = toneAlpha(EDGE_TONE, alpha * CROSS_ALPHA);
+      ctx.beginPath();
+      for (const l of this.links) {
+        if (l.cross !== cross || hot.links.has(l)) continue;
+        ctx.moveTo(l.source.x, l.source.y);
+        ctx.lineTo(l.target.x, l.target.y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
     if (hot.links.size > 0) {
       ctx.strokeStyle = withAlpha("foreground", 0.85);
       ctx.lineWidth = this.lineWidth(1.4);
@@ -790,8 +904,7 @@ export class GraphCanvasEngine {
   private renderNodes(ctx: CanvasRenderingContext2D, hot: ReturnType<GraphCanvasEngine["hotState"]>) {
     const r = this.dotRadius();
     const px = 1 / this.zoom;
-    const showAll = this.zoom >= this.settings.labelZoom;
-    const labels: { node: CanvasNode; rank: number; hot: boolean; dimmed: boolean }[] = [];
+    const labels: NodeLabel[] = [];
     for (const node of this.nodes) {
       const focused = node.id === this.focusedId;
       const hovered = node.id === this.hoveredId;
@@ -815,60 +928,65 @@ export class GraphCanvasEngine {
       }
       ctx.beginPath();
       ctx.arc(node.x, node.y, active ? r * 1.25 : r, 0, Math.PI * 2);
-      ctx.fillStyle = active || near ? palette.foreground : withAlpha("foreground", dimmed ? 0.4 : 0.85);
+      ctx.fillStyle = active || near ? palette.foreground : withAlpha("foreground", dimmed ? 0.4 : 0.9);
       ctx.fill();
 
-      if (active) labels.push({ node, rank: 0, hot: true, dimmed: false });
-      else if (showAll) labels.push({ node, rank: near ? 1 : dimmed ? 3 : 2, hot: false, dimmed });
+      labels.push({ node, rank: active ? 0 : near ? 1 : dimmed ? 3 : 2, hot: active, dimmed });
     }
     this.renderNodeLabels(ctx, labels, r);
   }
 
-  /** Labels in priority order (active, neighbours, rest); one that would overlap a placed label is skipped. */
-  private renderNodeLabels(
-    ctx: CanvasRenderingContext2D,
-    labels: { node: CanvasNode; rank: number; hot: boolean; dimmed: boolean }[],
-    r: number,
-  ) {
-    if (labels.length === 0) return;
-    labels.sort((a, b) => a.rank - b.rank);
-    const size = this.settings.labelSize / this.zoom;
-    const gap = 2 / this.zoom;
-    ctx.save();
-    ctx.font = `400 ${size}px ${UI_FONT}`;
-    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
-    for (const l of labels) {
-      const text = shortLabel(l.node.name);
-      const w = ctx.measureText(text).width;
-      const y = l.node.y + r + 4 / this.zoom;
-      const box = { x0: l.node.x - w / 2 - gap, y0: y - gap, x1: l.node.x + w / 2 + gap, y1: y + size * 1.15 + gap };
-      if (!l.hot && placed.some((p) => p.x0 < box.x1 && box.x0 < p.x1 && p.y0 < box.y1 && box.y0 < p.y1)) continue;
-      placed.push(box);
-      this.drawLabel(ctx, l.node.name, l.node.x, l.node.y + r, l.hot, false, l.dimmed);
+  /** Wrapped label lines and their widest line at a 10px reference font (cached per node). */
+  private measuredLabel(ctx: CanvasRenderingContext2D, node: CanvasNode) {
+    let lines = this.labelCache.get(node.id);
+    if (!lines) {
+      lines = labelLines(node.name);
+      this.labelCache.set(node.id, lines);
     }
-    ctx.restore();
+    let width = this.labelWidth.get(node.id);
+    if (width === undefined) {
+      ctx.save();
+      ctx.font = `400 10px ${UI_FONT}`;
+      width = Math.max(0, ...lines.map((l) => ctx.measureText(l).width));
+      ctx.restore();
+      this.labelWidth.set(node.id, width);
+    }
+    return { lines, width };
   }
 
-  /** Small unboxed label centred under a dot whose bottom edge is at `y`. */
-  private drawLabel(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    hot: boolean,
-    ghost: boolean,
-    dimmed = false,
-  ) {
-    const size = this.settings.labelSize / this.zoom;
-    const label = shortLabel(text);
+  /**
+   * Labels under the dots, in priority order (active, neighbours, rest). Every
+   * node gets one: world-sized micro text at overview (dropped below ~1px), full
+   * contrast from the label zoom; active labels keep a legible minimum size. A
+   * label that would overlap an already placed one is skipped.
+   */
+  private renderNodeLabels(ctx: CanvasRenderingContext2D, labels: NodeLabel[], r: number) {
+    if (labels.length === 0) return;
+    labels.sort((a, b) => a.rank - b.rank);
+    const s = this.settings;
+    const microPx = s.labelSize * this.zoom;
+    const crisp = Math.max(0, Math.min(1, (this.zoom - s.labelZoom * 0.4) / (s.labelZoom * 0.6)));
+    const gap = 1.5 / this.zoom;
+    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
     ctx.save();
-    ctx.font = `${hot ? 500 : 400} ${size}px ${UI_FONT}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillStyle = hot
-      ? palette.foreground
-      : withAlpha("mutedForeground", ghost ? 0.75 : dimmed ? 0.35 : 0.8);
-    ctx.fillText(label, x, y + 4 / this.zoom);
+    for (const l of labels) {
+      if (!l.hot && microPx < MIN_LABEL_PX) continue;
+      const size = l.hot ? Math.max(s.labelSize, 11 / this.zoom) : s.labelSize;
+      const { lines, width } = this.measuredLabel(ctx, l.node);
+      const w = (width * size) / 10;
+      const top = l.node.y + r + size * 0.35;
+      const lineH = size * 1.15;
+      const box = { x0: l.node.x - w / 2 - gap, y0: top - gap, x1: l.node.x + w / 2 + gap, y1: top + lines.length * lineH + gap };
+      if (!l.hot && placed.some((p) => p.x0 < box.x1 && box.x0 < p.x1 && p.y0 < box.y1 && box.y0 < p.y1)) continue;
+      placed.push(box);
+      ctx.font = `${l.hot ? 500 : 400} ${size}px ${UI_FONT}`;
+      ctx.fillStyle = l.hot
+        ? palette.foreground
+        : withAlpha("mutedForeground", (l.dimmed ? 0.35 : 0.45 + 0.4 * crisp) * (l.rank === 1 ? 1.15 : 1));
+      lines.forEach((line, i) => ctx.fillText(line, l.node.x, top + i * lineH));
+    }
     ctx.restore();
   }
 

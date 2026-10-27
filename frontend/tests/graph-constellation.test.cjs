@@ -47,23 +47,26 @@ test('no chains → server edges and depends_on become direct lines once', () =>
   assert.deepEqual(w, {junctions: [], links: [{source: 'a', target: 'b', kind: 'direct'}]});
 });
 
-test('constellation defaults are small and old stored settings are clamped into the new ranges', () => {
+test('radial defaults are small and old stored settings are clamped into the new ranges', () => {
   const d = gs.DEFAULT_GRAPH_SETTINGS;
-  assert.equal(d.nodeSize, 2.5);
-  assert.equal(d.edgeWidth, 0.75);
-  assert.equal(d.labelSize, 9.5);
-  assert.equal(d.linkDistance, 45);
+  assert.equal(d.nodeSize, 2);
+  assert.equal(d.edgeWidth, 0.6);
+  assert.equal(d.labelSize, 3.5, 'labels are world-sized micro text');
+  assert.equal(d.clusterLabels, 1);
+  assert.ok(d.ringRadius > 0 && d.depthSpacing > 0 && d.depthStrength > 0);
   const R = gs.GRAPH_SETTING_RANGES;
-  assert.deepEqual([R.nodeSize.min, R.nodeSize.max], [1, 12]);
-  assert.deepEqual([R.edgeWidth.min, R.edgeWidth.max], [0.25, 3]);
-  assert.deepEqual([R.labelSize.min, R.labelSize.max], [7, 16]);
+  assert.deepEqual([R.nodeSize.min, R.nodeSize.max], [0.5, 8]);
   assert.deepEqual([R.linkDistance.min, R.linkDistance.max], [15, 200]);
-  // Settings saved with the previous big-circle look.
   const old = gs.parseGraphSettings(JSON.stringify({nodeSize: 14, edgeWidth: 4, labelSize: 18, linkDistance: 300, repulsion: 8000}));
-  assert.equal(old.nodeSize, 12);
+  assert.equal(old.nodeSize, 8);
   assert.equal(old.edgeWidth, 3);
-  assert.equal(old.labelSize, 16);
+  assert.equal(old.labelSize, 12);
   assert.equal(old.linkDistance, 200);
   assert.equal(old.repulsion, R.repulsion.max);
-  assert.equal(gs.withSetting(d, 'nodeSize', 0.2).nodeSize, 1);
+  assert.equal(gs.withSetting(d, 'nodeSize', 0.2).nodeSize, 0.5);
+  // Toggles snap to 0/1 and accept booleans.
+  assert.equal(gs.withSetting(d, 'clusterLabels', false).clusterLabels, 0);
+  assert.equal(gs.withSetting(d, 'clusterLabels', 0.7).clusterLabels, 1);
+  assert.equal(gs.GRAPH_SETTINGS_KEY, 'learnharness:graph-settings:v2', 'new key: old physics values are not reused');
+  assert.ok(gs.isLayoutSetting('depthSpacing') && gs.isLayoutSetting('friction') && !gs.isLayoutSetting('regionBlur'));
 });
