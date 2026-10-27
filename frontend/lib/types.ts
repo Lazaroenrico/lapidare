@@ -434,15 +434,33 @@ export interface GraphCluster {
 }
 
 /** Track item not yet completed, rendered as a ghost node when ⇶ Roteiro is on. */
+/** Module (sub-constellation) of a roadmap step; `title` "" = the track's default module. */
+export interface RoadmapModule {
+  id: string;
+  title: string;
+  /** First-appearance order of the module in the track queue. */
+  order: number;
+}
+
 export interface RoadmapItem {
   /** "track:<track_id>:<item_id>" (Fase 14) or legacy "track:<item_id>". */
   id: string;
   title: string;
+  /** "completed" | "active" | "pending" (other server values read as pending). */
   status: string;
   track_id?: string | null;
   track_title?: string | null;
   linked_node_ids: string[];
   depends_on: string[];
+  /** Index in the track queue. */
+  order: number;
+  kind: string;
+  /** e.g. "nivelado" (marked known by the leveling diagnosis). */
+  status_detail: string;
+  stage_label: string;
+  source_ref: string | null;
+  module: RoadmapModule;
+  submodule: { id: string; title: string } | null;
 }
 
 export interface GraphSnapshot {

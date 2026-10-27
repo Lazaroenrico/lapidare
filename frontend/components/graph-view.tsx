@@ -48,16 +48,18 @@ import { GraphSettingsPanel } from "./graph-settings-panel";
 import { UsagePill } from "./usage-pill";
 import { useLocale } from "./locale-provider";
 import { useTracks } from "./use-tracks";
-import { TrackDot } from "./tracks-ui";
 import {
   filterRoadmap,
   findActiveTrack,
+  orderTracks,
   roadmapLegend,
   toneForTrack,
   trackTones,
   type RoadmapScope,
 } from "@/lib/tracks";
 import { tracksText } from "@/lib/tracks-i18n";
+import { RoadmapLegend, RoadmapStepCard } from "./roadmap-ui";
+import { useStartLeveling } from "./leveling-ui";
 import { NavDrawerButton } from "@/components/nav-drawer";
 
 const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
@@ -92,6 +94,17 @@ function buildObsidianUri(vaultName: string, notePath: string): string {
   return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file)}`;
 }
 
+/** Floating step card beside the hovered star, kept inside the canvas. */
+function hoverCardStyle(x: number, y: number, container: HTMLElement | null): React.CSSProperties {
+  const width = container?.clientWidth ?? 1200;
+  const height = container?.clientHeight ?? 800;
+  const cardW = 288;
+  const cardH = 230;
+  const left = x + 18 + cardW > width - 8 ? Math.max(8, x - 18 - cardW) : x + 18;
+  const top = Math.min(Math.max(64, y - 28), Math.max(64, height - cardH - 8));
+  return { left, top };
+}
+
 const chromeButton =
   "flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer";
 
@@ -122,6 +135,10 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   snapshotRef.current = snapshot;
   const [focused, setFocused] = useState<ConceptNode | null>(null);
   const [ghost, setGhost] = useState<RoadmapItem | null>(null);
+  /** Roadmap step under the pointer, with its screen position (floating card). */
+  const [hoverStep, setHoverStep] = useState<{ item: RoadmapItem; x: number; y: number } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverCardRef = useRef(false);
   const [isChainsOpen, setIsChainsOpen] = useState(false);
   const [nodeSearch, setNodeSearch] = useState("");
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
@@ -229,6 +246,19 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       onGhostClick: (item) => {
         setFocused(null);
         setGhost(item);
+        setHoverStep(null);
+      },
+      onRoadmapHover: (item, screen) => {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+        if (item && screen) {
+          setHoverStep({ item, x: screen.x, y: screen.y });
+          return;
+        }
+        // Grace period: the pointer may be travelling to the card's buttons.
+        hoverTimerRef.current = setTimeout(() => {
+          if (!hoverCardRef.current) setHoverStep(null);
+        }, 260);
       },
       onCanvasClick: () => {
         setFocused(null);
@@ -249,6 +279,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
 
     return () => {
       observer?.disconnect();
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (positionsTimerRef.current) {
         clearTimeout(positionsTimerRef.current);
         flushPositions();
@@ -304,19 +335,65 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
     [snapshot.roadmap, roadmapScope, activeTrackId],
   );
   const legend = useMemo(() => roadmapLegend(visibleRoadmap, tones), [visibleRoadmap, tones]);
+  // Galaxy order: the track in focus first, then by creation.
+  const trackOrder = useMemo(() => orderTracks(tracks).map((t) => t.id), [tracks]);
+  const trackSteps = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of snapshot.roadmap) m.set(r.track_id ?? "", (m.get(r.track_id ?? "") ?? 0) + 1);
+    return m;
+  }, [snapshot.roadmap]);
 
   const hasRoadmap = snapshot.roadmap.length > 0;
   useEffect(() => {
-    engineRef.current?.setGhosts(roadmapOn && hasRoadmap ? visibleRoadmap : null, (item) =>
-      item.track_id ? toneForTrack(item.track_id, tones) : null,
+    engineRef.current?.setRoadmap(
+      roadmapOn && hasRoadmap ? visibleRoadmap : null,
+      (item) => (item.track_id ? toneForTrack(item.track_id, tones) : null),
+      { trackOrder, defaultModuleTitle: tt.roadmapDefaultModule },
     );
-    if (!roadmapOn) setGhost(null);
-  }, [roadmapOn, hasRoadmap, visibleRoadmap, tones]);
+    if (!roadmapOn) {
+      setGhost(null);
+      setHoverStep(null);
+    }
+  }, [roadmapOn, hasRoadmap, visibleRoadmap, tones, trackOrder, tt.roadmapDefaultModule]);
 
-  // A ghost hidden by the scope toggle closes its card.
+  // Turning the roadmap on frames the graph and the constellations side by side,
+  // keeping camera fits clear of the legend panel on wide screens.
+  const roadmapFramedRef = useRef(false);
   useEffect(() => {
-    if (ghost && !visibleRoadmap.some((r) => r.id === ghost.id)) setGhost(null);
-  }, [ghost, visibleRoadmap]);
+    const wide = (containerRef.current?.clientWidth ?? 0) >= 900;
+    engineRef.current?.setInsetLeft(roadmapOn && hasRoadmap && wide ? 304 : 0);
+    if (!roadmapOn || !hasRoadmap) {
+      roadmapFramedRef.current = false;
+      return;
+    }
+    if (roadmapFramedRef.current) return;
+    roadmapFramedRef.current = true;
+    engineRef.current?.resetView();
+  }, [roadmapOn, hasRoadmap]);
+
+  // A pinned step follows refetches (status changes) and closes when hidden by the scope toggle.
+  const pinnedStep = useMemo(
+    () => (ghost ? visibleRoadmap.find((r) => r.id === ghost.id) ?? null : null),
+    [ghost, visibleRoadmap],
+  );
+  useEffect(() => {
+    if (ghost && !pinnedStep) setGhost(null);
+  }, [ghost, pinnedStep]);
+  useEffect(() => {
+    engineRef.current?.setPinnedRoadmap(pinnedStep?.id ?? null);
+  }, [pinnedStep]);
+  const hoveredStep = hoverStep ? visibleRoadmap.find((r) => r.id === hoverStep.item.id) ?? null : null;
+
+  const leveling = useStartLeveling();
+  const [stepBusy, setStepBusy] = useState<"teach" | "level" | null>(null);
+  const levelTrack = async (trackId: string) => {
+    setStepBusy("level");
+    try {
+      await leveling.start(trackId);
+    } finally {
+      setStepBusy(null);
+    }
+  };
 
   useEffect(() => {
     engineRef.current?.setSettings(settings);
@@ -385,7 +462,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
 
   const handleStartGhost = async (item: RoadmapItem) => {
     try {
-      setActionLoading("ghost");
+      setStepBusy("teach");
       const session = await createChat({
         mode: "TEACH",
         topic: item.title,
@@ -396,7 +473,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
     } catch (err) {
       console.error("Failed to start track item:", err);
     } finally {
-      setActionLoading(null);
+      setStepBusy(null);
     }
   };
 
@@ -503,6 +580,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
               type="button"
               onClick={() => setRoadmapOn((o) => !o)}
               aria-pressed={roadmapOn}
+              data-roadmap-toggle
               title={t.roadmapTitle}
               className={`${chromeButton} ${roadmapOn ? "bg-accent border-muted-foreground" : ""}`}
             >
@@ -542,43 +620,44 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       </div>
 
       {/* ⇶ Roteiro legend + scope toggle */}
-      {roadmapOn && hasRoadmap && (legend.length > 0 || roadmapTrackCount > 1) && (
-        <div
-          role="group"
-          aria-label={tt.legend}
-          className="absolute top-20 left-4 z-10 w-60 max-w-[calc(100%-32px)] bg-card/90 backdrop-blur border border-border rounded-lg p-2.5 shadow-lg font-ui space-y-2"
-        >
-          {roadmapTrackCount > 1 && activeTrackId && (
-            <div role="group" aria-label={tt.roadmapScope} className="grid grid-cols-2 bg-background p-0.5 border border-border rounded text-[10.5px]">
-              {(["focus", "all"] as const).map((scope) => (
-                <button
-                  key={scope}
-                  type="button"
-                  onClick={() => changeRoadmapScope(scope)}
-                  aria-pressed={roadmapScope === scope}
-                  className={`py-1 px-1 rounded cursor-pointer transition-colors truncate ${
-                    roadmapScope === scope ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {scope === "focus" ? tt.roadmapFocus : tt.roadmapAll}
-                </button>
-              ))}
-            </div>
-          )}
-          {legend.length > 0 && (
-            <ul className="space-y-1">
-              {legend.map((entry) => (
-                <li key={entry.trackId} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  <TrackDot tone={entry.tone} />
-                  <span className={`flex-1 min-w-0 truncate ${entry.trackId === activeTrackId ? "text-foreground" : ""}`} title={entry.title}>
-                    {entry.title}
-                  </span>
-                  <span className="tabular-nums text-[10.5px]">{entry.count}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      {roadmapOn && hasRoadmap && (
+        <RoadmapLegend
+          tt={tt}
+          legend={legend}
+          activeTrackId={activeTrackId}
+          showScope={roadmapTrackCount > 1 && !!activeTrackId}
+          scope={roadmapScope}
+          onScope={changeRoadmapScope}
+          onFrame={() => engineRef.current?.frameRoadmap()}
+          onFrameTrack={(id) => engineRef.current?.frameTrack(id)}
+        />
+      )}
+
+      {/* Floating card of the hovered roadmap step */}
+      {roadmapOn && hoverStep && hoveredStep && hoveredStep.id !== pinnedStep?.id && !isChainsOpen && (
+        <RoadmapStepCard
+          item={hoveredStep}
+          tone={toneForTrack(hoveredStep.track_id, tones)}
+          track={tracks.find((tr) => tr.id === hoveredStep.track_id) ?? null}
+          total={trackSteps.get(hoveredStep.track_id ?? "") ?? 0}
+          linkedCount={hoveredStep.linked_node_ids.filter((id) => validIds.has(id)).length}
+          tt={tt}
+          defaultModule={tt.roadmapDefaultModule}
+          busy={stepBusy}
+          levelError={leveling.error && leveling.error.trackId === hoveredStep.track_id ? leveling.error.text : null}
+          onTeach={() => void handleStartGhost(hoveredStep)}
+          onLevel={() => hoveredStep.track_id && void levelTrack(hoveredStep.track_id)}
+          className="absolute z-30 w-72"
+          style={hoverCardStyle(hoverStep.x, hoverStep.y, containerRef.current)}
+          onMouseEnter={() => {
+            hoverCardRef.current = true;
+            if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          }}
+          onMouseLeave={() => {
+            hoverCardRef.current = false;
+            setHoverStep(null);
+          }}
+        />
       )}
 
       {/* Node card */}
@@ -713,34 +792,23 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       )}
 
       {/* Ghost (pending track item) card */}
-      {ghost && !isChainsOpen && (
-        <div className="absolute top-20 right-4 w-72 bg-card border border-dashed border-muted-foreground rounded-xl p-4 shadow-2xl z-20 font-ui">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="min-w-0">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.ghostLabel}</span>
-              {ghost.track_title && (
-                <span className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground mt-0.5">
-                  {ghost.track_id && <TrackDot tone={toneForTrack(ghost.track_id, tones)} />}
-                  <span className="truncate">{ghost.track_title}</span>
-                </span>
-              )}
-              <h3 className="font-title text-base text-foreground font-bold leading-tight break-words">{ghost.title}</h3>
-            </div>
-            <button type="button" onClick={() => setGhost(null)} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent" title={t.close} aria-label={t.close}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-[11px] text-muted-foreground mb-3">{t.ghostLinked(ghost.linked_node_ids.filter((id) => validIds.has(id)).length)}</p>
-          <button
-            type="button"
-            disabled={actionLoading !== null}
-            onClick={() => void handleStartGhost(ghost)}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-foreground text-background text-xs font-semibold hover:bg-foreground/90 cursor-pointer disabled:opacity-60"
-          >
-            {actionLoading === "ghost" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookOpen className="w-3.5 h-3.5" />}
-            {t.ghostStart}
-          </button>
-        </div>
+      {pinnedStep && !isChainsOpen && (
+        <RoadmapStepCard
+          item={pinnedStep}
+          tone={toneForTrack(pinnedStep.track_id, tones)}
+          track={tracks.find((tr) => tr.id === pinnedStep.track_id) ?? null}
+          total={trackSteps.get(pinnedStep.track_id ?? "") ?? 0}
+          linkedCount={pinnedStep.linked_node_ids.filter((id) => validIds.has(id)).length}
+          tt={tt}
+          defaultModule={tt.roadmapDefaultModule}
+          busy={stepBusy}
+          levelError={leveling.error && leveling.error.trackId === pinnedStep.track_id ? leveling.error.text : null}
+          onTeach={() => void handleStartGhost(pinnedStep)}
+          onLevel={() => pinnedStep.track_id && void levelTrack(pinnedStep.track_id)}
+          onClose={() => setGhost(null)}
+          closeLabel={t.close}
+          className="absolute top-20 right-4 w-72 z-20"
+        />
       )}
 
       {isChainsOpen && (

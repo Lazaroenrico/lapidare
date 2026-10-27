@@ -29,6 +29,7 @@ from uuid import uuid4
 
 import yaml
 
+from learnharness.core.repo_paths import GENERIC_STEMS, LANGUAGE_STEMS
 from learnharness.vault.safety import folder_map, safe_component, safe_path
 from learnharness.vault.transcript_importer import import_transcript_text
 
@@ -590,10 +591,8 @@ def list_repo_files(root: Path, subpath: str = "") -> tuple[list[RepoFile], bool
 # ---------------------------------------------------------------------------
 
 
-# Basenames that say nothing about the lesson. Obsidian resolves [[name#^pN]] by basename,
-# so hundreds of "docs/en.md" files would make every citation ambiguous.
-GENERIC_STEMS = {"readme", "index", "main", "docs", "doc", "lesson", "notes", "content", "src"}
-LANGUAGE_STEMS = {"en", "pt", "pt-br", "pt_br", "es", "fr", "de", "zh", "ja", "ko", "it", "ru"}
+# GENERIC_STEMS / LANGUAGE_STEMS (core/repo_paths): basenames that say nothing about the
+# lesson. Obsidian resolves [[name#^pN]] by basename, so hundreds of "docs/en.md" would clash.
 
 
 def source_basename(relative: str) -> str:

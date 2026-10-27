@@ -239,23 +239,30 @@ export interface RoadmapLegendEntry {
   trackId: string;
   title: string;
   tone: PaletteTone;
+  /** Steps of the track on the roadmap. */
   count: number;
+  /** Of which completed. */
+  done: number;
 }
 
 export function roadmapLegend(
-  items: readonly { track_id?: string | null; track_title?: string | null }[],
+  items: readonly { track_id?: string | null; track_title?: string | null; status?: string }[],
   tones: Map<string, PaletteTone>,
 ): RoadmapLegendEntry[] {
   const out = new Map<string, RoadmapLegendEntry>();
   for (const i of items) {
     if (!i.track_id) continue;
+    const done = i.status === "completed" ? 1 : 0;
     const entry = out.get(i.track_id);
-    if (entry) entry.count += 1;
-    else out.set(i.track_id, {
+    if (entry) {
+      entry.count += 1;
+      entry.done += done;
+    } else out.set(i.track_id, {
       trackId: i.track_id,
       title: i.track_title?.trim() || i.track_id,
       tone: toneForTrack(i.track_id, tones),
       count: 1,
+      done,
     });
   }
   return [...out.values()];

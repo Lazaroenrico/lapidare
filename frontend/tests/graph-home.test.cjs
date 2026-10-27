@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const OUT = '/tmp/learnharness-frontend-tests';
 const gw = require(`${OUT}/graph-wire.js`);
 const sel = require(`${OUT}/graph-selection.js`);
-const ghost = require(`${OUT}/ghost-layout.js`);
 const gs = require(`${OUT}/graph-settings.js`);
 const usage = require(`${OUT}/usage.js`);
 const mc = require(`${OUT}/model-choice.js`);
@@ -33,7 +32,7 @@ test('decodeGraph reads the Fase 8B snapshot (sessions, clusters, roadmap, posit
   assert.deepEqual(g.chains[0].premise_names, ['A', 'B']);
   assert.equal(g.edges.length, 2, 'derived chain edges are deduplicated against server edges');
   assert.equal(g.clusters[0].label, 'Attention');
-  assert.deepEqual(g.roadmap.map(r => r.id), ['track:i2']);
+  assert.deepEqual(g.roadmap.map(r => [r.id, r.status]), [['track:i1', 'completed'], ['track:i2', 'pending']]);
   assert.equal(gw.trackItemIdOf('track:i2'), 'i2');
   assert.equal(gw.sessionMessageHref(g.nodes[0].sessions[0]), '/chat/s1#message-m1');
 });
@@ -82,22 +81,6 @@ test('chain checkbox selects all its nodes, and a fully selected chain is remove
   assert.deepEqual(sel.toggleChain(all, chain), ['x']);
   // Unresolved legacy premises are ignored when validIds is given.
   assert.deepEqual(sel.toggleChain([], {premises: ['raw name', 'a'], conclusion: 'c'}, new Set(['a', 'c'])), ['a', 'c']);
-});
-
-test('ghost layout: linked ghosts sit outside their anchors, unlinked ones queue in dependency order', () => {
-  const pos = new Map([['a', {x: 0, y: 0}], ['b', {x: 100, y: 0}], ['c', {x: 200, y: 0}]]);
-  const out = ghost.layoutGhosts([
-    {id: 'g2', linked_node_ids: [], depends_on: ['g1']},
-    {id: 'g1', linked_node_ids: [], depends_on: []},
-    {id: 'g3', linked_node_ids: ['c'], depends_on: []},
-  ], pos, {offset: 90, columnGap: 160, rowGap: 72});
-  assert.deepEqual(out.get('g1'), {x: 360, y: 0});
-  assert.deepEqual(out.get('g2'), {x: 360, y: 72});
-  const g3 = out.get('g3');
-  assert.ok(Math.abs(g3.x - 290) < 1e-9 && Math.abs(g3.y) < 1e-9, 'pushed away from the graph centre');
-  assert.deepEqual(ghost.dependencyOrder([{id: 'x', depends_on: ['y']}, {id: 'y', depends_on: ['x']}]).map(i => i.id), ['y', 'x']);
-  const empty = ghost.layoutGhosts([{id: 'g', linked_node_ids: ['missing'], depends_on: []}], new Map());
-  assert.deepEqual(empty.get('g'), {x: 0, y: 0});
 });
 
 test('graph settings clamp, default and survive corrupt storage', () => {

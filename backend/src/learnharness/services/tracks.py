@@ -18,6 +18,7 @@ from learnharness.core.contracts.config import (
     derive_track_title,
 )
 from learnharness.core.events import SseEventType
+from learnharness.core.repo_paths import LANGUAGE_STEMS
 from learnharness.services.track_generation import GeneratedTrack, generate_track_items  # noqa: F401 (re-export)
 from learnharness.vault.bootstrap import save_config
 from learnharness.vault.safety import atomic_write, locked_path, safe_path
@@ -42,7 +43,6 @@ STRUCTURE_STEMS = {
     "overview", "contents", "outline", "learning-path", "learning-paths", "course",
 }
 STRUCTURE_DIRS = {"learning-paths", "learning-path", "paths", "roadmap", "roadmaps", "syllabus"}
-LANGUAGE_STEMS = {"en", "pt", "pt-br", "pt_br", "es", "fr", "de", "zh", "ja", "ko", "it", "ru"}
 
 
 @dataclass

@@ -17,6 +17,7 @@ from learnharness.core.graph_merge import (
     select_batch,
     uncovered_messages,
 )
+from learnharness.core.roadmap import roadmap_layout
 from learnharness.vault.graph_store import (
     append_records,
     harness_owned_note,
@@ -211,6 +212,7 @@ class GraphService:
         for track in config.tracks:
             if track.archived:
                 continue
+            grouping = roadmap_layout(track)
             for item in track.queue:
                 status = "completed" if item.completed else ("active" if item.id == track.active_item_id else "pending")
                 linked = [n.id for n in nodes.values()
@@ -218,7 +220,10 @@ class GraphService:
                 roadmap.append({"id": f"track:{track.id}:{item.id}", "title": item.title, "status": status,
                                 "track_id": track.id, "track_title": track.title,
                                 "linked_node_ids": linked,
-                                "depends_on": [f"track:{track.id}:{p}" for p in item.prerequisites]})
+                                "depends_on": [f"track:{track.id}:{p}" for p in item.prerequisites],
+                                "kind": item.kind, "status_detail": item.status_detail,
+                                "stage_label": item.stage_label, "source_ref": item.source_ref,
+                                **grouping[item.id]})
         return {"nodes": out_nodes, "edges": edges, "chains": out_chains,
                 "clusters": list(clusters.values()), "roadmap": roadmap, "updated_at": _now()}
 
