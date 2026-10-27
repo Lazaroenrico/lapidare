@@ -1,229 +1,902 @@
-# Lapidare — Arquitetura Técnica e Plano de Construção (`ARCHITECTURE.md`)
+# Lapidare — Arquitetura Técnica (`ARCHITECTURE.md`)
 
-Este documento especifica a arquitetura de software, a estrutura de pastas, os protocolos de comunicação (`stream-json`, `ACP`, `FastMCP`, `SSE`), a persistência dupla no Vault e o plano de implementação em duas ondas.
+Este documento descreve a arquitetura **atual** do Lapidare: camadas do backend, modelo de processo, protocolos (`stream-json`, `ACP`, `FastMCP`, `SSE`), motores Google, núcleo pedagógico, rastro de conhecimento, jobs em background, layout do Vault e frontend. Ele foi conferido contra o código em `backend/src/learnharness/**` e `frontend/**` e contra os specs de fase em [`docs/specs/`](specs/).
+
+> [!NOTE]
+> **Nome.** O produto se chama **Lapidare** (antes *LearnHarness*). Os identificadores técnicos mantêm o nome antigo por compatibilidade: o pacote Python `learnharness`, as variáveis `LEARNHARNESS_*`, a pasta `.harness/` do Vault, o servidor MCP interno `harness`, as chaves `learnharness:*` do `localStorage` e `~/.config/learnharness/`.
+>
+> **Estado.** Fases 8 a 14 implementadas. A **Fase 15** (nivelamento de trilha) está **em implementação**; a seção [10.4](#104-fase-15--nivelamento-por-busca-binária-em-implementação) descreve o desenho do spec, não código existente.
+
+Leia também: [`AGENTS.md`](../AGENTS.md) (invariantes) e [`CONTEXT_AND_BEHAVIOR.md`](CONTEXT_AND_BEHAVIOR.md) (comportamento esperado de cada tela).
+
+## Sumário
+
+1. [Produto em uma página](#1-produto-em-uma-página)
+2. [Visão geral](#2-visão-geral)
+3. [Layout hexagonal do repositório](#3-layout-hexagonal-do-repositório)
+4. [Modelo de processo](#4-modelo-de-processo)
+5. [Motores (conectores Google)](#5-motores-conectores-google)
+6. [Núcleo pedagógico (TEACH)](#6-núcleo-pedagógico-teach)
+7. [Sessões PRACTICE](#7-sessões-practice)
+8. [Rastro de conhecimento (grafo)](#8-rastro-de-conhecimento-grafo)
+9. [Jobs em background com steer](#9-jobs-em-background-com-steer)
+10. [Trilhas](#10-trilhas)
+11. [Vault: layout, invariantes e configuração](#11-vault-layout-invariantes-e-configuração)
+12. [Import multi-fonte](#12-import-multi-fonte)
+13. [Frontend](#13-frontend)
+14. [Referência de rotas HTTP](#14-referência-de-rotas-http)
+15. [Rodando e portões de qualidade](#15-rodando-e-portões-de-qualidade)
+16. [Histórico de fases](#16-histórico-de-fases)
 
 ---
 
-## 1. Visão Geral da Arquitetura (Hexagonal + Orquestração Híbrida)
+## 1. Produto em uma página
+
+### 1.1 Apenas dois modos: `TEACH` e `PRACTICE`
+
+`SessionMode = Literal["TEACH", "PRACTICE"]` (`core/contracts/session.py`). Não existe terceiro modo. O que varia dentro do `TEACH` é o **contexto** (`TeachContextKind`):
+
+| `context_kind` | Quando | Prompt extra |
+|---|---|---|
+| `free_topic` | O aluno digita um tema no composer | — |
+| `dense_source` | Sessão sobre uma fonte em `Fontes/` (MCP, GitHub, arquivo local) | `teacher/60-context-dense_source.md` (Dito / Pressuposto / Pulado / Simplificações, citações `[[Fonte#^pN]]`) |
+| `track_step` | Um passo de trilha (`track_item_id`) | `teacher/70-context-track_step.md` (roteiro `2:1`) |
+| `drawing_review` | Revisão de desenho Excalidraw (`/draw/[slug]`) | `teacher/80-context-drawing_review.md` |
+
+O `PRACTICE` é uma sessão de um problema por vez com escada de dicas `R0–R5` (seção 7). A Fase 15 acrescenta o contexto `leveling`, também dentro do `TEACH`.
+
+### 1.2 Home híbrida: grafo primeiro, trilhas opcionais
+
+- **O grafo é a base de todo mundo.** A Home (`app/page.tsx`) mostra o grafo em tela cheia (`components/graph-view.tsx` + `graph-canvas.ts`). Qualquer sessão `TEACH` o alimenta enquanto acontece (seção 8).
+- Por cima do grafo ficam a busca de nós, `☍ Chains`, `↑ Import`, `⇶ Roteiro` (só com trilha), a engrenagem de exibição e física e a pílula de uso (`usage-pill.tsx`).
+- Embaixo fica o dock do composer (`composer.tsx`): `TEACH | PRACTICE`, a área de texto, a barra **Ditar**, o seletor de modelo e esforço (`model-picker.tsx`) e, só quando há trilha, o chip da trilha em foco (`track-chip.tsx`).
+- Ao selecionar nós (Shift/⌘+clique) aparecem as ações **Ensinar a partir daqui** e **Praticar estes**. A nova sessão recebe `graph_context` (até 64 ids).
+
+### 1.3 Várias trilhas, uma em foco
+
+Uma trilha é uma fila ordenada de passos (`TrackConfig.queue: list[TrackItem]`). O config guarda **várias trilhas** (`tracks`) e **uma em foco** (`active_track_id`). A trilha se configura no Setup ou em **Configurações → Trilhas**. Na Home ela aparece só como o chip `⇶ <trilha> · Próximo: <item> [Continuar ↵] ▾`, cujo menu troca a trilha em foco. Veja a seção 10.
+
+### 1.4 Design system ("The Skin")
+
+Os tokens moram em `frontend/app/globals.css` (fonte única). `lib/palette.ts` os espelha para Canvas e Excalidraw, e `tests/tokens.test.cjs` proíbe hex literal fora desses lugares. A paleta atual é **roxa escura** (commit `149ba9d`), substituindo o grafite original:
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--background` | `#1a1430` | Fundo principal |
+| `--card` | `#231b3e` | Cards e docks |
+| `--accent` | `#30255a` | Hover e seleção |
+| `--border` | `#54458a` | Bordas de 1px |
+| `--foreground` | `#efeaff` | Texto |
+| `--muted-foreground` | `#a99cd0` | Rótulos e metadados |
+| `--success` / `--warning` / `--danger` | `#34d399` / `#e0a030` / `#f87171` | Estados |
+
+- **Fontes** (embarcadas em `public/fonts/`): `--font-title` CMU Serif (`cmunbx.ttf`, `cmunrm.ttf`), `--font-prose` Source Sans 3 (16px / 1.5, ajustável de 14 a 20px em **Aparência** via `--prose-size`) e `--font-ui` JetBrains Mono.
+- **Foco:** `*:focus, *:focus-visible { outline: none }`.
+- **Tema:** só escuro.
+
+---
+
+## 2. Visão geral
 
 ```mermaid
 flowchart TB
-    subgraph FRONTEND["Frontend Next.js (App Router · React 19 · TypeScript · Tailwind v4)"]
-        UI_HOME["Home: Grafo Único Canvas 2D + Chains + Chip da Trilha"]
-        UI_CLASS["Sala de Aula TEACH: Prosa Editorial + KaTeX + QuestionDock + PlanWindow"]
-        UI_DRAW["Canvas Embutido @excalidraw/excalidraw + Revisão Multimodal"]
-        UI_PRAC["Modo PRACTICE: Sessão R0–R5 + Problem Sets"]
-        SSE_CLIENT["ServerEventsProvider: 1 único EventSource('/api/events') (notify -> fetch)"]
+    subgraph FE["Frontend · Next.js 15 (App Router, React 19, Tailwind v4)"]
+        HOME["/ Home: grafo + composer + chip da trilha"]
+        CHAT["/chat/[id]: TEACH (QuestionDock, PlanWindow) ou PRACTICE (PracticeDock)"]
+        DRAW["/draw/[slug]: Excalidraw + revisão"]
+        SET["/settings: Conectores, Trilhas, Agente, Grafo, Aparência, Teclado, Geral"]
+        SSEC["ServerEventsProvider: 1 EventSource('/api/events')"]
     end
 
-    subgraph BACKEND["Backend Python (FastAPI · uv · Pydantic v2)"]
-        API["Camada HTTP REST (/api/*) + Emissor SSE (/api/events)"]
-        CORE["core/ (Puro, Zero I/O): Contratos Pydantic, Regras Pedagógicas, Matriz de Calibração"]
-        MCP["MCP interno (FastMCP) montado em /internal/mcp:\npose_quiz, plan_init, plan_advance, track_foundation, spawn_demo\n(gate Bearer por execução)"]
-        WATCH["Sync Engine: Markdown AST Merger + Excalidraw Codec + watchfiles Watcher"]
-        LG["Jobs em Background (services/jobs.py + LangGraph/AsyncSqliteSaver):\nextraction · practice_gen · track_gen (+ spawn_demo)"]
-        IMPORT["Import multi-fonte:\nMCP externo (http/sse/stdio) · GitHub (cache .harness/repos) · arquivos .md/.txt/.pdf"]
+    subgraph BE["Backend · FastAPI (uvicorn, 127.0.0.1)"]
+        GUARD["LocalRequestGuard + CORS"]
+        API["Rotas /api/*"]
+        HUB["SseHub: /api/events"]
+        SVC["services/: Sessions, Practice, Graph, Tracks, Jobs, Usage"]
+        MCP["FastMCP montado em /internal/mcp (ExecutionTokenGate)"]
+        CORE["core/: Pydantic + funções puras"]
+        PIPE["pipelines/extraction.py (LangGraph)"]
+        VLT["vault/: bootstrap, markdown_ast, graph_store, jsonl_store, watcher"]
     end
 
-    subgraph ENGINES["Conectores Oficiais do Ecossistema Google (AgentEnginePort)"]
-        ENG_GEMINI["GeminiCliAcpEngine:\ngemini --acp (processo persistente por sessão)"]
-        ENG_AGY["AgyStreamEngine (recomendado):\nagy (--input-format stream-json --output-format stream-json)"]
-        ENG_SDK["GenAiSdkEngine:\ngoogle-genai SDK (tool_transport inline)"]
+    subgraph ENG["Motores Google (engines/)"]
+        AGY["agy stream-json (pool persistente)"]
+        ACP["gemini --acp (pool persistente)"]
+        SDK["google-genai SDK (tools inline)"]
     end
 
-    subgraph VAULT["Vault do Usuário no Disco (100% Compatível com Obsidian)"]
-        V_HUMAN["Camada Humana:\n00 Mapa.md · Aulas/**/*.md · Conceitos/*.md · Fontes/** · Desenhos/*.excalidraw.md"]
-        V_MACH["Camada de Máquina (.harness/):\nconfig.json · sessions/*.jsonl · chains.jsonl · quiz-log.jsonl · langgraph.sqlite"]
+    subgraph VAULT["Vault Obsidian no disco"]
+        HUMAN["Aulas/ · Conceitos/ · Fontes/ (só leitura) · Desenhos/ · viz/ · 00 Mapa.md"]
+        MACH[".harness/: config, sessions, graph, logs, prompts, runtime, repos, trash"]
     end
 
-    FRONTEND <-->|"REST /api/* + SSE /api/events"| API
-    API --> CORE
-    API <--> ENGINES
-    ENGINES <-->|"Tool Calls MCP (streamable HTTP + Bearer)"| MCP
-    API <--> IMPORT
-    IMPORT -->|"Somente-leitura"| V_HUMAN
-    MCP <-->|"asyncio.Future (Pausa no QuestionDock)"| API
-    API <--> WATCH
-    LG <--> ENGINES
-    LG --> WATCH
-    WATCH <-->|"Escrita Atômica + File Watcher"| V_HUMAN
-    WATCH <-->|"Append-Only JSONL"| V_MACH
+    FE -->|"REST /api/* via proxy do Next"| GUARD --> API
+    HUB -->|"notify"| SSEC
+    SSEC -->|"fetch"| API
+    API --> SVC --> CORE
+    SVC --> VLT --> VAULT
+    SVC -->|"stream_turn / run_structured"| ENG
+    AGY -->|"MCP streamable HTTP + Bearer"| MCP
+    ACP -->|"MCP streamable HTTP + Bearer"| MCP
+    SDK -.->|"callables Python (inline)"| SVC
+    MCP --> SVC
+    SVC --> PIPE --> ENG
+    VLT -->|"watchfiles → vault:changed"| HUB
+    SVC -->|"broadcast"| HUB
 ```
 
 ---
 
-## 2. Estrutura de Diretórios do Repositório
+## 3. Layout hexagonal do repositório
 
 ```text
-/home/lazarodiza/Study/learnharness/
-├── README.md
-├── AGENTS.md
+learnharness/
+├── AGENTS.md · README.md · Makefile · scripts/dev.sh
 ├── docs/
-│   ├── CONTEXT_AND_BEHAVIOR.md        # Contexto e especificação comportamental completa
-│   ├── ARCHITECTURE.md                # Este documento técnico
-│   └── assets/                        # Mockups e diagramas de referência
-├── backend/
-│   ├── pyproject.toml                 # Gerenciado via uv (Python 3.12+)
-│   └── src/learnharness/
-│       ├── core/                      # ZERO I/O: apenas Pydantic models e funções puras
-│       │   ├── contracts/
-│       │   │   ├── config.py          # HarnessConfig, ModelSlots, VaultFolderMap, McpServerConfig
-│       │   │   ├── session.py         # SessionRecord, SessionMessage, PlanDag, PlanNode
-│       │   │   ├── quiz.py            # QuizPayload, QuizAnswer, CalibrationResult, ConfidenceBand
-│       │   │   ├── graph.py           # ConceptNode, Proposition, LogicalChain, GraphSnapshot
-│       │   │   └── practice.py        # PracticeSet, PracticeProblem, RubricCriterion, HintStep
-│       │   ├── calibration.py         # Cálculo puro da matriz Acerto x Confiança %
-│       │   ├── events.py              # Enum e schemas dos frames SSE (/api/events)
-│       │   └── ports.py               # Interfaces (Protocols): AgentEnginePort, VaultPort, ContentMcpPort
-│       ├── engines/                   # Adaptadores dos 3 caminhos oficiais do Google
-│       │   ├── detector.py            # Auto-detecção de gemini CLI, agy CLI e variáveis de ambiente
-│       │   ├── cli_protocol.py        # EngineError + idle_wait (timeout por inatividade suspensível)
-│       │   ├── agy_engine.py          # agy stream-json (+ --json-schema + --effort); MCP via .agents/mcp_config.json
-│       │   ├── gemini_acp.py          # gemini --acp: JSON-RPC sobre stdio, pool de processos por sessão
-│       │   ├── gemini_engine.py       # Base headless (gemini -p --output-format stream-json) reaproveitada pelo agy
-│       │   └── genai_sdk_engine.py    # Fallback via pacote oficial google-genai (tools inline)
-│       ├── mcp/
-│       │   ├── runtime_server.py      # MCP interno (FastMCP) montado em /internal/mcp, tools ligadas à execução
-│       │   ├── pending_dock.py        # Registro de asyncio.Future para pausar o turno no QuestionDock
-│       │   ├── demo_builder.py        # Geração de simuladores HTML auto-contidos em viz/demos/
-│       │   └── content_client.py      # Cliente para QUALQUER servidor MCP de conteúdo (http/sse/stdio)
-│       ├── services/
-│       │   ├── sessions.py            # Execuções TEACH/PRACTICE, tokens por execução, recuperação
-│       │   ├── jobs.py                # Fila de jobs em background (extraction, practice_gen, track_gen)
-│       │   ├── tracks.py              # Geração da Trilha (outline do currículo inteiro) + progresso no 00 Mapa.md
-│       │   ├── demos.py               # spawn_demo -> viz/demos/*.html + SSE
-│       │   └── secrets.py             # Tokens de MCP externos em ~/.config/learnharness/secrets.json (0600)
-│       ├── prompts/                   # Prompts modulares numerados (inspirados no learnharness + teach/SKILL.md)
-│       │   ├── shared/                # Identidade, idioma (PT-BR/EN), formatação KaTeX/Mermaid, calibração
-│       │   ├── prober/                # Diagnóstico rápido + triagem de blocos de aulas densas
-│       │   ├── teacher/               # Exemplo concreto -> Definição, Predict/Check, ancoragem #^pN, Trilha 2:1
-│       │   └── practice/              # Doutrina R0–R5 e geração commit-before-pose
-│       ├── vault/                     # Sincronização Bidirecional UI ⇄ Vault Obsidian
-│       │   ├── bootstrap.py           # Criação automática de Vault novo ou adoção não-destrutiva de existente
-│       │   ├── markdown_ast.py        # Parser/Merger de seções Markdown e YAML frontmatter
-│       │   ├── excalidraw.py          # Leitura/escrita de .excalidraw.md + exportação .png
-│       │   ├── jsonl_store.py         # Escrita append-only em .harness/{sessions,chains,quiz-log}.jsonl
-│       │   ├── safety.py              # safe_path, escrita atômica e locks (nada escapa do Vault)
-│       │   ├── transcript_importer.py # Fontes/ com parágrafos ^pN + frontmatter de proveniência
-│       │   ├── github_source.py       # Clone raso em cache (.harness/repos) + listagem/import de repositórios
-│       │   └── watcher.py             # Monitoramento assíncrono via watchfiles emitindo SSE "vault:changed"
-│       ├── pipelines/                 # (Onda 2) Esteiras em background com LangGraph
-│       │   ├── extraction.py          # StateGraph: Extractor -> Auditor -> Merger (Conceitos/*.md + chains.jsonl)
-│       │   └── practice_gen.py        # StateGraph: Partitioner -> Send(Generator) -> Grader
-│       └── api/                       # Servidor HTTP FastAPI
-│           ├── app.py                 # App factory, lifespan, CORS, guarda Host/Origin, montagem do MCP interno
-│           ├── sse.py                 # Hub SSE único (/api/events)
-│           └── routes/                # /api/setup, /api/chats, /api/graph, /api/import(/github,/local,/mcp), /api/drawings
-├── scripts/dev.sh                     # Sobe backend + frontend com portas configuráveis
-├── Makefile                           # make dev | make check
-└── frontend/                          # Aplicação Next.js (App Router, React 19, TypeScript, Tailwind CSS v4)
-    ├── package.json
-    ├── next.config.ts                 # Proxy rewrites de /api/* para http://127.0.0.1:8000/api/*
-    ├── public/fonts/                  # CMU Serif Bold (cmunbx.ttf) local
-    ├── app/
-    │   ├── globals.css                # Tokens "The Skin" (#1a1430, #231b3e, #54458a, tipografia modular)
-    │   ├── layout.tsx                 # ServerEventsProvider + SidebarProvider + fontes JetBrains/SourceSans3
-    │   ├── page.tsx                   # Home (Grafo Único + Top Pills + Chip da Trilha + Composer)
-    │   ├── chat/[id]/page.tsx         # Sala de Aula TEACH / Sessão PRACTICE Interativa
-    │   ├── draw/[slug]/page.tsx       # Editor @excalidraw/excalidraw embutido + Revisão Multimodal
-    │   └── settings/page.tsx          # Configuração de Conectores Google, Vault, Trilha, MCP e Idioma
-    └── components/
-        ├── graph-canvas.ts            # Renderizador Canvas 2D (clusters nebulosos, pan/zoom, seleção)
-        ├── graph-view.tsx             # Wrapper do Grafo + popover de nó + tabela Chains
-        ├── sidebar.tsx                # Sidebar recolhível (TEACHING | PRACTICE | ALL + Background Agents)
-        ├── composer.tsx               # Caixa de entrada com chip da Trilha, seletor TEACH/PRACTICE e Dictate
-        ├── question-dock.tsx          # Cartão PREDICTION / CHECK com KaTeX, slider Confidence e Your Thinking
-        ├── plan-window.tsx            # Mini-DAG flutuante no canto inferior direito da aula
-        ├── source-citation-pane.tsx   # Painel lateral que exibe o parágrafo #^pN original ao clicar numa citação
-        ├── import-dialog.tsx          # Modal de importação: abas MCP, GitHub e arquivo local
-        ├── mcp-server-manager.tsx     # Cadastro/teste de servidores MCP de conteúdo nas Configurações
-        ├── excalidraw-canvas.tsx      # Integração @excalidraw/excalidraw 1:1 com o Vault
-        └── server-events.tsx          # Cliente EventSource('/api/events') único com resync automático
+│   ├── ARCHITECTURE.md · CONTEXT_AND_BEHAVIOR.md · assets/
+│   └── specs/fase-*.md               # contratos de cada fase (seção 16)
+├── backend/                          # Python ≥ 3.12, gerenciado por uv
+│   ├── pyproject.toml                # fastapi, fastmcp, langgraph(+checkpoint-sqlite), google-genai, mcp, pypdf, watchfiles…
+│   ├── src/learnharness/
+│   │   ├── core/                     # PURO: zero I/O, rede, subprocesso ou langgraph
+│   │   │   ├── contracts/            # config, session, quiz, graph, practice, jobs, drawing, demo
+│   │   │   ├── calibration.py        # matriz acerto × confiança, resposta compacta, mastery
+│   │   │   ├── plan_mermaid.py       # parser/validador do plano mermaid, status derivados
+│   │   │   ├── graph_merge.py        # fold de nodes/chains, cobertura, plano de merge
+│   │   │   ├── practice.py           # graph_search, resolve_targets, fila de reteste
+│   │   │   ├── compaction.py         # quando compactar, cauda literal, render do resumo
+│   │   │   ├── session_export.py     # exportação Markdown da sessão
+│   │   │   ├── svg_validation.py · demo_validation.py · latex_heal.py · text_hygiene.py
+│   │   │   ├── events.py             # SseEventType + SseFrame
+│   │   │   └── ports.py              # Protocols: AgentEnginePort, VaultPort, ContentMcpPort
+│   │   ├── engines/                  # adaptadores dos 3 caminhos Google
+│   │   │   ├── agy_engine.py · agy_gate.py
+│   │   │   ├── gemini_acp.py · gemini_engine.py
+│   │   │   ├── genai_sdk_engine.py
+│   │   │   ├── cli_protocol.py       # EngineError, idle_wait, json_events
+│   │   │   ├── detector.py · models.py · usage.py
+│   │   ├── mcp/
+│   │   │   ├── runtime_server.py     # ferramentas pedagógicas (FastMCP)
+│   │   │   ├── pending_dock.py       # asyncio.Future por pergunta pendente
+│   │   │   ├── content_client.py     # cliente de QUALQUER servidor MCP de conteúdo
+│   │   │   └── demo_builder.py       # geração/validação de simuladores HTML
+│   │   ├── services/                 # casos de uso com estado (orquestram core + vault + engines)
+│   │   │   ├── sessions.py · practice.py · graph.py · tracks.py · jobs.py · usage.py
+│   │   │   ├── compaction.py · research.py · pdf_reader.py · visuals.py · demos.py
+│   │   │   └── agy_permissions.py · secrets.py
+│   │   ├── vault/                    # todo acesso a disco do Vault
+│   │   │   ├── bootstrap.py · safety.py · markdown_ast.py · lesson_layout.py
+│   │   │   ├── graph_store.py · jsonl_store.py · transcript_importer.py
+│   │   │   ├── github_source.py · excalidraw.py · watcher.py
+│   │   ├── pipelines/extraction.py   # StateGraph Extractor → Auditor → Merger
+│   │   ├── prompts/                  # fragmentos NN-*.md + loader.py (seção 6.4)
+│   │   └── api/                      # app.py, state.py, sse.py, routes/*.py
+│   └── tests/{unit,integration,fixtures/{acp,agy}}
+└── frontend/
+    ├── next.config.ts                # rewrite /api/* → BACKEND_URL (proxyTimeout 300 s)
+    ├── app/                          # layout.tsx, page.tsx, chat/[id], draw/[slug], settings
+    ├── components/                   # UI (seção 13)
+    ├── lib/                          # módulos puros + clientes HTTP
+    └── tests/*.test.cjs              # node --test sobre lib/ compilado
 ```
 
----
+### 3.1 Regras de dependência
 
-## 3. Detalhamento dos Subsistemas Críticos
+```mermaid
+flowchart LR
+    api --> services
+    api --> mcp
+    mcp --> services
+    services --> core
+    services --> vault
+    services --> engines
+    services --> pipelines
+    pipelines --> engines
+    pipelines --> vault
+    pipelines --> core
+    vault --> core
+    engines --> core
+```
 
-### 3.1 Os 3 Conectores Google (`AgentEnginePort`)
-Todos os conectores implementam a mesma interface assíncrona em Python (`stream_turn` para conversa com streaming de deltas + tool calls, e `run_structured` para saídas JSON tipadas por `Pydantic`) e declaram um **`tool_transport`**, que diz ao runner de sessão como as tools pedagógicas chegam ao modelo:
-
-- **`"mcp"`** (`agy`, `gemini`): o motor descobre as tools no **MCP interno** (`/internal/mcp`, ver 3.4), configurado por `configure_runtime(work_dir, mcp_url, mcp_token)`.
-- **`"inline"`** (`google-genai`): o runner passa as funções Python diretamente em `stream_turn(tools=[...])`; nenhum servidor MCP é necessário.
-
-A seleção é explícita (`engines/get_engine`): não existe troca silenciosa de provedor quando um conector falha.
-
-1. **`AgyStreamEngine` (`agy_engine.py`) — conector recomendado:**
-   - Executa `agy --input-format stream-json --output-format stream-json` (+ `--json-schema` / `--effort` em chamadas estruturadas). O MCP interno é registrado em `<work_dir>/.agents/mcp_config.json` (permissão `0600`) com o token da execução corrente.
-2. **`GeminiCliAcpEngine` (`gemini_acp.py`):**
-   - Usa `gemini --acp` (Agent Client Protocol, JSON-RPC 2.0 sobre `stdio`), com **um processo persistente por sessão** mantido num pool (`AcpProcessPool`, fechado após 10 min ocioso e no shutdown da app). O MCP interno é passado em `session/new` (`mcpServers: [{type: "http", url, headers}]`), então o **token nunca é gravado em disco**. Os fatos do protocolo foram verificados contra o gemini-cli 0.62.0 (`tests/fixtures/acp/`).
-   - **Achado importante:** a partir do gemini-cli **0.62**, contas individuais do *Gemini Code Assist* (login Google pessoal) são bloqueadas pelo próprio CLI com a mensagem para *migrar para o Antigravity*. Por isso o **`agy` é o CLI recomendado** para quem usa a assinatura pessoal; o `gemini --acp` segue suportado para contas Workspace/Code Assist Standard e chave de API.
-3. **`GenAiSdkEngine` (`genai_sdk_engine.py`):**
-   - Utiliza o SDK oficial `google-genai` (`GEMINI_API_KEY` ou Vertex AI) com `tool_transport = "inline"` e `response_schema` para saídas estruturadas.
-
-### 3.2 A Pausa do Turno no `QuestionDock` (`pending_dock.py`)
-Para que o agente pare imediatamente após lançar um quiz (`PREDICTION` ou `CHECK`) e reaja no mesmo turno assim que o aprendiz responder:
-1. O agente chama a tool MCP `pose_quiz(mode, question, choices, correct_index)`.
-2. O handler da tool no `FastMCP`:
-   - Grava o estado `quiz_pending` em `.harness/sessions/<id>.jsonl` (garantindo que um reload da página recupere o cartão aberto);
-   - Dispara o frame SSE `session:updated` para a UI abrir o `QuestionDock`;
-   - Cria um `asyncio.Future` em memória (`pending_quizzes[session_id]`) e faz `await future`.
-3. Quando o usuário preenche sua escolha, o slider de **Confiança (`0–100%`)** e o campo **Your Thinking** na UI e clica em `Submit answer`:
-   - A rota `POST /api/chats/<id>/answer` calcula a calibração (`calibration.py`), grava em `.harness/quiz-log.jsonl` e chama `future.set_result(...)`.
-   - A tool MCP retorna o JSON `{correct, chosen_index, confidence, calibration_band, learner_thinking}` para o processo `agy`/`gemini`, que continua a explicação imediatamente levando em conta o raciocínio exato do aluno.
-
-### 3.3 Sincronização do Grafo Único (`Conceitos/*.md` + `.harness/chains.jsonl`)
-Para manter **um único grafo limpo na UI** e ao mesmo tempo **notas legíveis no Obsidian**:
-- Cada conceito principal possui um arquivo `Conceitos/<Nome>.md` com YAML frontmatter (`id`, `aliases`, `status`, `depende_de`) e seções humanas (*Intuição*, *Definição Formal*, *Exemplos*, *Proposições & Cadeias*).
-- Os metadados finos de renderização do Canvas 2D (coordenadas `(x, y)` salvas pelo layout físico, cores de *hull* da sessão de origem e arestas de implicação composta $A \land B \implies C$) ficam indexados em `.harness/chains.jsonl`.
-- A rota `GET /api/graph` combina a leitura de `Conceitos/*.md` com `.harness/chains.jsonl` num único `GraphSnapshot` entregue para o Canvas 2D da Home.
-
-### 3.4 MCP Interno em `/internal/mcp` e o Gate de Token por Execução
-- O servidor `FastMCP` (`mcp/runtime_server.py`) é montado **dentro do próprio FastAPI** em `/internal/mcp` (streamable HTTP, `stateless_http=True`); não há processo MCP separado. A URL anunciada aos motores vem de `LEARNHARNESS_MCP_URL` ou de `http://127.0.0.1:${LEARNHARNESS_PORT}/internal/mcp/`.
-- Cada execução de sessão recebe um **token Bearer próprio** (`AppState.issue_token(session_id, execution_id)`). O `ExecutionTokenGate` rejeita com `401` qualquer requisição MCP sem token vivo (nem listar tools é possível), e cada tool revalida a ligação: um token de execução antiga (`execution_id` diferente) recebe `PermissionError`.
-- Tools expostas: `pose_quiz`, `plan_init`, `plan_advance`, `track_foundation`, `spawn_demo`. Elas sempre agem sobre a sessão ligada ao token, nunca sobre estado global.
-
-### 3.5 Timeout por Inatividade (Suspenso Durante o `QuestionDock`)
-- Os motores CLI não têm teto de tempo total: aulas longas bloqueiam legitimamente. O que existe é um **timeout de inatividade** (`cli_protocol.idle_wait`): segundos sem nenhum evento do provedor (linha no `stdout` ou tráfego ACP).
-- Enquanto há um `pose_quiz` pendente no `QuestionDock` (`dock_registry.get_pending_quiz(session_id)`), o relógio fica **suspenso**: o aluno pode pensar quanto quiser sem que o turno seja derrubado. Ao responder, o relógio volta a contar do zero.
-
-### 3.6 Jobs em Background
-`services/jobs.py` mantém uma fila com semáforo, persistida em `.harness/jobs.jsonl`, recuperada no startup e anunciada via SSE (`~ BACKGROUND AGENTS` na sidebar). Tipos de job:
-- **`extraction`** — `pipelines/extraction.py` (`Extractor -> Auditor -> Merger`), atualiza `Conceitos/*.md` + `chains.jsonl` e emite `graph:updated`.
-- **`practice_gen`** — `pipelines/practice_gen.py` (`Partitioner -> Send(Generators) -> Grader`) gera *Problem Sets* a partir do `quiz-log.jsonl`.
-- **`track_gen`** — `TrackService.generate`: monta um **outline compacto do currículo inteiro** (documentos de estrutura como `README`/`ROADMAP`/`LEARNING.md`/`learning-paths/` primeiro; depois cada lição em ordem natural como `caminho — título: primeiro parágrafo`, incluindo títulos de `.txt`/`.ipynb`), degradando o detalhe por orçamento de caracteres em vez de cortar o repositório; valida ids, pré-requisitos e `source_ref` dentro do repositório.
-- **demo builder** — a tool `spawn_demo` (`services/demos.py` + `mcp/demo_builder.py`) grava simuladores auto-contidos em `viz/demos/*.html`, anunciados por SSE e renderizados em iframe na aula.
-
-### 3.7 Import Multi-fonte (`↑ Import`)
-Tudo o que é importado vai para `Fontes/` (somente-leitura), com parágrafos `^pN` e frontmatter de proveniência (`source_kind: mcp|github|local`, URL/servidor, `commit`, `imported_at`). Reimportar cria nova versão imutável. Conteúdo remoto é **dado, não instrução**.
-- **MCP genérico** (`mcp/content_client.py`, rotas `/api/import/mcp/servers*`): qualquer servidor por `http` (streamable), `sse` ou `stdio`, com conexão por chamada e timeout. Itens vêm do `catalog_tool` configurado ou de `resources/list`. **Segredos ficam fora do Vault**: tokens em `~/.config/learnharness/secrets.json` (`0600`, respeita `XDG_CONFIG_HOME`) ou referenciados por nome de variável de ambiente; `.harness/config.json` guarda só `auth_ref`, e o token nunca volta nas respostas da API. Em `stdio`, o token chega ao processo só por variável de ambiente, nunca por `argv`.
-- **GitHub** (`vault/github_source.py`, rotas `/api/import/github/{preview,import}`): só URLs `https://github.com/<owner>/<repo>[/tree|/blob/...]` com validação estrita; `git` roda sem shell, com `--` antes dos posicionais, ambiente limpo (`GIT_TERMINAL_PROMPT=0`, sem `GIT_*` herdado), só o protocolo da URL permitido, symlinks como arquivos comuns, sem submódulos, com timeout e limite de tamanho. Token (`GITHUB_TOKEN`/`GH_TOKEN` ou `gh auth token`) vai por `GIT_CONFIG_*` no ambiente, nunca em `argv` nem em `.git/config`, e é redigido das mensagens de erro.
-  - **Cache em `<vault>/.harness/repos/<owner>__<repo>@<ref>/`:** o preview faz um único `git ls-remote` e reaproveita o clone quando o commit remoto é o mesmo; só re-clona (diretório temporário + troca atômica sob lock) quando o commit mudou, o cache falta/está corrompido, ou o corpo traz `refresh: true`. Sem rede, o cache existente continua servindo. O import reaproveita o clone do preview sem tocar a rede.
-  - `use_as_track` aponta `config.track.repo_path` para o clone e dispara o job `track_gen` (sem modo novo).
-- **Arquivos locais** (`/api/import/local`): `.md`, `.txt` e `.pdf` (texto extraído com `pypdf`), até 20 MB.
-
-### 3.8 Proteção da API Local (Host/Origin)
-A API escreve no disco e pode registrar servidores MCP `stdio` (ou seja, executar comandos locais). O `LocalRequestGuard` bloqueia *DNS rebinding* e escrita *cross-site*: o `Host` precisa ser loopback (`LEARNHARNESS_ALLOWED_HOSTS`, padrão `localhost,127.0.0.1,::1`), senão `421`; requisições que alteram estado e trazem `Origin` só passam se a origem estiver em `LEARNHARNESS_CORS_ORIGINS` (o frontend configurado), senão `403`. Erros de motor são redigidos (`AppState.redact`) antes de chegar à UI.
-
-### 3.9 Rodando em Desenvolvimento (`scripts/dev.sh`)
-`scripts/dev.sh` (ou `make dev`) sobe backend (`uvicorn`, `127.0.0.1:$BACKEND_PORT`) e frontend (`next dev`, `$FRONTEND_PORT`), recusa portas ocupadas com uma sugestão de alternativa, exporta `LEARNHARNESS_PORT` (para o MCP interno anunciar a URL certa) e `LEARNHARNESS_CORS_ORIGINS` (para a guarda de Origin aceitar o frontend), e aponta o proxy do Next (`BACKEND_URL`) para o backend. `make check` roda `pytest` + `ruff` no backend e `typecheck` + `test` + `build` no frontend.
+- `core/` não importa nada de fora de `core/` (só stdlib pura e Pydantic). Funções como `plan_merge`, `derive_plan_statuses`, `retest_queue`, `choose_first_kept` e `validate_svg` são testadas isoladamente.
+- `AppState` (`api/state.py`) é a raiz de composição: ele instancia `SessionService`, `UsageService`, `JobManager`, `TrackService`, `GraphService` e `PracticeService`, o `SseHub`, o `PendingDockRegistry` e o `ContentMcpClient`, e fabrica motores com `engine(slot)`. Em testes, `engine_factory` injeta um `FakeEngine`.
+- `core/ports.py` documenta as interfaces (`AgentEnginePort`, `ContentMcpPort`). O `VaultPort` descreve o formato legado do grafo; os serviços usam as funções de `vault/*` diretamente.
 
 ---
 
-## 4. Plano de Implementação (Onda 1 $\rightarrow$ Onda 2)
+## 4. Modelo de processo
 
-### 🚀 Onda 1 — MVP Funcional de Ponta a Ponta
-| Etapa | Entregável | Critério de Pronto (Verificação) |
-|---|---|---|
-| **1.1 Fundação & Skin** | Monorepo `backend/` (`FastAPI` + `uv`) + `frontend/` (`Next.js` + Tailwind v4 + `#1a1430` + `CMU Serif` / `Source Sans 3` / `JetBrains Mono`) + canal SSE `/api/events` | `uv run` + `npm run dev` sobem sem erros; conexão SSE reconecta sozinha e respeita 100% os tokens `#1a1430` / `#231b3e` / `#54458a`. |
-| **1.2 Setup & Vault** | `detector.py` (auto-detecção `agy` / `gemini` / `API`) + `vault/bootstrap.py` (criação de Vault novo ou adoção de `~/Documents/AI Engineering`) + `SetupDialog` (Conector, Vault, MCP, Trilha) | Onboarding detecta sua assinatura Google, adota seu Vault existente sem alterar notas e grava `.harness/config.json`. |
-| **1.3 Home Unificada** | `graph-view.tsx` (Canvas 2D único + `Chains`) + `import-dialog.tsx` (integração MCP Praxis / Notas locais) + `composer.tsx` (Chip da Trilha ativa + `TEACH \| PRACTICE` + Ditado Zero-Key) | Grafo renderiza os conceitos do Vault; botão `Import` lista aulas do MCP; chip da Trilha mostra o próximo passo do `00 Mapa.md` / `LEARNING.md`. |
-| **1.4 Sala de Aula `TEACH`** | `AgyStreamEngine` & `GeminiAcpEngine` + `FastMCP` (`pose_quiz`, `plan_init`, `plan_advance`) + `/chat/[id]` (`QuestionDock` com KaTeX + Confiança % + *Your Thinking*, `PlanWindow` mini-DAG, painel `#^pN`) + escrita não-destrutiva em `Aulas/*.md` | Sessão completa de estudo funciona sobre assinatura Google, pausa no `QuestionDock`, grava em `quiz-log.jsonl` e atualiza a nota da aula no Obsidian em tempo real. |
-| **1.5 Excalidraw & Visão** | Rota `/draw/[slug]` com `@excalidraw/excalidraw` embutido lendo/gravando `Desenhos/*.excalidraw.md` + `.png` e botão `[ Revisar meu desenho ]` via visão multimodal | Desenho feito na UI abre igual no Obsidian (e vice-versa); botão de revisão analisa o `.png` e dispara quiz se encontrar erro conceitual. |
+### 4.1 Um processo, uma app
 
-### ⚙️ Onda 2 — Motores `LangGraph` em Background e Demos Interativos
-| Etapa | Entregável | Critério de Pronto (Verificação) |
+`api/app.py:create_app()` monta um único FastAPI:
+
+1. `create_runtime_mcp(state).http_app(path="/", stateless_http=True)` cria o app MCP. O `lifespan` do FastAPI roda **dentro** do lifespan do MCP (o gerenciador de sessões streamable-HTTP só vive ali) e chama `state.start()` / `state.close()`.
+2. Middlewares, do mais externo ao mais interno: `LocalRequestGuard` e depois `CORSMiddleware`.
+3. Handlers de erro: `SessionConflict → 409`, `EngineError → 502` (mensagem redigida por `AppState.redact`), `PermissionError → 403`, `FileNotFoundError → 404` (inclui `SessionNotFound`) e `ValueError → 422`.
+4. Routers: `sse`, `setup`, `tracks`, `graph`, `chats`, `import_content`, `import_github`, `drawings`, `jobs`, `prompts`, `settings_agent` e `usage`.
+5. `app.mount("/internal/mcp", ExecutionTokenGate(mcp_app, state))`.
+
+`AppState.start()` (só com Vault configurado) recupera os jobs (`jobs.recover()`, que marca `running`/`queued` órfãos como `interrupted`), recupera as sessões e sobe o `VaultWatcher`. `close()` encerra sessões, jobs, os pools de processos CLI (`close_engine_processes`) e o watcher, e limpa os tokens.
+
+**Seleção do Vault** (`selected_vault_path`), nesta ordem: `LEARNHARNESS_VAULT_PATH`, depois o registro `$XDG_CONFIG_HOME/learnharness/active-vault` (gravado pelo Setup) e por fim `~/Documents/StudyVault`.
+
+### 4.2 MCP interno em `/internal/mcp` e tokens Bearer por sessão
+
+- O servidor `FastMCP("learnharness")` expõe as mesmas funções que `session_tools(state, session_id)` constrói. Cada ferramenta registrada é um *proxy* que resolve a sessão pelo header `Authorization: Bearer …` (`state.bound_session(token)`) e despacha para a função ligada àquela sessão. **Nenhuma ferramenta age sobre estado global.**
+- **Token:** `AppState.session_token(session_id, execution_id)` mantém **um token por sessão**, re-ligado à execução corrente a cada turno. Processos CLI persistentes guardam o token na configuração MCP, então trocá-lo a cada turno forçaria respawn. `bound_session` rejeita com `PermissionError` um token cujo `execution_id` ficou para trás ("Execution token is stale"). Os tokens são revogados ao fechar a sessão ou a app.
+- **`ExecutionTokenGate`:** qualquer requisição a `/internal/mcp` sem token vivo recebe `401`; sem token, nem listar ferramentas é possível.
+- **URL anunciada** aos motores: `LEARNHARNESS_MCP_URL` ou `http://127.0.0.1:${LEARNHARNESS_PORT:-8000}/internal/mcp/`.
+- **Guarda de modo** (`_mode_guard`): ferramentas `TEACH_ONLY` são recusadas em `PRACTICE` e `PRACTICE_ONLY` (`problem`, `conclude`) são recusadas em `TEACH`, sempre com texto corretivo. `_refusals` converte `SessionConflict`/`PlanSyntaxError` em `ToolError` legível, para o modelo corrigir e tentar de novo no mesmo turno.
+- **Entradas tolerantes:** opções como string ou objeto (`label`/`text`/`content`), listas serializadas como string JSON, `correct` por `value` ou `label`, LaTeX escapado duas vezes (`core/latex_heal.py`).
+
+### 4.3 Proteção da API local
+
+A API escreve no disco e pode registrar servidores MCP `stdio`, ou seja, executar comandos locais. Por isso:
+
+- **`LocalRequestGuard`:** o `Host` precisa estar em `LEARNHARNESS_ALLOWED_HOSTS` (padrão `localhost,127.0.0.1,::1,testserver`); se não estiver, a resposta é `421`, o que bloqueia DNS rebinding. Um método não seguro com `Origin` fora de `LEARNHARNESS_CORS_ORIGINS` recebe `403`.
+- **CORS:** `LEARNHARNESS_CORS_ORIGINS` (padrão `http://localhost:3000,http://127.0.0.1:3000`), sem credenciais. O navegador normalmente fala pelo proxy do Next, então o CORS só importa para acesso direto.
+- **Redação:** erros de motor e de job passam por `AppState.redact`, que remove a chave de API, `GEMINI_API_KEY` e os tokens MCP vivos, e corta em 2000 caracteres.
+
+### 4.4 Canal SSE único (notify → fetch)
+
+`GET /api/events` (`api/sse.py`) entrega frames `event: <tipo>\ndata: <json>` de um `SseHub` (uma `asyncio.Queue` por assinante), com `: heartbeat` a cada 15 s. O frame só **avisa**; a UI então **busca** o recurso pela rota REST. No frontend, `components/server-events.tsx` abre **um único** `new EventSource("/api/events")` por janela, reconecta sozinho e distribui os frames por `subscribe(tipos, cb)`. Não há `setInterval` de polling.
+
+Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
+
+| Evento | Emitido quando | A UI busca |
 |---|---|---|
-| **2.1 Extração `LangGraph`** | `pipelines/extraction.py` (`StateGraph`: `Extractor -> Auditor -> Merger` com `AsyncSqliteSaver`) rodando ao final de blocos/aulas | Ao concluir um bloco no `TEACH`, o job aparece em `~ BACKGROUND AGENTS`, atualiza `Conceitos/*.md` + `.harness/chains.jsonl` e acende novos nós no Grafo via SSE. |
-| **2.2 Motor `PRACTICE`** | Sessão interativa com escada de dicas `R0–R5` + `pipelines/practice_gen.py` (`StateGraph` com `Send` paralelo gerando *Problem Sets* focados nos erros do `quiz-log.jsonl`) | Modo `PRACTICE` gera listas com rubrica *commit-before-pose*, corrige de `0–10` e conduz treino socrático `R0–R5`. |
-| **2.3 `Demo-Builder`** | Subagente gerador de micro-simuladores HTML/JS/Canvas auto-contidos salvos em `viz/demos/*.html` e renderizados em iframe na aula | O `Teacher` consegue invocar `spawn_demo` para criar visualizações matemáticas interativas dentro da prosa da aula. |
+| `session:updated` | Mensagem, fase, status, renomear, excluir (`deleted: true`) | `GET /api/chats/{id}`, `GET /api/chats` |
+| `dock:opened` | Uma ferramenta de pergunta abriu o `QuestionDock` | `GET /api/chats/{id}` |
+| `dock:resolved` | Resposta ou dispensa de pergunta | `GET /api/chats/{id}` |
+| `plan:updated` | `plan_init` / `plan_advance` / status derivado | `GET /api/chats/{id}` |
+| `vault:changed` | Watcher do Vault, notas de conceito, nota de trilha | Painéis de nota, grafo |
+| `graph:updated` | Lote de extração aplicado, nó excluído, watcher | `GET /api/graph` |
+| `jobs:updated` | Qualquer gravação em `jobs.jsonl` | `GET /api/jobs` |
+| `usage:updated` | Nova linha em `usage.jsonl` | `GET /api/usage` |
+| `config:updated` | Trilhas, ajustes do agente, setup | `GET /api/tracks`, `GET /api/setup/status`, `GET /api/settings/agent` |
+
+### 4.5 `JobManager` (fila de jobs em background)
+
+`services/jobs.py`:
+
+- **Persistência:** fila *append-only* em `.harness/jobs.jsonl`. Cada `save()` grava o registro inteiro e emite `jobs:updated`; a leitura fica com o último estado de cada `job_id`.
+- **Concorrência:** `asyncio.Semaphore(2)`. Estados: `queued → running → completed | failed | interrupted`. `POST /api/jobs/{id}/retry` reabre jobs `failed`/`interrupted`.
+- **Deduplicação** por `dedup_key`: `extract:<session_id>` (só enquanto `queued`) e `track:<track_id>`.
+- **Uso:** cada job instala uma captura de uso com `job_kind` (seção 5.6).
+
+| `kind` | Origem | Corpo |
+|---|---|---|
+| `extraction` | Gatilho do fim de turno, conclusão, `POST /api/graph/extract/{id}`, `POST /api/jobs/extract` | `GraphService.extract_session` (seção 8) |
+| `track_gen` | `POST /api/tracks` (`goal`/`repo`/`github`), `/regenerate`, Setup, import do GitHub | `TrackService.generate(track_id)` |
+| `demo_builder` | Ferramenta `spawn_demo`, `POST /api/demos` | `services/demos.run_demo_job` → `viz/demos/<slug>.html` |
+| `research` | Ferramenta `research` | `services/research.run_research_job` |
+| `pdf` | Ferramenta `read_pdf` | `services/pdf_reader.run_pdf_job` |
+| `visual` | Ferramenta `visual` | `services/visuals.run_visual_job` → `viz/visuals/<slug>.svg` |
+
+Os jobs despachados de uma sessão (`research`, `pdf`, `visual`, `demo_builder`) **voltam para ela como steer** (seção 9).
+
+---
+
+## 5. Motores (conectores Google)
+
+### 5.1 Contrato comum
+
+`AgentEnginePort` (`core/ports.py`) define `stream_turn(prompt, session_id, history, slot, tools, system_instruction)`, que faz streaming de texto, e `run_structured(prompt, schema, slot, system_instruction)`, que devolve JSON validado por Pydantic. `engines.get_engine(slot)` escolhe o motor **explicitamente** pelo `slot.engine` (`EngineKind`: `agy`, `gemini_cli`, `genai_sdk`), sem troca silenciosa de provedor quando um falha.
+
+Atributos que o runner de sessão consulta:
+
+| Atributo | `agy` | `gemini --acp` | `google-genai` |
+|---|---|---|---|
+| `tool_transport` | `mcp` | `mcp` | `inline` |
+| `session_persistent` | `True` | `True` | — |
+| `configure_runtime(work_dir, mcp_url, token)` | grava `.agents/` no work dir | guarda URL/token para `session/new` | — |
+| `research(prompt, slot)` | gate `research` | `google_web_search` | `google_search` grounding |
+
+- **`tool_transport="mcp"`:** o motor descobre as ferramentas no MCP interno.
+- **`"inline"`:** o runner passa os callables Python de `state.tool_functions(session_id)` em `stream_turn(tools=…)`.
+
+**Timeout de inatividade** (`cli_protocol.idle_wait`): os motores CLI não têm teto de tempo total. O que existe é um relógio de **segundos sem nenhum evento do provedor** (padrão 180 s, `GeminiHeadlessEngine.timeout`). O relógio fica **suspenso** enquanto:
+
+- uma ferramenta do harness está em voo (por exemplo, uma pergunta bloqueada esperando o aluno), ou
+- há uma pergunta pendente na sessão: `AppState.engine()` passa `is_waiting_on_learner = dock_registry.get_pending_quiz(sid) is not None`.
+
+### 5.2 `AgyStreamEngine` (recomendado)
+
+`engines/agy_engine.py`, verificado contra agy 1.4.7/1.4.8 (fixtures em `tests/fixtures/agy/`):
+
+- **Processo persistente e multi-turno:** `agy --input-format stream-json --output-format stream-json --disable-slash-commands [--model <id>] [--effort <nível>]`. Cada turno é uma linha NDJSON `{"event":"user","message":{"content":…}}` no stdin. Os eventos de saída são `init`, `step_update` (`agent_response` com `text_delta`, `tool`, `finish`) e um `result` por turno.
+- **Pool:** `AGY_POOL` (um `AcpProcessPool`) guarda um processo por sessão do harness. A chave do processo é `(comando, work_dir, mcp_url, token)`: mudar o modelo, o esforço ou as credenciais fecha o processo, e o próximo turno **reidrata** a partir do histórico persistido (`compose_prompt(…, fresh=True)`). Entradas ociosas fecham após `IDLE_CLOSE_SECONDS = 600`; `hold/release` impede o fechamento durante o turno.
+- **Morte precoce:** se o agy sai durante o turno **antes** de emitir texto ou chamar uma ferramenta do harness (`AgyDiedEarly`), há **um** respawn transparente, porque nada foi observado e não há efeito colateral duplicado. Depois de progresso, a falha vira `EngineError`. Em qualquer fim não limpo (timeout, crash, cancelamento), o processo é fechado e o próximo turno reidrata.
+- **Esforço:** ids de `agy models` que já fixam o esforço (`…-low`, `…-high`, `model_pins_effort`) não recebem `--effort`, porque o agy o rejeitaria.
+- **Workspace** (`write_agy_workspace`, em `.harness/runtime/<session_id>/.agents/`): `mcp_config.json` (URL + header Bearer, `0600`), `hooks.json` (hook `PreToolUse`), `harness_gate.py` (cópia de `agy_gate.py`, executada com `python -I`) e `gate_policy.json`.
+- **Gate** (`agy_gate.decide`):
+  - política `harness`: permite só `call_mcp_tool` com `ServerName == "harness"`, o terminador `finish` (saída estruturada) e a leitura dos schemas MCP em cache; nega o resto (shell, arquivos, navegador, outros MCPs globais do usuário);
+  - política `research`: permite só `search_web`, `read_url_content` e `finish`, num workspace temporário **sem** servidor MCP.
+- **Permissão global `mcp(harness/*)`** (`services/agy_permissions.py`): o agy headless recusa sem aviso chamadas MCP que pediriam confirmação, e só lê regras do arquivo **global** `~/.gemini/antigravity-cli/settings.json`. O harness acrescenta essa única regra estreita, **só com consentimento explícito** (`POST /api/setup/agy-permission`), com backup datado e escrita atômica. Sem ela, um turno com slot forte agy falha com uma instrução clara ("Conceda em Configurações → Conectores"). Status: `GET /api/setup/agy-permission`.
+- **Chamadas avulsas:** `run_structured` usa `--json-schema` num workspace temporário, nunca no cwd do backend. `research` exige que `search_web`/`read_url_content` tenham de fato rodado.
+
+### 5.3 `GeminiCliAcpEngine` (`gemini --acp`)
+
+`engines/gemini_acp.py` fala Agent Client Protocol (JSON-RPC 2.0 sobre stdio), verificado contra gemini-cli 0.62.0 (`tests/fixtures/acp/`):
+
+- Comando: `gemini --acp --allowed-mcp-server-names harness`. Um processo persistente por sessão vive em `ACP_POOL` (mesmo `AcpProcessPool`, 10 min ocioso).
+- O MCP interno vai em `session/new` / `session/load` (`mcpServers: [{type: "http", url, headers}]`), então **o token nunca é gravado em disco**. Pedidos `session/request_permission` são aprovados (`allow_once`) só para chamadas do servidor `harness` (`harness_tool_call`); os demais são rejeitados, e os métodos `fs/*` e `terminal/*` respondem "method not found".
+- **Ressalva de conta:** desde o gemini-cli 0.62, contas pessoais do *Gemini Code Assist* são bloqueadas pelo próprio CLI com a orientação de migrar para o Antigravity. Por isso o **agy é o conector recomendado** para a assinatura pessoal. O `gemini --acp` continua para Workspace / Code Assist Standard e chave de API.
+- **Pesquisa:** `GeminiHeadlessEngine.research` roda `gemini` headless (`stream-json`) num workspace temporário cujo `settings.json` libera só `google_web_search`, e falha se a busca não rodou com sucesso.
+
+### 5.4 `GenAiSdkEngine` (`google-genai`)
+
+`engines/genai_sdk_engine.py`: SDK oficial (`GEMINI_API_KEY`, chave informada no Setup ou Vertex AI), com `tool_transport = "inline"` e `response_schema` para saídas estruturadas. A pesquisa usa `types.Tool(google_search=types.GoogleSearch())` (grounding), com as fontes tiradas do `grounding_metadata`.
+
+### 5.5 Slots, catálogo de modelos e override por sessão
+
+- `HarnessConfig.slots` tem três `ModelSlotConfig {engine, model_id, effort}`:
+  - **`strong`:** turnos de ensino e prática;
+  - **`fast`;**
+  - **`background`:** extração, auditoria, compactação e jobs.
+  - `EffortLevel`: `low | medium | high`.
+- **Catálogo:** `GET /api/setup/models?engine=…` (`engines/models.py`) lê `agy models` (cache de 600 s) ou o SDK. Para o gemini CLI, usa uma lista fixa documentada. `POST /api/setup/connectors/test` faz um teste real, com latência.
+- **Override por sessão:**
+  - `POST /api/chats` aceita `model_id` e `effort`; `PUT /api/chats/{id}/settings` muda os dois depois;
+  - o valor fica em `SessionRecord.slot_override`, e `session.teaching_slot(config.slots.strong)` resolve o slot efetivo (devolvido como `effective_slot`);
+  - mudar o modelo fecha o processo persistente.
+- **Seletor no frontend:** `components/model-picker.tsx` + `lib/model-choice.ts`. Ele abre num portal com posição fixa (`lib/popover-position.ts`), agrupa por família com chips de esforço, tem navegação por teclado e vira *sheet* no mobile. Abre por `⌘K` (`OPEN_MODEL_PICKER_EVENT`).
+
+### 5.6 Contabilidade de uso
+
+- **Sink ambiente** (`engines/usage.py`): um `ContextVar` (`learnharness_usage_sink`). Cada motor chama `report_usage(model_id, counts)` ao ler o evento terminal do provedor, sem mudar a assinatura do `AgentEnginePort`:
+  - agy: `result.usage`;
+  - ACP: `_meta.quota.token_count`;
+  - gemini headless: `result.stats`;
+  - SDK: `usage_metadata`.
+- **Captura** (`services/usage.py: UsageCapture`): `SessionService.run` e `JobManager.run` instalam uma captura por turno ou job. Por ser um `ContextVar`, sessões e jobs concorrentes nunca se misturam. Cada relatório vira uma linha em `.harness/usage.jsonl` (`{at, session_id, job_kind, model_id, input_tokens, output_tokens, thinking_tokens}`) e emite `usage:updated`. Ao fim do turno, o total acumula em `SessionRecord.usage` (`SessionUsage`, com `turns`).
+- **Leitura:** `GET /api/usage` → `{today, total, by_session: top 10}`. A UI mostra a pílula na Home e o uso no cabeçalho da sessão (`lib/usage.ts`).
+
+---
+
+## 6. Núcleo pedagógico (TEACH)
+
+### 6.1 Máquina de fases
+
+```mermaid
+stateDiagram-v2
+    [*] --> probing: POST /api/chats (TEACH)
+    probing --> probing: probe / recall / ask_user_question
+    probing --> planning: probe_done (1x) → handoff_pending
+    planning --> planning: turno de handoff → plan_init (mermaid) + prosa, encerra o turno
+    planning --> teaching: primeira quiz/explain com node_id
+    teaching --> teaching: predict → ensino → check → reparo, plan_advance, plan_init (replanejar)
+    teaching --> completed: todos os nós dominados / conclusão
+    completed --> [*]
+```
+
+- `SessionPhase`: `probing → planning → teaching → completed`. `awaiting_answer`/`consolidating` só existem em registros anteriores à Fase 8 e são normalizados na leitura (`LEGACY_PHASES`).
+- "Esperando o aluno" é o `execution_status="waiting"`. `ExecutionStatus`: `idle | queued | running | compacting | waiting | interrupted | failed | completed`.
+- PRACTICE fica sempre em `phase="teaching"` (sem diagnóstico nem plano).
+
+### 6.2 Ferramentas MCP
+
+Definidas em `mcp/runtime_server.py: session_tools`. As de pergunta **bloqueiam até a resposta** e devolvem a resposta compacta.
+
+| Ferramenta | Modo | Fase / condição | Efeito |
+|---|---|---|---|
+| `probe` | TEACH | `probing` | Múltipla escolha graduada (`mode=PROBE`), com confiança |
+| `recall` | TEACH | `probing` | Resposta aberta com `committed_answer` imutável (`kind=explain, mode=PROBE`) |
+| `quiz` | TEACH | plano existente + `node_id` válido | `type: predict\|check` → `PREDICTION`/`CHECK`; `explanation` vem antes de `correct` |
+| `explain` | TEACH | idem | Versão aberta do `quiz`, avaliada por `grade_recall` |
+| `ask_user_question` | ambos | qualquer | Pergunta sem nota (`kind=ask`) com opções, `description` e "Outro…" |
+| `probe_done` | TEACH | `probing`, uma vez, sem pergunta pendente | Grava `ProbeAssessment {strands[], summary}`, passa a `planning` e arma o handoff |
+| `plan_init` | TEACH | após `probe_done` | Mermaid → `PlanDag`; ids permanentes; preserva `mastered`/`needs_review` |
+| `grade_recall` | TEACH | qualquer | `verdict: correct\|partial\|incorrect` + `feedback` de um `recall`/`explain` |
+| `plan_advance` | TEACH | `teaching` | `mastered \| needs_review` (com gate de mastery) |
+| `track_foundation` | TEACH | sessão com trilha | Insere um pré-requisito na trilha da sessão quando o diagnóstico revela lacuna |
+| `spawn_demo` · `visual` | TEACH | toggle `demo`/`visual` | Despacha um job (seção 9) |
+| `research` · `read_pdf` | ambos | toggle `research`/`pdf` | Despacha um job (seção 9) |
+| `problem` · `conclude` | PRACTICE | seção 7 | — |
+| `graph_search` | ambos | somente leitura | `[{id, name, statement, session_title}]` por sobreposição de tokens |
+
+- **Plano** (`core/plan_mermaid.py`): aceita `graph|flowchart TD|LR|BT|RL`, `id[Título]`, `id("Título")`, arestas `-->`, `==>`, `-.->`, cadeias `a-->b-->c` e comentários `%%`. Os ids são slugs. Erros vêm com número da linha. A validação rejeita ids duplicados, extremidades desconhecidas, laços, arestas repetidas e ciclos.
+- **`kind` derivado:** `unconditional_truth`, `derived_step` ou `goal`.
+- **Status derivado:** `current` é o nó da última pergunta com `node_id`; `visited` são os anteriores; `pending` é o resto. `mastered`/`needs_review` persistem por `plan_advance`.
+- **Mastery:** um `CHECK quiz` correto e calibrado, ou um `CHECK explain` com `grade="correct"` (`core/calibration.is_mastery_evidence`).
+
+### 6.3 Pergunta bloqueante e calibração
+
+1. A ferramenta chama `SessionService.pose`. Ele valida a fase e o `node_id` (`_guard_question`), grava `pending_quiz` no JSONL da sessão (assim um reload recupera o cartão), emite `dock:opened` e aguarda o `asyncio.Future` de `PendingDockRegistry`.
+2. `POST /api/chats/{id}/answer` (`QuizSubmission`: `chosen_indices`, `is_dont_know`, `confidence` 0–100, `learner_thinking`, `reading_thinking`, `text`, `other_text`) passa por `evaluate_calibration`, grava em `.harness/quiz-log.jsonl` (exceto `ask` e dispensadas), resolve o Future e emite `dock:resolved`.
+3. O modelo recebe a **resposta compacta** (`compact_answer`): só o que o aluno acrescentou (`answers`, `correct`, `confidence`, `calibration_band`, `directive`, `thinking`, `thinking_while_reading`). Para `recall`/`explain`, vêm também o `committed_answer` e a instrução de avaliar com `grade_recall`.
+4. **O gabarito não vaza:** enquanto pendente, `GET /api/chats/{id}` serializa a pergunta sem `correct_indices`, `committed_answer` e `explanation` (`_serialize_quiz`).
+5. **Escala de confiança:** paradas `[0,30,50,70,90,100]`, padrão 50, só em `quiz`/`probe`; "Não sei" desliga a confiança e é tratado como lacuna, não como erro. Ao responder, o relógio de inatividade do motor volta a contar do zero.
+
+### 6.4 Prompts: fragmentos numerados + overrides
+
+`prompts/` contém fragmentos `NN-nome.md` (regex `^\d+-[\w.-]+\.md$`), compostos em ordem numérica e unidos por `\n\n---\n\n` (`prompts/loader.py`):
+
+| Diretório | Fragmentos |
+|---|---|
+| `shared/` | `10-identity`, `20-voice`, `30-accuracy`, `40-mental-model`, `50-questions`, `60-confidence`, `70-formatting`, `80-vault` |
+| `prober/` | `10-diagnosis`, `20-contexts` |
+| `teacher/` | `10-method`, `20-planning`, `30-teaching`, `40-predict-and-check`, `50-demos`, `55-background-jobs`, `60-context-dense_source`, `70-context-track_step`, `80-context-drawing_review` |
+| `practice/` | `10-opening`, `20-doctrine`, `30-hints`, `40-reading-attempts`, `50-conclude` |
+| raiz | `handoff.md` (texto do turno de handoff) |
+
+- **Seleção** (`build_system_prompt(mode, context_kind, language, phase, extra_context, overrides)`):
+  - `probing` → `shared` + `prober`;
+  - `planning`/`teaching` → `shared` + `teacher`;
+  - PRACTICE → `shared` sem `50-questions.md` + `practice`.
+  - Os fragmentos `NN-context-<kind>.md` só entram para o `context_kind` correspondente.
+- Os prompts são escritos em inglês e mandam responder no idioma da sessão. As regras de turno (`TURN_RULES` / `PRACTICE_TURN_RULES` em `services/sessions.py`) vão junto em cada system prompt.
+- **Overrides:** o texto fica em `<vault>/.harness/prompts/<path>` e só vale com `config.prompt_overrides[path] is True` e o arquivo existindo. `.harness/prompt-overrides.json` é um fallback legado das flags. Rotas: `GET/PUT/DELETE /api/settings/prompts[/{path}]`, com o path validado contra os segmentos existentes.
+
+### 6.5 O ciclo de um turno (`SessionService.run`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI
+    participant API as FastAPI
+    participant S as SessionService
+    participant E as Motor (agy/ACP/SDK)
+    participant M as MCP /internal/mcp
+    UI->>API: POST /api/chats/{id}/messages
+    API->>S: schedule(_drive)
+    S->>S: execution_id novo, status=running, steers pendentes → delivered
+    S->>S: system = fragmentos + contexto JSON + SOURCE + graph_context + material PRACTICE
+    S->>E: stream_turn(prompt, history|persistente, slot)
+    E-->>S: deltas de texto (flush a cada 0,2 s → session:updated)
+    E->>M: quiz(...) com Bearer
+    M->>S: pose() → pending_quiz, dock:opened, aguarda Future
+    UI->>API: POST /answer
+    API->>S: answer() → calibração, quiz-log, Future resolvido
+    M-->>E: resposta compacta
+    E-->>S: fim do turno (result)
+    S->>S: status waiting|queued|idle · gatilho de extração · compactação
+    S-->>S: follow-up? (handoff ou steers) → novo run()
+```
+
+- **Motores persistentes** (`_persistent_turn`): o processo guarda a conversa, então cada turno envia só o **conteúdo novo** (tudo depois da última mensagem do assistente, inclusive steers que chegaram atrasados) mais `CURRENT STATE` (fase e status do plano, ou o problema ativo). O system prompt vai como `system_instruction` e só é usado ao (re)criar o processo, com o histórico compacto.
+- **Troca de família de prompt:** quando `prompt_family` muda (`prober → teacher`), o turno abre com `UPDATED INSTRUCTIONS (they replace your previous system instructions)`. `SessionRecord.prompt_phase` registra a família enviada por último.
+- **Motores não persistentes:** a cada turno vai `system + PERSISTED HISTORY + regras`, e o primeiro turno recebe `opening_request` (o título da sessão **é** o pedido do aluno).
+- **Handoff:** `probe_done` arma `handoff_pending`. Quando o turno de diagnóstico termina, `_drive` roda logo em seguida um **turno de handoff** com `handoff.md` ("planeje o arco a partir do diagnóstico, chame `plan_init`, apresente e encerre"). É uma tentativa só; uma nova tentativa depende do aluno.
+- **Steers:** `deliver_steer(session_id, kind, content, details)` grava uma mensagem `role="user"` com `steer_kind` `learner` (enviada durante o turno, por `POST /api/chats/{id}/steer`) ou `job` (resultado de job), com `delivered=False`. Se a sessão está ociosa, agenda um turno. Se está ocupada, o turno corrente termina e `_steers_due` dispara um **turno de follow-up**. Com uma pergunta pendente, o steer espera a resposta.
+- **Escrita da prosa:** o texto em streaming é gravado a cada 0,2 s. Antes de ferramentas que mudam o plano ou abrem um problema, o texto até ali é gravado e a mensagem é dividida (`split_streaming` / `flush_streaming`), para a prosa ficar na seção certa da nota.
+- **Fim do turno:**
+  - status `waiting` (pergunta pendente), `queued` (há follow-up) ou `idle`;
+  - `_trigger_extraction` (seção 8);
+  - `_compact_at_settle` (6.6);
+  - nota da aula atualizada (`refresh_lesson_note`);
+  - ao completar, o runtime é liberado (processo fechado, tokens revogados).
+
+### 6.6 Compactação de contexto
+
+- **Gatilho** (`core/compaction.py`): as mensagens que o modelo ainda lê literalmente passam de `config.agent.compaction_tokens` (padrão 150 000, mínimo 32 000; estimativa `chars/4`). Roda no fim do turno, com `execution_status="compacting"`, e o próximo turno espera.
+- **Resumo** (`services/compaction.compact_session`): o slot `background` gera as seções obrigatórias: entendimento do aluno, arco do ensino, plano atual na íntegra e momento atual.
+- **Armazenamento:** `SessionRecord.compaction = {summary, first_kept_message_id, tokens_before, at}`, com uma cauda literal de cerca de `TAIL_TOKENS = 20 000`. As mensagens antigas continuam no JSONL.
+- **Uso no prompt:** `split_history` → `summary_block(summary)` + cauda, tanto na reidratação persistente quanto no `PERSISTED HISTORY`. Se a compactação falhar, ela é registrada no log e a sessão segue com o histórico completo.
+
+### 6.7 Controles da sessão
+
+| Ação | Rota | Comportamento |
+|---|---|---|
+| Steer | `POST /api/chats/{id}/steer` | Mensagem do aluno durante o turno (6.5) |
+| Abortar | `POST /api/chats/{id}/abort` | Cancela a task (→ `interrupted`), dispensa a pergunta pendente e fecha o processo persistente |
+| Dispensar pergunta | `POST /api/chats/{id}/questions/dismiss` | `dismissed: true`, sem nota nem `quiz-log`; o modelo recebe "não repita a pergunta" |
+| Renomear | `PUT /api/chats/{id}` `{title}` (1–200) | A nota mantém o caminho; só os campos gerenciados mudam |
+| Excluir | `DELETE /api/chats/{id}?mode=preserve-graph\|delete-nodes` | Move o JSONL para `.harness/trash/`; **nunca** apaga a nota em `Aulas/`; `delete-nodes` desfaz os vínculos no grafo (seção 8); `409` com turno rodando |
+| Exportar | `GET /api/chats/{id}/markdown` | `text/markdown` com `Content-Disposition` (`core/session_export.py`) |
+| Retomar | `POST /api/chats/{id}/resume` `{restart_diagnostic}` | Reagenda a sessão; registros legados incompletos exigem reiniciar o diagnóstico |
+| Modelo/esforço | `PUT /api/chats/{id}/settings` | Seção 5.5 |
+
+Sessões inexistentes respondem `404` (`SessionNotFound`).
+
+---
+
+## 7. Sessões PRACTICE
+
+- **Abertura:** pelo composer em modo PRACTICE, por **Praticar estes** (o `graph_context` vira o material) ou por um item de trilha. Sem aquecimento: o agente abre com o primeiro problema.
+- **Ferramentas:**
+  - `problem(statement, mode: recall|discrimination|composition, model_solution, target)` registra o problema ativo e **não bloqueia**. Ela recusa se já houver um ativo; `target` aceita ids `n_…` ou nomes exatos, resolvidos por `core/practice.resolve_targets`.
+  - `conclude(outcome: solved|solvedWithHints|movedOn|surrendered, verdict, rung R0–R5|null, miss_class: cue|discrimination|execution|careless|structural|null, retest)` fecha o problema, revela a `model_solution` e grava uma linha em `.harness/practice-log.jsonl`.
+- **Entradas do aluno:** `POST /api/chats/{id}/messages` com `kind`:
+  - `text`;
+  - `attempt`: anexa a tentativa ao problema ativo e a envia prefixada por `Tentativa:\n`;
+  - `next`: "Próximo problema, por favor.".
+  - `POST /api/chats/{id}/practice/dismiss` descarta o problema ativo (`outcome="dismissed"`, sem log), deixa uma nota de sistema para o modelo não retomá-lo e não dispara turno.
+- **Escada de dicas `R0–R5`:** em prosa, um degrau por pedido (`prompts/practice/30-hints.md`). A doutrina (`20-doctrine.md`) inclui intercalar alvos e modos, mirar cerca de 85% de sucesso, não nomear o alvo, variar a superfície e fechar com retestes.
+- **Material no prompt** (`PracticeService.prompt_material`):
+  - o `graph_context`;
+  - a **fila de reteste** (`core/practice.retest_queue`): problemas com `retest=true` ainda sem um `solved` posterior para os mesmos alvos;
+  - sem contexto, as proposições das sessões TEACH mais recentes (até 20).
+- **Serialização:** `practice.problems[]` omite a `model_solution` enquanto o problema está ativo (`public_practice`).
+- **Vault:** a nota fica em `Aulas/<AAAA-MM-DD> Prática — <título>.md`, com uma seção gerenciada por problema.
+- **Grafo:** PRACTICE **não** alimenta o rastro, porque o grafo guarda ideias verdadeiras, não desempenho. O frontend correspondente fica em `components/practice-session.tsx` (`ProblemCard`, `AttemptCard`, `ConcludeCard`, `PracticeDock`, `DismissProblemDialog`) e `lib/practice.ts`.
+
+---
+
+## 8. Rastro de conhecimento (grafo)
+
+### 8.1 Armazenamento (`.harness/graph/`, *append-only*)
+
+| Arquivo | Conteúdo |
+|---|---|
+| `nodes.jsonl` | Criação `{id: "n_<12hex>", name, statement, aliases, created_at, provenance: [{session_id, message_id}], vault_rel_path}`; *link-appends* `{id, aliases?, provenance?}`; tombstone `{id, deleted: true}`; *unlink* `{id, unlink_session}` |
+| `chains.jsonl` | `{id: "arg_<12hex>", premises: [node_id], conclusion, provenance, created_at}`; cadeias com as mesmas `(premissas ordenadas, conclusão)` se fundem na leitura |
+| `coverage.jsonl` | `{session_id, message_id, fp: sha256, tokens, at}`: que prosa do professor já foi extraída |
+| `positions.json` | `{node_id: {x, y}}` arrastados pelo aluno (reescrito atomicamente) |
+
+O *fold* é puro (`core/graph_merge.fold_nodes` / `fold_chains`), e o I/O fica em `vault/graph_store.py`. O antigo `.harness/chains.jsonl` (na raiz de `.harness/`) e as notas `Conceitos/*.md` sem `harness_id` continuam visíveis como nós `legacy` (`GraphService._legacy`).
+
+### 8.2 Pipeline de extração (LangGraph)
+
+```mermaid
+flowchart LR
+    T["Gatilho"] --> J["job extraction (dedup extract:&lt;sid&gt;)"]
+    J --> B["select_batch: prosa não coberta até extraction_chunk_tokens"]
+    B --> X["extractor: run_structured (slot background)"]
+    X --> A["auditor: top-8 candidatas por sobreposição de tokens → link_to"]
+    A --> MG["merger: core.graph_merge.plan_merge (determinístico)"]
+    MG --> W["append nodes/chains/coverage + notas Conceitos/"]
+    W --> EV["graph:updated + vault:changed"]
+    W -->|"ainda há prosa"| B
+```
+
+- **Gatilhos:**
+  - no fim de cada turno TEACH, se os tokens não cobertos passarem de `config.graph.extraction_chunk_tokens` (padrão 4096);
+  - sempre que a sessão conclui;
+  - manualmente, por `POST /api/graph/extract/{session_id}` (botão **Extrair para o grafo**).
+- **Extractor:** devolve `{propositions: [{key, name, statement, aliases, message_id}], chains: [{premises, conclusion}]}`. Vê o grafo que a sessão já produziu, para reaproveitar ids. Só extrai verdades sobre o mundo (uma concepção errada entra como a sua correção) e só cria cadeias por implicação.
+- **Auditor:** tem viés de equivalência, então paráfrases se fundem.
+- **Merger:** grava os nós novos e *link-appends*, descarta cadeias redundantes (mesmas premissas, ou premissas que são superconjunto de uma cadeia existente para a mesma conclusão), grava a cobertura e espelha as notas.
+- **Checkpointer:** `AsyncSqliteSaver` em `.harness/langgraph.sqlite`, com `thread_id = extraction-<sid>-<run_id>`. Uma falha deixa o job `failed` com erro visível, sem fallback.
+
+### 8.3 Notas de conceito e snapshot
+
+- **Espelho no Vault:** cada proposição vira `Conceitos/<Nome>.md`, com as chaves de frontmatter gerenciadas `harness_id`, `aliases` e `sessions` e um bloco gerenciado (afirmação, premissas `[[…]]`, origem `[[Aulas/…]]`). Uma nota `Conceitos/X.md` do usuário sem `harness_id` é **adotada** (ganha o bloco), nunca sobrescrita.
+- **`GET /api/graph`** (`GraphService.snapshot`) devolve:
+  - `nodes[]`, com `cluster` = sessão de nascimento, `sessions[]` (link `/chat/<id>#message-<msgId>`), `x/y` e `legacy`;
+  - `chains[]`, com `expression` `A ∧ B ⟹ C`;
+  - `edges[]` (premissa → conclusão);
+  - `clusters[]` (`session | legacy`);
+  - `roadmap[]`, com um item por passo de cada trilha não arquivada: `{id: "track:<track_id>:<item_id>", title, status, track_id, track_title, linked_node_ids, depends_on}`. Os `linked_node_ids` são os nós nascidos em sessões daquele passo.
+- **`graph_context`:** a sessão guarda até 64 ids, e `GraphService.context_for` injeta no prompt "[id] nome: afirmação" mais as cadeias entre eles. No TEACH isso significa "já sabido; não reensinar"; no PRACTICE, é o material da sessão.
+- **Exclusão:**
+  - `DELETE /api/graph/nodes/{id}` grava tombstone no nó e nas cadeias que o citam e remove **só o bloco gerenciado** da nota. A nota só é apagada se ficar vazia **e** tiver sido criada pelo harness.
+  - `GraphService.unlink_session` (excluir sessão com `delete-nodes`) grava *unlink*; nós e cadeias sem proveniência restante viram tombstone.
+- **Outras rotas:** `PUT /api/graph/positions` e `GET /api/graph/concepts/{id}/note` (painel **Abrir nota**, restrito a `Conceitos/`).
+
+---
+
+## 9. Jobs em background com steer
+
+O professor **despacha** trabalho e continua ensinando. As ferramentas retornam na hora `{ok, job_id, status, note: "Despachado. Continue ensinando; o resultado chegará sozinho — não espere nem consulte."}`.
+
+| Ferramenta | Job | Execução | Resultado |
+|---|---|---|---|
+| `research(question, context)` | `research` | Primeiro conector configurado com pesquisa, na ordem agy → google-genai → gemini CLI (`services/research.py`). Sem conector capaz, falha com mensagem clara | `{brief (Resumo / Achados citados / Fontes / Lacunas), sources[{title,url}], engine}` |
+| `read_pdf(path, question)` | `pdf` | `path` relativo ao Vault, só `.pdf` (`resolve_pdf`); `pypdf` página a página; triagem por termos; até 8 páginas | `{file, answer citando (p. N), pages_read}`; recusa se nada foi lido |
+| `visual(brief)` | `visual` | O modelo gera um SVG validado por `core/svg_validation` (raiz `<svg>` com `viewBox`, sem `<script>`, `foreignObject` ou `on*`, `href` só `#…`/`data:`, ≤ 300 KB), com até 2 correções | `viz/visuals/<slug>.svg` |
+| `spawn_demo(title, topic, description)` | `demo_builder` | `mcp/demo_builder.py` gera um HTML autocontido validado | `viz/demos/<slug>.html` |
+
+- **Toggles:** `config.agent.tools.{research,pdf,visual,demo}`. Desligado, a ferramenta recusa com texto corretivo ("…está desativada nas Configurações; siga sem ela").
+- **Steer de volta:** ao terminar, `JobManager._deliver_steer` chama `deliver_steer(session_id, "job", content, details)`:
+  - o `content` é o texto para o modelo ("use e cite as fontes", ou na falha "siga em prosa; não invente o resultado");
+  - `details = {job_id, kind: research|read_pdf|visual|demo, label, node_id, dispatched_at, finished_at, status: done|failed, result|error}`;
+  - a entrega é **idempotente por `job_id`** (`steer_message_id` no registro e verificação nas mensagens), mesmo com retry.
+- **Nota da aula:** o artefato entra na seção do nó que era o corrente no despacho: `![[viz/visuals/<slug>.svg]]`, o link da demo, ou um callout `> [!note]- Pesquisa: …`.
+- **UI** (`components/job-cards.tsx` + `lib/job-steer.ts`):
+  - `ResearchCard`/`PdfCard` recolhidos, com resumo e fontes;
+  - `VisualCard` como `<img src="data:image/svg+xml;base64,…">`, nunca injetado no DOM, com baixar, tela cheia e inverter brilho;
+  - `DemoCard` em iframe `sandbox="allow-scripts"` (`demo-iframe.tsx`);
+  - `FailedJobChip` para falhas e `DispatchLabel` ("Despachado → concluído" com o tempo);
+  - steers `learner` aparecem como mensagem do aluno com selo (`LearnerSteerBadge`).
+  - Os jobs aparecem na bandeja **BACKGROUND AGENTS** da sidebar, por `GET /api/jobs`.
+
+---
+
+## 10. Trilhas
+
+### 10.1 Modelo
+
+- **`TrackConfig`:** `id (trk-<8hex>)`, `title`, `archived`, `created_at`, `source: repo|github|goal|manual|legacy`, `github_url`, `mode` (`TrackMode`: `repo_leveling | goal_generated | free`), `repo_path`, `learning_md_path`, `goal_description`, `active_item_id` e `queue`.
+- **`TrackItem`:** `id` (único **dentro** da trilha), `title`, `kind`, `source_ref`, `stage_label`, `status_detail`, `completed`, `parent_item_id`, `prerequisites` e `ordered`.
+- **`HarnessConfig`:** `tracks`, `active_track_id`, `active_track()`, `find_track()`, `session_track(track_id, item_id)` e `next_active_track_id()`.
+- **Sessões:** `SessionRecord.track_id` + `track_item_id`. O par identifica o passo. O contexto do prompt usa a trilha **da sessão**, não a trilha em foco.
+
+### 10.2 Serviço e rotas
+
+`services/tracks.py: TrackService` e `api/routes/tracks.py`:
+
+| Rota | Comportamento |
+|---|---|
+| `GET /api/tracks` | `[{id, title, source, mode, archived, active, created_at, progress {done,total}, next_item, generating, error}]`; `generating`/`error` vêm do job `track:<id>` |
+| `POST /api/tracks` | Por `source`: `manual` (`items` direto), `goal` (objetivo ou ementa, até 20k caracteres), `repo` (`repo_path`) ou `github` (clona como o import). Os três últimos disparam `track_gen`. `activate` padrão `true` |
+| `PUT /api/tracks/{id}` | `{title?, archived?, goal_description?}`; arquivar a trilha em foco passa o foco para a próxima não arquivada |
+| `POST /api/tracks/{id}/activate` | Põe a trilha em foco |
+| `DELETE /api/tracks/{id}` | Remove do config; sessões ficam com `track_id` órfão; nada no Vault é apagado |
+| `POST /api/tracks/{id}/regenerate` | Refaz a fila, preservando o `completed` de itens com o mesmo título |
+
+- **Geração** (`track_gen`): `build_curriculum_outline` lê primeiro os documentos de estrutura (README, ROADMAP, `LEARNING.md`, `learning-paths/`) e depois cada lição em ordem natural. Quando o orçamento de caracteres aperta, reduz o detalhe em vez de cortar o repositório. A resposta é validada: ids, pré-requisitos e `source_ref` dentro do repositório.
+- **Nota no Vault:** `_save` grava o config e reescreve **só** o bloco gerenciado do `00 Mapa.md`, com uma seção por trilha não arquivada (checklist e marca da ativa). Emite `vault:changed` e `config:updated`.
+- **`complete(track_id, item_id)`** marca o passo concluído. **`foundation`** (ferramenta `track_foundation`) insere um pré-requisito na trilha da sessão.
+
+### 10.3 Superfícies
+
+- **Chip** (`track-chip.tsx`, `use-tracks.ts`, `lib/tracks.ts`): `⇶ <trilha> · Próximo: <item> [Continuar ↵] ▾`. O menu tem progresso, troca de trilha, "＋ Nova trilha" e "Gerenciar trilhas" (`/settings#tracks`). `⌘↵` (`continueTrack`) continua a trilha.
+- **Configurações → Trilhas** (`settings/tracks-section.tsx`, `new-track-dialog.tsx`, `track-create-form.tsx`): ativar, renomear, arquivar, regenerar, excluir e o status do job. O diálogo de nova trilha tem as abas Objetivo/ementa, Lista de tópicos, Repositório local e GitHub.
+- **Sidebar:** filtro por trilha (Todas / Sem trilha / cada trilha) e uma tag curta da trilha em cada linha.
+- **⇶ Roteiro no grafo:** nós fantasmas tracejados (`lib/ghost-layout.ts`), com cor por trilha e legenda. A alternância "Só a trilha em foco / Todas" fica em `learnharness:roadmap-scope`.
+- **Status do setup:** `GET /api/setup/status` também devolve `track` (a trilha em foco no formato antigo), por compatibilidade.
+
+### 10.4 Fase 15 — nivelamento por busca binária (em implementação)
+
+Desenho do [spec](specs/fase-15-nivelamento.md). **Ainda não existe no código** desta revisão.
+
+- `POST /api/tracks/{id}/leveling` cria uma sessão **TEACH** com `context_kind="leveling"`, `track_id` e o título "Nivelamento: <trilha>". O botão aparece em Configurações → Trilhas e no menu ▾ do chip, para trilhas com 4 ou mais passos pendentes.
+- O agente recebe a fila pendente ordenada (ids, títulos e pré-requisitos) e faz **busca binária**: 1 ou 2 perguntas `probe`/`recall` sobre o item do meio. Um acerto confiante sobe; um erro ou "não sei" desce. O limite é de cerca de 12 perguntas, e um item cujo pré-requisito não foi dominado nunca é dado como sabido.
+- O fechamento é feito por uma nova ferramenta, `leveling_done(known_item_ids, start_item_id, summary)`. Ela marca os itens conhecidos `completed` com `status_detail="nivelado"`, move `active_item_id`, grava um snapshot para desfazer e põe a sessão em `phase="completed"`.
+- **Recusas:** `plan_init`, `quiz` e `explain` em `leveling`; ids desconhecidos; `start_item_id` dentro de `known_item_ids`; pergunta pendente; chamada repetida.
+- **Desfazer:** `POST /api/tracks/{id}/leveling/{session_id}/undo`, válido só enquanto nenhum item mudou depois.
+- **Prompt:** novo fragmento `prober/30-leveling.md`, carregado só nesse contexto.
+- **Frontend:** `LevelingDoneCard` na transcrição e chip de fase "Nivelamento".
+
+---
+
+## 11. Vault: layout, invariantes e configuração
+
+### 11.1 Layout
+
+O `bootstrap_vault` (`vault/bootstrap.py`) cuida de dois casos:
+
+- **Vault novo** (sem arquivos visíveis): cria a estrutura no idioma escolhido.
+- **Vault existente** (por exemplo `~/Documents/AI Engineering`): adota o que já existe, detectando as pastas, `00 Mapa.md` e `LEARNING.md`, **sem sobrescrever nada**.
+
+Os nomes das pastas ficam em `HarnessConfig.folders` (`VaultFolderMap`). A tabela mostra o padrão em PT-BR (EN entre parênteses):
+
+| Caminho | Conteúdo | Quem escreve |
+|---|---|---|
+| `00 Mapa.md` (`00 Map.md`) | Mapa do Vault; bloco gerenciado das trilhas | Usuário + bloco gerenciado |
+| `Aulas/` (`Lessons/`) | `<AAAA-MM-DD> <Título>.md` (TEACH) e `<AAAA-MM-DD> Prática — <Título>.md` | Blocos gerenciados (`lesson_layout.py`) |
+| `Conceitos/` (`Concepts/`) | Uma nota por proposição (seção 8.3) | Frontmatter e bloco gerenciados; o resto é do usuário |
+| `Fontes/` (`Sources/`) | Material importado com parágrafos `^pN` | **Somente leitura** depois do import |
+| `Desenhos/` (`Drawings/`) | `*.excalidraw.md` + `.png` (`vault/excalidraw.py`) | UI ⇄ Obsidian |
+| `viz/demos/`, `viz/visuals/` | Simuladores HTML e figuras SVG | Jobs |
+| `Sessões/`, `Templates/` | Pastas do método original e templates de nota | Bootstrap (create-only) |
+
+### 11.2 `.harness/` (camada de máquina)
+
+| Caminho | Formato | Conteúdo |
+|---|---|---|
+| `config.json` | JSON (escrita atômica) | `HarnessConfig` (11.4) |
+| `sessions/<id>.jsonl` | append-only | Snapshots e eventos do `SessionRecord` |
+| `graph/{nodes,chains,coverage}.jsonl` | append-only | Rastro de conhecimento (8.1) |
+| `graph/positions.json` | JSON | Posições arrastadas |
+| `quiz-log.jsonl` | append-only | `CalibrationResult` de cada resposta com nota |
+| `practice-log.jsonl` | append-only | Uma linha por `conclude` |
+| `usage.jsonl` | append-only | Uso de tokens por chamada de provedor |
+| `jobs.jsonl` | append-only | Registros do `JobManager` |
+| `langgraph.sqlite` | SQLite | Checkpoints do pipeline de extração |
+| `prompts/<path>` | Markdown | Overrides de prompt (6.4) |
+| `prompt-overrides.json` | JSON (legado) | Fallback das flags de override |
+| `runtime/<session_id>/` | diretório | Work dir dos CLIs (`.agents/` do agy); motores não persistentes usam `runtime/<sid>/<execution_id>/` |
+| `repos/<owner>__<repo>@<ref>/` | clone git | Cache do import do GitHub |
+| `trash/` | diretório | JSONL de sessões excluídas (com sufixo datado em colisão) |
+| `chains.jsonl` | append-only (legado) | Cadeias anteriores à Fase 8B, lidas como `legacy` |
+
+O watcher (`vault/watcher.py`, `watchfiles`) ignora `langgraph.sqlite`, `repos/`, `runtime/`, `.git`, temporários e `.obsidian/workspace*`, e emite `vault:changed` + `graph:updated`.
+
+### 11.3 Invariantes de escrita
+
+- **Confinamento:** todo caminho passa por `vault/safety.safe_path` (nada escapa do Vault) e por `safe_component`. As escritas são atômicas (`atomic_write`) com `locked_path`, e os JSONL usam `append_line`.
+- **Blocos gerenciados** (`markdown_ast.merge_owned_blocks`):
+  - delimitados por `<!-- harness:<token>:start sha=<digest> -->` … `<!-- harness:<token>:end -->`;
+  - bytes fora dos marcadores nunca mudam;
+  - um bloco editado pelo aluno (digest diferente) é preservado se o agente não tem nada novo; se o agente precisa reescrevê-lo, o texto editado é movido literalmente para logo depois do bloco, fora dos marcadores;
+  - só as chaves de frontmatter gerenciadas são tocadas;
+  - escritas idempotentes não geram churn no watcher.
+- **Notas de aula:** são criadas em modo create-only. Uma colisão de nome (inclusive só de caixa) ganha o sufixo ` (2)`, ` (3)` e assim por diante; um arquivo do usuário nunca é adotado nem sobrescrito.
+- **Lixeira:** excluir uma sessão só move o seu JSONL. As notas do usuário nunca são apagadas.
+
+### 11.4 Configuração (`HarnessConfig`, `schema_version = 2`)
+
+| Campo | Conteúdo |
+|---|---|
+| `configured`, `language` (`pt-BR`\|`en`), `vault_path`, `folders` | Básico |
+| `slots.{strong,fast,background}` | `{engine, model_id, effort}` (5.5) |
+| `content_mcps[]` | `McpServerConfig {name, transport: stdio\|http\|sse, url \| command+args, env, enabled, catalog_tool, content_tool, content_id_argument, auth_ref, auth_env_var}` |
+| `tracks[]`, `active_track_id` | Seção 10 |
+| `prompt_overrides` | `{path: bool}` |
+| `graph.extraction_chunk_tokens` | Padrão 4096 (mínimo 500 na rota) |
+| `agent.tools.{research,pdf,visual,demo}`, `agent.compaction_tokens` | Toggles e limiar (mínimo 32 000); `GET/PUT /api/settings/agent` emite `config:updated` |
+
+**Migrações na leitura** (puras, em `core/contracts/config.py`):
+
+- a chave legada `track` vira `tracks[0]` (`source="legacy"`, id `trk-<hash do conteúdo>`, em foco), a menos que seja uma trilha `free` vazia;
+- `TrackMode` `repo_binary` passa a `repo_leveling`;
+- `items`/`current_step_id` passam a `queue`/`active_item_id`;
+- `EngineKind` `gemini`/`sdk` passam a `gemini_cli`/`genai_sdk`;
+- fases `awaiting_answer`/`consolidating` são normalizadas;
+- `praxis_id` no frontmatter de fontes é lido como `mcp_item_id`.
+
+A gravação usa só o formato novo.
+
+### 11.5 Segredos (fora do Vault)
+
+- Tokens de MCP de conteúdo ficam em `$XDG_CONFIG_HOME/learnharness/secrets.json` (padrão `~/.config`, modo `0600`, `services/secrets.py`). O `config.json` guarda só o `auth_ref`: uma chave nesse arquivo ou `env:VAR`. O token nunca volta nas respostas da API, e em `stdio` chega ao processo só por variável de ambiente.
+- A chave do `google-genai` vem de `GEMINI_API_KEY` ou da memória do processo (`AppState.api_key`).
+- O token do GitHub vem de `GITHUB_TOKEN`/`GH_TOKEN` ou de `gh auth token`.
+- O token MCP do agy fica só no work dir da sessão (`0600`).
+
+---
+
+## 12. Import multi-fonte
+
+Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter de proveniência: `source_kind`, URL, `commit`, `imported_at`, `mcp_server`/`mcp_item_id`, e `origem` (`MCP: <servidor>`, `Import` ou `Local`). Reimportar cria uma nova versão imutável. Conteúdo remoto é **dado, não instrução**. Na UI, `import-dialog.tsx` tem as abas `import-mcp-items.tsx`, `import-github-panel.tsx` e `import-local-panel.tsx`, e `lib/import-wire.ts` contém os construtores puros das requisições.
+
+- **MCP genérico** (`mcp/content_client.py`, `/api/import/mcp/servers*`):
+  - aceita **qualquer** servidor por `http` (streamable), `sse` ou `stdio`, com uma conexão por chamada e timeout rígido;
+  - os itens vêm do `catalog_tool` configurado ou de `resources/list`;
+  - o cadastro usa `components/mcp-server-manager.tsx`, no Setup e nas Configurações, sem nada fixo de "Praxis".
+  - Rotas legadas: `GET /api/import/catalog` (agrega os servidores) e `POST /api/import/ingest|source` (transcrição → `Fontes/` + sessão TEACH).
+- **GitHub** (`vault/github_source.py`, `POST /api/import/github/{preview,import}`):
+  - **Validação e execução:** só URLs `https://github.com/<owner>/<repo>[/tree|/blob/…]`. O `git` roda sem shell, com `--` antes dos posicionais, ambiente limpo (`GIT_TERMINAL_PROMPT=0`), sem submódulos, com symlinks tratados como arquivos, timeout e limite de tamanho. O token vai por `GIT_CONFIG_*` e é redigido dos erros.
+  - **Cache em `.harness/repos/`:** o preview faz um `git ls-remote` e só re-clona (diretório temporário + troca atômica) se o commit mudou, se o cache falta ou se o corpo traz `refresh: true`.
+  - **Criar trilha:** `use_as_track` cria uma **nova** trilha `source="github"` e a põe em foco. `replace_track` é aceito e ignorado.
+- **Local** (`POST /api/import/local`): `.md`, `.markdown`, `.txt` e `.pdf` (texto via `pypdf`), até 20 MB, em `Fontes/Local/`.
+- **Citações:** `GET /api/sources/paragraph` e `GET /api/sources/{source}/paragraph/{pN}` alimentam o `source-citation-pane.tsx`.
+
+---
+
+## 13. Frontend
+
+### 13.1 Rotas
+
+| Rota | Arquivo | Conteúdo |
+|---|---|---|
+| `/` | `app/page.tsx` | Home: `GraphView`, `Composer`, `ImportDialog`, `SetupGate` |
+| `/chat/[id]` | `app/chat/[id]/page.tsx` | TEACH: prosa (`lesson-prose.tsx`, KaTeX/mermaid), `QuestionDock`, `PlanWindow`, cartões de transcrição e de job, `SessionFindBar`, painel de citação. PRACTICE: `practice-session.tsx` |
+| `/draw/[slug]` | `app/draw/[slug]/page.tsx` | `ExcalidrawCanvas` 1:1 com o Vault e revisão multimodal (`POST /api/drawings/{slug}/review`, que abre uma pergunta) |
+| `/settings` | `app/settings/page.tsx` | Navegação lateral com seções endereçáveis por hash (13.4) |
+
+`app/layout.tsx` envolve tudo com `LocaleProvider` (PT-BR/EN), `ServerEventsProvider`, `Sidebar`, `SetupGate` (abre o Setup no boot e em qualquer `409` de setup), `GlobalShortcuts` e `AppearanceApplier`. O `next.config.ts` faz o proxy de `/api/*` para `BACKEND_URL`.
+
+### 13.2 Componentes-chave
+
+- **`graph-view.tsx` / `graph-canvas.ts`:** Canvas 2D em estilo constelação (pontos, fios finos, junções de implicação, nebulosas por sessão), pan/zoom, arrastar (persiste as posições), seleção múltipla, cartão do nó (sessões, Abrir nota, Selecionar, Excluir), fantasmas do roteiro, `graph-settings-panel.tsx` e `chain-table.tsx`.
+- **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
+- **`question-dock.tsx` + `lib/question-core.ts`:**
+  - opções embaralhadas de forma determinística por `quiz_id`;
+  - "Não sei" e slider de confiança;
+  - "Seu raciocínio" e "Pensando enquanto lê" (CHECK recolhido);
+  - "Outro…" em `ask`;
+  - teclado: ↑/↓ percorre, Espaço escolhe, Enter envia.
+- **`plan-window.tsx` + `lib/plan-layout.ts`:** DAG em camadas, em SVG próprio.
+- **`transcript-cards.tsx`:** pergunta respondida, `ProbeDoneCard`, `PhaseDivider`, `PhaseChip`.
+- **`session-ux.tsx`:** título editável, diálogos de confirmação, `CompactionDivider` e `CompactingPlaceholder`.
+- **`sidebar.tsx`:**
+  - busca difusa (`⌘⇧F`);
+  - filtros Ensino / Todas / Prática e filtro por trilha;
+  - status por linha;
+  - menu ⋯: Extrair para o grafo, Renomear, Exportar Markdown, Excluir (com "remover também os nós");
+  - bandeja BACKGROUND AGENTS e link para Configurações.
+- **`setup-dialog.tsx`, `slot-editor.tsx`, `agy-permission-card.tsx`:** onboarding (conector e slots, Vault e idioma, MCP genérico, trilha opcional).
+
+### 13.3 `lib/`: módulos puros e testes
+
+Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com `node --test` (`frontend/tests/*.test.cjs`, cerca de 112 casos):
+
+| Módulo | Responsabilidade |
+|---|---|
+| `session-wire.ts`, `graph-wire.ts`, `config-wire.ts`, `settings-wire.ts`, `import-wire.ts` | Decoders e encoders do *wire* da API |
+| `question-core.ts`, `quiz-memory.ts`, `plan-layout.ts` | QuestionDock e PlanWindow |
+| `graph-selection.ts`, `ghost-layout.ts`, `graph-settings.ts`, `palette.ts` | Grafo (seleção, roteiro, ajustes com clamp, cores) |
+| `practice.ts`, `job-steer.ts`, `session-ux.ts`, `usage.ts` | PRACTICE, cartões de job, busca difusa, ordem do Esc, fila de steer, formatação de uso |
+| `model-choice.ts`, `popover-position.ts` | Seletor de modelo |
+| `keyboard.ts`, `key-capture.ts`, `command-events.ts`, `appearance.ts` | Atalhos e aparência |
+| `tracks.ts`, `tracks-i18n.ts`, `settings-i18n.ts` | Trilhas e strings |
+| `api.ts`, `tracks-api.ts`, `settings-api.ts`, `types.ts` | Clientes HTTP e tipos (não puros) |
+
+### 13.4 Configurações e teclado
+
+- **Seções de `/settings`** (`SECTIONS`):
+  - `connectors`: slots, teste e permissão do agy;
+  - `tracks`;
+  - `agent`: toggles, compactação, lote de extração e o editor de prompts `settings/prompt-editor.tsx`, agrupado em Compartilhados / Diagnóstico / Professor / Prática / Handoff;
+  - `graph`: os mesmos ajustes da engrenagem;
+  - `appearance`: tamanho da prosa e títulos em serifa;
+  - `keyboard`;
+  - `general`: idioma e caminho do Vault.
+- **Registro de atalhos** (`lib/keyboard.ts: SHORTCUTS`): os componentes usam `useShortcut(id, handler)` e nunca criam listeners próprios. Overrides ficam em `learnharness:keymap`, e conflitos são detectados por `conflicts()`.
+
+| id | Padrão | Escopo |
+|---|---|---|
+| `help` | `?` | global (folha de atalhos) |
+| `settings` | `Mod+,` | global |
+| `newSession` | `Mod+N` | global |
+| `toggleSidebar` | `Mod+B` | global |
+| `sessionSearch` | `Mod+Shift+F` | global |
+| `goGraph` | `Mod+G` | global |
+| `dictate` | `Mod+D` | global (`learnharness:toggle-dictation`) |
+| `modelPicker` | `Mod+K` | global (`learnharness:open-model-picker`) |
+| `find` | `Mod+F` | sessão (busca literal com CSS Custom Highlight API) |
+| `rename` | `F2` | sessão |
+| `abort` | `Escape` | sessão: dispensar a pergunta → descartar o problema → abortar o turno |
+| `toggleThinking` | `Mod+T` | sessão |
+| `continueTrack` | `Mod+Enter` | home |
+
+- **`localStorage`** (sempre em `try/catch`): `learnharness:graph-settings`, `learnharness:appearance`, `learnharness:keymap`, `learnharness:roadmap-scope`, `learnharness:sidebar-collapsed`, `learnharness:sidebar-track-filter`, `learnharness:quiz-memory`, `learnharness:visual-invert` e `learnharness:setup-dismissed`.
+
+---
+
+## 14. Referência de rotas HTTP
+
+| Grupo | Rotas |
+|---|---|
+| Eventos | `GET /api/events` |
+| Setup | `GET /api/setup/status` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
+| Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
+| Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` |
+| Trilhas | `GET\|POST /api/tracks` · `PUT\|DELETE /api/tracks/{id}` · `POST /api/tracks/{id}/activate` · `POST /api/tracks/{id}/regenerate` · *(Fase 15)* `POST /api/tracks/{id}/leveling` · `POST /api/tracks/{id}/leveling/{session_id}/undo` |
+| Jobs e artefatos | `GET /api/jobs` · `POST /api/jobs/{id}/retry` · `POST /api/jobs/extract` · `POST /api/demos` · `GET /api/demos/{slug}` · `GET /api/visuals/{slug}` |
+| Import e fontes | `GET\|POST /api/import/mcp/servers` · `DELETE /api/import/mcp/servers/{name}` · `POST …/{name}/test` · `GET …/{name}/items` · `POST …/{name}/import` · `GET /api/import/catalog` · `POST /api/import/ingest` · `POST /api/import/source` · `POST /api/import/github/preview` · `POST /api/import/github/import` · `POST /api/import/local` · `GET /api/sources/paragraph` · `GET /api/sources/{source}/paragraph/{pN}` |
+| Desenhos | `POST /api/drawings` · `GET\|PUT /api/drawings/{slug}` · `POST /api/drawings/{slug}/review` |
+| Configurações | `GET\|PUT /api/settings/agent` · `GET /api/settings/prompts` · `PUT\|DELETE /api/settings/prompts/{path}` |
+| Uso | `GET /api/usage` |
+| MCP interno | `/internal/mcp/` (streamable HTTP, Bearer obrigatório) |
+
+---
+
+## 15. Rodando e portões de qualidade
+
+`make dev` (ou `scripts/dev.sh`):
+
+- sobe o backend com `uv run uvicorn learnharness.api.app:app --host 127.0.0.1 --port $BACKEND_PORT` e o frontend com `npx next dev --port $FRONTEND_PORT`;
+- recusa portas ocupadas, sugerindo alternativas;
+- encerra os dois processos juntos.
+
+| Variável | Padrão | Papel |
+|---|---|---|
+| `BACKEND_PORT` / `FRONTEND_PORT` | `8000` / `3000` | Portas |
+| `LEARNHARNESS_PORT` | `$BACKEND_PORT` (exportada pelo script) | Porta usada na URL do MCP interno |
+| `LEARNHARNESS_MCP_URL` | `http://127.0.0.1:$LEARNHARNESS_PORT/internal/mcp/` | URL completa do MCP interno |
+| `LEARNHARNESS_CORS_ORIGINS` | o frontend (exportada pelo script) | Origens aceitas pelo CORS e pela guarda de Origin |
+| `LEARNHARNESS_ALLOWED_HOSTS` | `localhost,127.0.0.1,::1,testserver` | Hosts aceitos |
+| `LEARNHARNESS_VAULT_PATH` | Vault registrado no Setup | Vault a usar |
+| `BACKEND_URL` | `http://127.0.0.1:$BACKEND_PORT` | Destino do proxy do Next |
+| `GEMINI_API_KEY` | — | Conector `google-genai` |
+| `GITHUB_TOKEN` / `GH_TOKEN` | `gh auth token` | Repositórios privados |
+| `XDG_CONFIG_HOME` | `~/.config` | `learnharness/secrets.json` e `learnharness/active-vault` |
+
+**`make check`:**
+
+- `check-backend`: `uv run pytest -q` + `uv run ruff check src tests`;
+- `check-frontend`: `npm run typecheck` + `npm test` + `npm run build`.
+
+Na época desta revisão:
+
+| Área | Testes |
+|---|---|
+| Backend · unidade (`tests/unit/`, 27 arquivos) | 328 |
+| Backend · integração (`tests/integration/`, 18 arquivos) | 93 |
+| **Backend total** (`pytest --collect-only`) | **421** |
+| Frontend (`tests/*.test.cjs`, 15 arquivos) | ~112 |
+
+Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
+
+---
+
+## 16. Histórico de fases
+
+As fases 1 a 7 (Ondas 1 e 2: fundação, Setup/Vault, Home, sala de aula TEACH, Excalidraw, extração, demos e import multi-fonte) são anteriores aos specs por fase e estão descritas no histórico do git. Não existe spec `fase-11`.
+
+| Fase | Spec | Entrega principal |
+|---|---|---|
+| 8 | [`fase-8-nucleo-pedagogico.md`](specs/fase-8-nucleo-pedagogico.md) | Ferramentas de pergunta (`probe`/`recall`/`quiz`/`explain`/`ask_user_question`), `probe_done`, plano mermaid, máquina de fases, handoff, prompts em fragmentos + overrides |
+| 8B | [`fase-8b-home-hibrida-rastro.md`](specs/fase-8b-home-hibrida-rastro.md) | Home híbrida (grafo em tela cheia), rastro contínuo (proposições, cadeias, cobertura), auditor, notas de conceito, `graph_context`, modelo/esforço por sessão, contabilidade de uso |
+| 9 | [`fase-9-practice-sessao.md`](specs/fase-9-practice-sessao.md) | PRACTICE como sessão (`problem`/`conclude`/`graph_search`, `R0–R5`, `practice-log`, retestes); remoção dos *problem sets* em lote e do `practice_gen` |
+| 10 | [`fase-10-jobs-steer.md`](specs/fase-10-jobs-steer.md) | `research`/`read_pdf`/`visual` + `spawn_demo` como jobs com steer de volta à aula; toggles; gate de pesquisa do agy |
+| 12 | [`fase-12-ux-sessao.md`](specs/fase-12-ux-sessao.md) | Steer durante o turno, Esc, ⌘F, renomear, excluir (lixeira + unlink), abortar, dispensar, exportar, compactação |
+| 13 | [`fase-13-configuracoes-atalhos.md`](specs/fase-13-configuracoes-atalhos.md) | Configurações com navegação lateral, editor de prompts, aparência, teclado, atalhos globais |
+| 14 | [`fase-14-multiplas-trilhas.md`](specs/fase-14-multiplas-trilhas.md) | Várias trilhas com uma em foco, `/api/tracks`, migração do `track` legado, roteiro por trilha, MCP genérico |
+| 15 | [`fase-15-nivelamento.md`](specs/fase-15-nivelamento.md) | **Em implementação:** nivelamento de trilha por busca binária (`leveling_done`, desfazer) |
+
+Depois da Fase 14 vieram ainda a paleta roxa escura (`149ba9d`), o seletor de modelo redesenhado (`5b8580a`) e a renomeação do produto para Lapidare (`4ac8746`).

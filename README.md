@@ -58,6 +58,10 @@ Abra `http://localhost:3000`. O `scripts/dev.sh` sobe o backend FastAPI em `127.
 | `LEARNHARNESS_VAULT_PATH` | Vault a usar (ex.: `~/Documents/AI Engineering`). Sem ela, vale o Vault escolhido no Setup. |
 | `GEMINI_API_KEY` | Habilita o conector `google-genai` (fallback por API). |
 | `GITHUB_TOKEN` | Opcional: importar repositórios privados do GitHub (sem ela, usa `gh auth token` se o GitHub CLI estiver logado). Nunca vai para `argv` nem para o Vault. |
+| `LEARNHARNESS_ALLOWED_HOSTS` | Hosts aceitos pela API local (padrão: só loopback, `localhost,127.0.0.1,::1`, mais o `testserver` dos testes); outros recebem `421`. |
+| `LEARNHARNESS_MCP_URL` | Só se o MCP interno precisar ser anunciado numa URL diferente de `http://127.0.0.1:$BACKEND_PORT/internal/mcp/`. |
+
+O script já exporta `LEARNHARNESS_PORT` (URL do MCP interno), `LEARNHARNESS_CORS_ORIGINS` (só o frontend pode escrever na API) e `BACKEND_URL` (proxy `/api/*` do Next).
 
 Se as portas já estiverem ocupadas (outro projeto, Docker), o script avisa e não sobe nada. Escolha outras:
 
@@ -66,6 +70,8 @@ BACKEND_PORT=8100 FRONTEND_PORT=3100 LEARNHARNESS_VAULT_PATH=/tmp/vault-teste sc
 ```
 
 **Sobre o conector:** a partir do gemini-cli 0.62, contas pessoais do *Gemini Code Assist* são bloqueadas no `gemini` com a orientação de migrar para o Antigravity. Para usar a assinatura Google pessoal, prefira o **`agy`**; o `gemini --acp` continua suportado para Workspace/Code Assist Standard.
+
+**Permissão do `agy`:** em modo headless, o `agy` recusa sem aviso as ferramentas MCP que pediriam confirmação. Na primeira vez, conceda em *Setup* ou em *Configurações → Conectores* a regra `mcp(harness/*)`. Ela é gravada, com backup, em `~/.gemini/antigravity-cli/settings.json` e libera só o servidor pedagógico local `harness`. Sem ela, as sessões com `agy` param com uma instrução de como conceder.
 
 ---
 
@@ -100,5 +106,6 @@ npm run build
 
 - **[`AGENTS.md`](AGENTS.md)** — Guia rápido de contexto, invariantes e regras para agentes e desenvolvedores.
 - **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** — **Especificação Comportamental Completa**: como cada tela (`Setup`, `Home`, `TEACH`, `QuestionDock`, `Import MCP`, `Excalidraw`, `PRACTICE`) e cada arquivo do Vault deve se comportar passo a passo.
-- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — **Arquitetura Técnica e Plano de Ondas**: estrutura de diretórios (`backend/` Python FastAPI + `frontend/` Next.js), protocolos `stream-json` / `ACP` / `FastMCP` / `SSE`, sincronização com o Vault e escopo detalhado da **Onda 1** e **Onda 2**.
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — **Arquitetura Técnica atual**: camadas hexagonais, modelo de processo (FastAPI + MCP interno + SSE), motores `agy`/`gemini --acp`/`google-genai`, núcleo pedagógico, PRACTICE, rastro de conhecimento, jobs com steer, trilhas, layout do Vault, frontend, rotas e histórico de fases.
+- **[`docs/specs/`](docs/specs/)** — Contrato de cada fase (Fase 8 em diante).
 # lapidare
