@@ -1,963 +1,777 @@
 /**
- * 2D Canvas Knowledge Graph Physics & Rendering Engine.
- * Single unified 2D graph with soft nebulous cluster hulls,
- * force-directed layout, smooth pan/zoom, and graphite skin styling (palette.background).
+ * 2D Canvas knowledge-graph engine (Fase 8B).
+ *
+ * - force-directed layout tuned by GraphSettings (⚙ panel);
+ * - one region per cluster (birth session), labelled when it has ≥ 3 nodes;
+ * - chain edges premise → conclusion;
+ * - labels appear from a zoom threshold (selected/hovered/focused always);
+ * - multi-selection highlight (Shift/⌘-click toggles, plain click focuses);
+ * - dragging pins a node and reports its position (persisted by the caller);
+ * - optional roadmap ghost nodes (hollow, dashed) linked to real nodes.
+ *
+ * Colours come only from lib/palette (graphite skin).
  */
 
-import { palette, withAlpha } from "@/lib/palette";
-import type { ConceptNode, GraphEdge } from "@/lib/types";
+import { palette, withAlpha, type PaletteToken } from "@/lib/palette";
+import { layoutGhosts, type Point } from "@/lib/ghost-layout";
+import { DEFAULT_GRAPH_SETTINGS, type GraphSettings } from "@/lib/graph-settings";
+import type { ConceptNode, GraphCluster, GraphEdge, RoadmapItem } from "@/lib/types";
 
 export interface CanvasNode extends ConceptNode {
   x: number;
   y: number;
   vx: number;
   vy: number;
-  radius: number;
-  pinned?: boolean;
+  /** Fixed by the user (dragged now or persisted earlier): physics leaves it alone. */
+  fixed: boolean;
 }
 
-export interface CanvasEdge {
+interface CanvasEdge {
   source: CanvasNode;
   target: CanvasNode;
-  kind?: "dependency" | "implication" | "reinforces";
+  kind: GraphEdge["kind"];
 }
 
-export interface ClusterGroup {
-  name: string;
+interface ClusterGroup {
+  id: string;
+  label: string;
   nodes: CanvasNode[];
-  centroid: { x: number; y: number };
-  hullPoints: { x: number; y: number }[];
+  centroid: Point;
+  hull: Point[];
+  tone: PaletteToken;
 }
 
 export interface GraphCanvasCallbacks {
-  onSelectNode?: (node: ConceptNode | null) => void;
-  onHoverNode?: (node: ConceptNode | null) => void;
+  /** Plain click (additive=false) or Shift/⌘/Ctrl-click (additive=true) on a node. */
+  onNodeClick?: (node: ConceptNode, additive: boolean) => void;
+  onGhostClick?: (item: RoadmapItem) => void;
   onCanvasClick?: () => void;
+  /** Fired on drag end with the final position of the dragged node. */
+  onNodeMoved?: (id: string, pos: Point) => void;
 }
+
+/** Region tones cycle through the palette (low alpha), never off-token colours. */
+const REGION_TONES: PaletteToken[] = ["mutedForeground", "success", "warning", "foreground", "border"];
+const UI_FONT = "'JetBrains Mono', monospace";
 
 export class GraphCanvasEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private callbacks: GraphCanvasCallbacks;
+  private settings: GraphSettings = { ...DEFAULT_GRAPH_SETTINGS };
 
-  // Graph state
   private nodes: CanvasNode[] = [];
   private edges: CanvasEdge[] = [];
-  private nodeMap: Map<string, CanvasNode> = new Map();
+  private nodeMap = new Map<string, CanvasNode>();
+  private clusterLabels = new Map<string, string>();
   private clusters: ClusterGroup[] = [];
+  private ghosts: RoadmapItem[] = [];
+  private ghostPos = new Map<string, Point>();
 
-  // Viewport / Camera state
-  private panX: number = 0;
-  private panY: number = 0;
-  private zoom: number = 1.0;
-  private minZoom: number = 0.25;
-  private maxZoom: number = 2.8;
+  private selection = new Set<string>();
+  private focusedId: string | null = null;
+  private hoveredId: string | null = null;
 
-  // Interaction state
-  private hoveredNode: CanvasNode | null = null;
-  private selectedNode: CanvasNode | null = null;
-  private isDragging: boolean = false;
+  private panX = 0;
+  private panY = 0;
+  private zoom = 1;
+  private readonly minZoom = 0.15;
+  private readonly maxZoom = 3;
+
+  private panning = false;
   private draggedNode: CanvasNode | null = null;
-  private dragStartX: number = 0;
-  private dragStartY: number = 0;
-  private lastMouseX: number = 0;
-  private lastMouseY: number = 0;
-  private hasPannedDistance: number = 0;
+  private lastMouseX = 0;
+  private lastMouseY = 0;
+  private movedDistance = 0;
 
-  // Simulation physics
-  private animationFrameId: number | null = null;
-  private alpha: number = 1.0;
-  private alphaDecay: number = 0.015;
-  private alphaMin: number = 0.001;
-  private isRunning: boolean = false;
+  private frame: number | null = null;
+  private alpha = 1;
+  private readonly alphaDecay = 0.015;
+  private readonly alphaMin = 0.002;
+  private running = false;
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    callbacks: GraphCanvasCallbacks = {}
-  ) {
+  constructor(canvas: HTMLCanvasElement, callbacks: GraphCanvasCallbacks = {}) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Unable to obtain 2D canvas context");
-    }
+    if (!ctx) throw new Error("Unable to obtain 2D canvas context");
     this.ctx = ctx;
     this.callbacks = callbacks;
-
     this.bindEvents();
     this.resize();
   }
 
-  // --- Public Configuration & Data Setters ---
+  // --- Data ------------------------------------------------------------------
 
-  public setData(rawNodes: ConceptNode[], rawEdges: GraphEdge[]) {
-    // Save existing positions if re-indexing
-    const prevPositions = new Map<string, { x: number; y: number }>();
-    this.nodes.forEach((n) => {
-      prevPositions.set(n.id, { x: n.x, y: n.y });
-    });
-
-    const centerX = 0;
-    const centerY = 0;
-
+  public setData(rawNodes: ConceptNode[], rawEdges: GraphEdge[], clusters: GraphCluster[]) {
+    const prev = new Map(this.nodes.map((n) => [n.id, n]));
     this.nodeMap.clear();
-
-    // Map & initialize nodes
     this.nodes = rawNodes.map((n, idx) => {
-      const prev = prevPositions.get(n.id);
-      let initX = prev ? prev.x : n.x;
-      let initY = prev ? prev.y : n.y;
-
-      if (initX === undefined || initY === undefined) {
-        // Arrange in a natural clustered spiral
+      const old = prev.get(n.id);
+      const persisted = typeof n.x === "number" && typeof n.y === "number";
+      let x: number;
+      let y: number;
+      if (old) {
+        x = old.x;
+        y = old.y;
+      } else if (persisted) {
+        x = n.x as number;
+        y = n.y as number;
+      } else {
+        // Spiral seed (jitter keeps the simulation from locking symmetric states).
         const angle = idx * 0.75;
         const radius = 60 + Math.sqrt(idx) * 55;
-        initX = centerX + Math.cos(angle) * radius + (Math.random() - 0.5) * 20;
-        initY = centerY + Math.sin(angle) * radius + (Math.random() - 0.5) * 20;
+        x = Math.cos(angle) * radius + (Math.random() - 0.5) * 20;
+        y = Math.sin(angle) * radius + (Math.random() - 0.5) * 20;
       }
-
-      const canvasNode: CanvasNode = {
-        ...n,
-        x: initX,
-        y: initY,
-        vx: 0,
-        vy: 0,
-        radius: 18,
-      };
-
-      this.nodeMap.set(n.id, canvasNode);
-      return canvasNode;
+      const node: CanvasNode = { ...n, x, y, vx: 0, vy: 0, fixed: persisted || (old?.fixed ?? false) };
+      this.nodeMap.set(n.id, node);
+      return node;
     });
 
-    // Map edges
     this.edges = [];
-    rawEdges.forEach((e) => {
-      const src = this.nodeMap.get(e.source);
-      const tgt = this.nodeMap.get(e.target);
-      if (src && tgt) {
-        this.edges.push({
-          source: src,
-          target: tgt,
-          kind: e.kind || "dependency",
-        });
+    for (const e of rawEdges) {
+      const s = this.nodeMap.get(e.source);
+      const t = this.nodeMap.get(e.target);
+      if (s && t && s !== t) this.edges.push({ source: s, target: t, kind: e.kind ?? "dependency" });
+    }
+    // Legacy notes: depends_on by name/id when the server sent no edge.
+    for (const node of this.nodes) {
+      for (const dep of node.depends_on) {
+        const target = this.nodeMap.get(dep) ?? this.nodes.find((n) => n.name.toLowerCase() === dep.toLowerCase());
+        if (!target || target === node) continue;
+        if (this.edges.some((e) => e.source === target && e.target === node)) continue;
+        this.edges.push({ source: target, target: node, kind: "dependency" });
       }
-    });
+    }
 
-    // Also link nodes through depends_on if edges were sparse
-    this.nodes.forEach((node) => {
-      if (Array.isArray(node.depends_on)) {
-        node.depends_on.forEach((depName) => {
-          const target = this.nodes.find(
-            (n) => n.name.toLowerCase() === depName.toLowerCase() || n.id === depName
-          );
-          if (target && target.id !== node.id) {
-            const exists = this.edges.some(
-              (edge) =>
-                (edge.source.id === node.id && edge.target.id === target.id) ||
-                (edge.source.id === target.id && edge.target.id === node.id)
-            );
-            if (!exists) {
-              this.edges.push({
-                source: target,
-                target: node,
-                kind: "dependency",
-              });
-            }
-          }
-        });
-      }
-    });
-
-    // Compute cluster hulls
+    this.clusterLabels = new Map(clusters.map((c) => [c.id, c.label]));
     this.updateClusters();
-
-    // Reheat simulation
-    this.reheat(1.0);
-    this.startSimulation();
+    for (const id of [...this.selection]) if (!this.nodeMap.has(id)) this.selection.delete(id);
+    if (this.focusedId && !this.nodeMap.has(this.focusedId)) this.focusedId = null;
+    this.reheat(prev.size === 0 ? 1 : 0.5);
+    this.start();
   }
 
-  public setSelectedNode(nodeOrId: ConceptNode | string | null) {
-    if (!nodeOrId) {
-      this.selectedNode = null;
-    } else if (typeof nodeOrId === "string") {
-      this.selectedNode = this.nodeMap.get(nodeOrId) || null;
-    } else {
-      this.selectedNode = this.nodeMap.get(nodeOrId.id) || null;
-    }
+  public setGhosts(items: RoadmapItem[] | null) {
+    this.ghosts = items ?? [];
+    this.updateGhostLayout();
     this.requestRender();
   }
 
-  public getSelectedNode(): ConceptNode | null {
-    return this.selectedNode;
+  public setSettings(settings: GraphSettings) {
+    this.settings = settings;
+    this.reheat(0.6);
+    this.start();
   }
 
-  public focusNode(nodeId: string) {
-    const node = this.nodeMap.get(nodeId);
+  public setSelection(ids: readonly string[]) {
+    this.selection = new Set(ids);
+    this.requestRender();
+  }
+
+  public setFocused(id: string | null) {
+    this.focusedId = id;
+    this.requestRender();
+  }
+
+  /** Centres the camera on a node. */
+  public focusNode(id: string) {
+    const node = this.nodeMap.get(id);
     if (!node) return;
-
-    this.selectedNode = node;
-    const width = this.canvas.width / (window.devicePixelRatio || 1);
-    const height = this.canvas.height / (window.devicePixelRatio || 1);
-
-    // Smoothly pan camera to center node
+    this.focusedId = id;
+    const { width, height } = this.viewport();
     this.panX = width / 2 - node.x * this.zoom;
     this.panY = height / 2 - node.y * this.zoom;
-
     this.requestRender();
-    if (this.callbacks.onSelectNode) {
-      this.callbacks.onSelectNode(node);
-    }
   }
 
   public zoomIn() {
-    this.applyZoom(1.25, this.canvas.width / 2, this.canvas.height / 2);
+    const { width, height } = this.viewport();
+    this.applyZoom(1.25, width / 2, height / 2);
   }
 
   public zoomOut() {
-    this.applyZoom(0.8, this.canvas.width / 2, this.canvas.height / 2);
+    const { width, height } = this.viewport();
+    this.applyZoom(0.8, width / 2, height / 2);
   }
 
   public resetView() {
-    if (this.nodes.length === 0) {
-      this.panX = this.canvas.width / 2;
-      this.panY = this.canvas.height / 2;
-      this.zoom = 1.0;
+    const { width, height } = this.viewport();
+    const points: Point[] = [...this.nodes, ...this.ghostPos.values()];
+    if (points.length === 0) {
+      this.zoom = 1;
+      this.panX = width / 2;
+      this.panY = height / 2;
       this.requestRender();
       return;
     }
-
-    const dpr = window.devicePixelRatio || 1;
-    const width = this.canvas.width / dpr;
-    const height = this.canvas.height / dpr;
-
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
-
-    this.nodes.forEach((n) => {
-      minX = Math.min(minX, n.x);
-      maxX = Math.max(maxX, n.x);
-      minY = Math.min(minY, n.y);
-      maxY = Math.max(maxY, n.y);
-    });
-
-    const graphW = Math.max(maxX - minX + 160, 200);
-    const graphH = Math.max(maxY - minY + 160, 200);
-    const midX = (minX + maxX) / 2;
-    const midY = (minY + maxY) / 2;
-
-    const scaleX = width / graphW;
-    const scaleY = height / graphH;
-    const newZoom = Math.max(
-      this.minZoom,
-      Math.min(1.4, Math.min(scaleX, scaleY))
-    );
-
-    this.zoom = newZoom;
-    this.panX = width / 2 - midX * newZoom;
-    this.panY = height / 2 - midY * newZoom;
-
+    for (const p of points) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    const w = Math.max(maxX - minX + 200, 240);
+    const h = Math.max(maxY - minY + 260, 240);
+    this.zoom = Math.max(this.minZoom, Math.min(1.4, Math.min(width / w, height / h)));
+    this.panX = width / 2 - ((minX + maxX) / 2) * this.zoom;
+    // The composer dock covers the bottom: bias the graph upwards a little.
+    this.panY = height / 2 - 40 - ((minY + maxY) / 2) * this.zoom;
     this.requestRender();
   }
 
   public resize() {
     const parent = this.canvas.parentElement;
     if (!parent) return;
-
     const rect = parent.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
-
-    // Center camera on initial layout
     if (this.panX === 0 && this.panY === 0) {
       this.panX = rect.width / 2;
       this.panY = rect.height / 2;
     }
-
     this.requestRender();
   }
 
   public destroy() {
-    this.stopSimulation();
+    this.stop();
     this.unbindEvents();
   }
 
-  // --- Physics & Layout Simulation ---
+  // --- Simulation ------------------------------------------------------------
 
-  private reheat(amount = 0.5) {
+  private viewport() {
+    const dpr = window.devicePixelRatio || 1;
+    return { width: this.canvas.width / dpr, height: this.canvas.height / dpr };
+  }
+
+  private reheat(amount: number) {
     this.alpha = Math.max(this.alpha, amount);
   }
 
-  private startSimulation() {
-    if (this.isRunning) return;
-    this.isRunning = true;
-
+  private start() {
+    if (this.running) return;
+    this.running = true;
     const loop = () => {
-      if (!this.isRunning) return;
-
+      if (!this.running) return;
       if (this.alpha > this.alphaMin) {
-        this.stepSimulation();
+        this.step();
         this.alpha *= 1 - this.alphaDecay;
+        this.render();
+        this.frame = requestAnimationFrame(loop);
+      } else {
+        // Cooled down: stop the loop; interactions render on demand.
+        this.running = false;
+        this.frame = null;
+        this.render();
       }
-
-      this.render();
-      this.animationFrameId = requestAnimationFrame(loop);
     };
-
-    this.animationFrameId = requestAnimationFrame(loop);
+    this.frame = requestAnimationFrame(loop);
   }
 
-  private stopSimulation() {
-    this.isRunning = false;
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+  private stop() {
+    this.running = false;
+    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.frame = null;
   }
 
-  private stepSimulation() {
-    const kRepel = 2400 * this.alpha;
-    const kSpring = 0.045;
-    const restLength = 110;
-    const kCenter = 0.008 * this.alpha;
+  private step() {
+    const s = this.settings;
+    const kRepel = s.repulsion * this.alpha;
+    const kCenter = s.centerGravity * this.alpha;
+    const kCluster = s.clusterCohesion * this.alpha;
     const damping = 0.84;
+    const n = this.nodes.length;
 
-    const nodeCount = this.nodes.length;
-
-    // 1. Node-node repulsion
-    for (let i = 0; i < nodeCount; i++) {
+    for (let i = 0; i < n; i++) {
       const a = this.nodes[i];
-      for (let j = i + 1; j < nodeCount; j++) {
+      for (let j = i + 1; j < n; j++) {
         const b = this.nodes[j];
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        const distSq = dx * dx + dy * dy + 1;
-        const dist = Math.sqrt(distSq);
-
-        if (dist < 450) {
-          const force = kRepel / distSq;
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
-
-          if (!a.pinned) {
-            a.vx -= fx;
-            a.vy -= fy;
-          }
-          if (!b.pinned) {
-            b.vx += fx;
-            b.vy += fy;
-          }
-        }
+        const d2 = dx * dx + dy * dy + 1;
+        if (d2 > 500 * 500) continue;
+        const d = Math.sqrt(d2);
+        const f = kRepel / d2;
+        const fx = (dx / d) * f;
+        const fy = (dy / d) * f;
+        a.vx -= fx;
+        a.vy -= fy;
+        b.vx += fx;
+        b.vy += fy;
       }
     }
 
-    // 2. Edge spring attraction
-    this.edges.forEach((edge) => {
-      const a = edge.source;
-      const b = edge.target;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const displacement = dist - restLength;
-      const force = displacement * kSpring;
-
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-
-      if (!a.pinned) {
-        a.vx += fx;
-        a.vy += fy;
-      }
-      if (!b.pinned) {
-        b.vx -= fx;
-        b.vy -= fy;
-      }
-    });
-
-    // 3. Cluster cohesion force (pulling cluster nodes toward cluster centroid)
-    this.clusters.forEach((cluster) => {
-      if (cluster.nodes.length <= 1) return;
-      const cx = cluster.centroid.x;
-      const cy = cluster.centroid.y;
-      const kCluster = 0.018 * this.alpha;
-
-      cluster.nodes.forEach((n) => {
-        if (!n.pinned) {
-          n.vx += (cx - n.x) * kCluster;
-          n.vy += (cy - n.y) * kCluster;
-        }
-      });
-    });
-
-    // 4. Centering gravity & integration
-    for (let i = 0; i < nodeCount; i++) {
-      const n = this.nodes[i];
-      if (n.pinned) continue;
-
-      // Gentle gravitational pull to origin
-      n.vx -= n.x * kCenter;
-      n.vy -= n.y * kCenter;
-
-      n.vx *= damping;
-      n.vy *= damping;
-
-      n.x += n.vx;
-      n.y += n.vy;
+    for (const e of this.edges) {
+      const dx = e.target.x - e.source.x;
+      const dy = e.target.y - e.source.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const f = (d - s.linkDistance) * s.attraction;
+      const fx = (dx / d) * f;
+      const fy = (dy / d) * f;
+      e.source.vx += fx;
+      e.source.vy += fy;
+      e.target.vx -= fx;
+      e.target.vy -= fy;
     }
 
-    // Refresh cluster geometry after positions update
+    for (const c of this.clusters) {
+      if (c.nodes.length < 2) continue;
+      for (const node of c.nodes) {
+        node.vx += (c.centroid.x - node.x) * kCluster;
+        node.vy += (c.centroid.y - node.y) * kCluster;
+      }
+    }
+
+    for (const node of this.nodes) {
+      if (node.fixed || node === this.draggedNode) {
+        node.vx = 0;
+        node.vy = 0;
+        continue;
+      }
+      node.vx = (node.vx - node.x * kCenter) * damping;
+      node.vy = (node.vy - node.y * kCenter) * damping;
+      node.x += node.vx;
+      node.y += node.vy;
+    }
     this.updateClusters();
   }
 
-  // --- Cluster Hull Geometry ---
-
   private updateClusters() {
-    const clusterMap = new Map<string, CanvasNode[]>();
-
-    this.nodes.forEach((n) => {
-      const cName = n.cluster || "Core";
-      if (!clusterMap.has(cName)) {
-        clusterMap.set(cName, []);
-      }
-      clusterMap.get(cName)!.push(n);
-    });
-
-    this.clusters = [];
-    clusterMap.forEach((members, name) => {
-      let sumX = 0;
-      let sumY = 0;
-      members.forEach((m) => {
-        sumX += m.x;
-        sumY += m.y;
-      });
-      const centroid = {
-        x: sumX / members.length,
-        y: sumY / members.length,
-      };
-
-      const hullPoints = this.calculateConvexHull(members, 36);
-
-      this.clusters.push({
-        name,
+    const groups = new Map<string, CanvasNode[]>();
+    for (const node of this.nodes) {
+      const id = node.cluster || "";
+      if (!id) continue;
+      const list = groups.get(id);
+      if (list) list.push(node);
+      else groups.set(id, [node]);
+    }
+    const clusters: ClusterGroup[] = [];
+    let i = 0;
+    for (const [id, members] of groups) {
+      const cx = members.reduce((s, m) => s + m.x, 0) / members.length;
+      const cy = members.reduce((s, m) => s + m.y, 0) / members.length;
+      clusters.push({
+        id,
+        label: this.clusterLabels.get(id) ?? id,
         nodes: members,
-        centroid,
-        hullPoints,
+        centroid: { x: cx, y: cy },
+        hull: this.hull(members, this.settings.nodeSize + 26),
+        tone: REGION_TONES[i++ % REGION_TONES.length],
       });
+    }
+    this.clusters = clusters;
+    this.updateGhostLayout();
+  }
+
+  private updateGhostLayout() {
+    if (this.ghosts.length === 0) {
+      this.ghostPos = new Map();
+      return;
+    }
+    this.ghostPos = layoutGhosts(this.ghosts, this.nodeMap, {
+      offset: this.settings.nodeSize * 2 + 60,
+      columnGap: 180,
+      rowGap: this.settings.nodeSize * 2 + 48,
     });
   }
 
-  private calculateConvexHull(
-    nodes: CanvasNode[],
-    padding = 32
-  ): { x: number; y: number }[] {
-    if (nodes.length === 0) return [];
-
-    if (nodes.length === 1) {
-      const n = nodes[0];
-      const pts: { x: number; y: number }[] = [];
-      const segments = 8;
-      for (let i = 0; i < segments; i++) {
-        const rad = (i / segments) * Math.PI * 2;
-        pts.push({
-          x: n.x + Math.cos(rad) * (n.radius + padding),
-          y: n.y + Math.sin(rad) * (n.radius + padding),
-        });
+  private hull(nodes: CanvasNode[], pad: number): Point[] {
+    const pts: Point[] = [];
+    for (const n of nodes) {
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        pts.push({ x: n.x + Math.cos(a) * pad, y: n.y + Math.sin(a) * pad });
       }
-      return pts;
     }
-
-    // Expand each node into circle approximation points
-    const points: { x: number; y: number }[] = [];
-    nodes.forEach((n) => {
-      const r = n.radius + padding;
-      const steps = 6;
-      for (let i = 0; i < steps; i++) {
-        const rad = (i / steps) * Math.PI * 2;
-        points.push({
-          x: n.x + Math.cos(rad) * r,
-          y: n.y + Math.sin(rad) * r,
-        });
-      }
-    });
-
-    // Monotone chain 2D convex hull
-    points.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-
-    const cross = (
-      o: { x: number; y: number },
-      a: { x: number; y: number },
-      b: { x: number; y: number }
-    ) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-    const lower: { x: number; y: number }[] = [];
-    for (const p of points) {
-      while (
-        lower.length >= 2 &&
-        cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0
-      ) {
-        lower.pop();
-      }
+    if (pts.length < 3) return pts;
+    pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+    const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lower: Point[] = [];
+    for (const p of pts) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
       lower.push(p);
     }
-
-    const upper: { x: number; y: number }[] = [];
-    for (let i = points.length - 1; i >= 0; i--) {
-      const p = points[i];
-      while (
-        upper.length >= 2 &&
-        cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0
-      ) {
-        upper.pop();
-      }
+    const upper: Point[] = [];
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const p = pts[i];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
       upper.push(p);
     }
-
     upper.pop();
     lower.pop();
     return lower.concat(upper);
   }
 
-  // --- Rendering Pipeline ---
+  // --- Rendering -------------------------------------------------------------
 
   public requestRender() {
-    if (!this.isRunning) {
-      this.render();
-    }
+    if (!this.running) this.render();
   }
 
   private render() {
     const ctx = this.ctx;
-    const canvas = this.canvas;
     const dpr = window.devicePixelRatio || 1;
-
-    // Reset transform & clear
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Canvas background
     ctx.fillStyle = palette.background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Apply high-DPI scaling and camera pan/zoom
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.scale(dpr, dpr);
     ctx.translate(this.panX, this.panY);
     ctx.scale(this.zoom, this.zoom);
 
-    // Draw background subtle grid dots
     this.renderGrid(ctx);
-
-    // Draw soft nebulous cluster hulls
-    this.renderClusterHulls(ctx);
-
-    // Draw graph edges
+    this.renderRegions(ctx);
+    this.renderGhostEdges(ctx);
     this.renderEdges(ctx);
-
-    // Draw nodes
+    this.renderGhosts(ctx);
     this.renderNodes(ctx);
   }
 
   private renderGrid(ctx: CanvasRenderingContext2D) {
-    const dpr = window.devicePixelRatio || 1;
-    const width = this.canvas.width / dpr;
-    const height = this.canvas.height / dpr;
-
-    const screenTopLeft = this.screenToWorld(0, 0);
-    const screenBottomRight = this.screenToWorld(width, height);
-
-    const step = 48;
-    const startX = Math.floor(screenTopLeft.x / step) * step;
-    const endX = Math.ceil(screenBottomRight.x / step) * step;
-    const startY = Math.floor(screenTopLeft.y / step) * step;
-    const endY = Math.ceil(screenBottomRight.y / step) * step;
-
+    const { width, height } = this.viewport();
+    const tl = this.screenToWorld(0, 0);
+    const br = this.screenToWorld(width, height);
+    const step = this.zoom < 0.4 ? 96 : 48;
     ctx.fillStyle = withAlpha("border", 0.22);
-
-    for (let x = startX; x <= endX; x += step) {
-      for (let y = startY; y <= endY; y += step) {
-        ctx.beginPath();
-        ctx.arc(x, y, 1.2, 0, Math.PI * 2);
-        ctx.fill();
+    for (let x = Math.floor(tl.x / step) * step; x <= br.x; x += step) {
+      for (let y = Math.floor(tl.y / step) * step; y <= br.y; y += step) {
+        ctx.fillRect(x - 0.8, y - 0.8, 1.6, 1.6);
       }
     }
   }
 
-  private renderClusterHulls(ctx: CanvasRenderingContext2D) {
-    this.clusters.forEach((cluster) => {
-      const pts = cluster.hullPoints;
-      if (pts.length < 3) return;
+  private smoothPath(ctx: CanvasRenderingContext2D, pts: Point[]) {
+    const last = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.moveTo((last.x + pts[0].x) / 2, (last.y + pts[0].y) / 2);
+    for (let i = 0; i < pts.length; i++) {
+      const cur = pts[i];
+      const next = pts[(i + 1) % pts.length];
+      ctx.quadraticCurveTo(cur.x, cur.y, (cur.x + next.x) / 2, (cur.y + next.y) / 2);
+    }
+    ctx.closePath();
+  }
 
-      // Draw rounded smooth hull path
+  private renderRegions(ctx: CanvasRenderingContext2D) {
+    const intensity = this.settings.regionIntensity;
+    if (intensity <= 0) return;
+    for (const c of this.clusters) {
+      if (c.hull.length < 3) continue;
       ctx.save();
-      ctx.beginPath();
-
-      const p0 = pts[0];
-      const pLast = pts[pts.length - 1];
-      const midStart = { x: (pLast.x + p0.x) / 2, y: (pLast.y + p0.y) / 2 };
-      ctx.moveTo(midStart.x, midStart.y);
-
-      for (let i = 0; i < pts.length; i++) {
-        const current = pts[i];
-        const next = pts[(i + 1) % pts.length];
-        const midNext = { x: (current.x + next.x) / 2, y: (current.y + next.y) / 2 };
-        ctx.quadraticCurveTo(current.x, current.y, midNext.x, midNext.y);
-      }
-      ctx.closePath();
-
-      // Soft nebulous fill
-      const grad = ctx.createRadialGradient(
-        cluster.centroid.x,
-        cluster.centroid.y,
-        10,
-        cluster.centroid.x,
-        cluster.centroid.y,
-        180
-      );
-      grad.addColorStop(0, withAlpha("accent", 0.32));
-      grad.addColorStop(0.7, withAlpha("card", 0.18));
-      grad.addColorStop(1, withAlpha("background", 0.02));
-
-      ctx.fillStyle = grad;
+      this.smoothPath(ctx, c.hull);
+      ctx.fillStyle = withAlpha(c.tone, 0.1 * intensity);
       ctx.fill();
-
-      // Delicate dashed border
-      ctx.strokeStyle = withAlpha("border", 0.4);
-      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = withAlpha(c.tone, 0.45 * intensity);
+      ctx.lineWidth = 1 / Math.max(this.zoom, 0.5);
       ctx.setLineDash([4, 6]);
       ctx.stroke();
       ctx.restore();
 
-      // Cluster label
-      if (cluster.name && cluster.name !== "Core" && cluster.nodes.length >= 2) {
-        ctx.save();
-        ctx.font = "600 9.5px 'JetBrains Mono', monospace";
-        ctx.fillStyle = withAlpha("mutedForeground", 0.65);
-        ctx.textAlign = "center";
-        ctx.letterSpacing = "0.08em";
-
+      if (c.nodes.length >= 3 && c.label) {
         let minY = Infinity;
-        pts.forEach((p) => {
-          if (p.y < minY) minY = p.y;
-        });
-
-        ctx.fillText(cluster.name.toUpperCase(), cluster.centroid.x, minY - 10);
+        for (const p of c.hull) minY = Math.min(minY, p.y);
+        ctx.save();
+        ctx.font = `600 ${Math.max(10, this.settings.labelSize - 1) / Math.max(this.zoom, 0.6)}px ${UI_FONT}`;
+        ctx.fillStyle = withAlpha("mutedForeground", 0.55 + 0.4 * intensity);
+        ctx.textAlign = "center";
+        const label = c.label.length > 48 ? `${c.label.slice(0, 47)}…` : c.label;
+        ctx.fillText(label.toUpperCase(), c.centroid.x, minY - 8);
         ctx.restore();
       }
-    });
+    }
+  }
+
+  private isActive(id: string) {
+    return id === this.focusedId || id === this.hoveredId || this.selection.has(id);
   }
 
   private renderEdges(ctx: CanvasRenderingContext2D) {
-    this.edges.forEach((edge) => {
-      const src = edge.source;
-      const tgt = edge.target;
-
-      const isConnectedToSelected =
-        this.selectedNode &&
-        (src.id === this.selectedNode.id || tgt.id === this.selectedNode.id);
-      const isConnectedToHovered =
-        this.hoveredNode &&
-        (src.id === this.hoveredNode.id || tgt.id === this.hoveredNode.id);
-
+    const w = this.settings.edgeWidth;
+    const r = this.settings.nodeSize;
+    for (const e of this.edges) {
+      const hot = this.isActive(e.source.id) || this.isActive(e.target.id);
       ctx.save();
+      ctx.strokeStyle = hot ? palette.foreground : withAlpha("border", 0.75);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.lineWidth = hot ? w * 1.6 : w;
+      if (e.kind === "dependency") ctx.setLineDash([3, 4]);
       ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(tgt.x, tgt.y);
-
-      if (isConnectedToSelected) {
-        ctx.strokeStyle = palette.foreground;
-        ctx.lineWidth = 1.8;
-      } else if (isConnectedToHovered) {
-        ctx.strokeStyle = palette.mutedForeground;
-        ctx.lineWidth = 1.4;
-      } else {
-        ctx.strokeStyle = withAlpha("border", 0.65);
-        ctx.lineWidth = 1.0;
-      }
-
+      ctx.moveTo(e.source.x, e.source.y);
+      ctx.lineTo(e.target.x, e.target.y);
       ctx.stroke();
-
-      // Subtle directional arrow tip towards target
-      const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 30) {
-        const nx = dx / dist;
-        const ny = dy / dist;
-        const arrowX = tgt.x - nx * (tgt.radius + 6);
-        const arrowY = tgt.y - ny * (tgt.radius + 6);
-
-        const arrowLen = 7;
-        const arrowAngle = Math.atan2(ny, nx);
-
+      ctx.setLineDash([]);
+      const dx = e.target.x - e.source.x;
+      const dy = e.target.y - e.source.y;
+      const d = Math.hypot(dx, dy);
+      if (d > r * 2 + 8) {
+        const ux = dx / d;
+        const uy = dy / d;
+        const ax = e.target.x - ux * (r + 4);
+        const ay = e.target.y - uy * (r + 4);
+        const ang = Math.atan2(uy, ux);
+        const len = 5 + w * 2;
         ctx.beginPath();
-        ctx.moveTo(arrowX, arrowY);
-        ctx.lineTo(
-          arrowX - arrowLen * Math.cos(arrowAngle - Math.PI / 6),
-          arrowY - arrowLen * Math.sin(arrowAngle - Math.PI / 6)
-        );
-        ctx.lineTo(
-          arrowX - arrowLen * Math.cos(arrowAngle + Math.PI / 6),
-          arrowY - arrowLen * Math.sin(arrowAngle + Math.PI / 6)
-        );
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - len * Math.cos(ang - Math.PI / 6), ay - len * Math.sin(ang - Math.PI / 6));
+        ctx.lineTo(ax - len * Math.cos(ang + Math.PI / 6), ay - len * Math.sin(ang + Math.PI / 6));
         ctx.closePath();
-        ctx.fillStyle = isConnectedToSelected
-          ? palette.foreground
-          : isConnectedToHovered
-          ? palette.mutedForeground
-          : withAlpha("border", 0.75);
         ctx.fill();
       }
-
       ctx.restore();
-    });
+    }
+  }
+
+  private renderGhostEdges(ctx: CanvasRenderingContext2D) {
+    if (this.ghosts.length === 0) return;
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = Math.max(0.75, this.settings.edgeWidth * 0.9);
+    ctx.strokeStyle = withAlpha("mutedForeground", 0.6);
+    for (const g of this.ghosts) {
+      const gp = this.ghostPos.get(g.id);
+      if (!gp) continue;
+      const targets: Point[] = [
+        ...g.linked_node_ids.map((id) => this.nodeMap.get(id)).filter((p): p is CanvasNode => !!p),
+        ...g.depends_on.map((id) => this.ghostPos.get(id)).filter((p): p is Point => !!p),
+      ];
+      for (const t of targets) {
+        ctx.beginPath();
+        ctx.moveTo(gp.x, gp.y);
+        ctx.lineTo(t.x, t.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  private renderGhosts(ctx: CanvasRenderingContext2D) {
+    const r = this.settings.nodeSize;
+    for (const g of this.ghosts) {
+      const p = this.ghostPos.get(g.id);
+      if (!p) continue;
+      const hot = this.hoveredId === g.id;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = withAlpha("background", 0.85);
+      ctx.fill();
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = hot ? 2 : 1.4;
+      ctx.strokeStyle = hot ? palette.foreground : palette.mutedForeground;
+      ctx.stroke();
+      ctx.restore();
+      this.drawLabel(ctx, g.title, p.x, p.y + r + 12, hot, true);
+    }
   }
 
   private renderNodes(ctx: CanvasRenderingContext2D) {
-    this.nodes.forEach((node) => {
-      const isSelected = this.selectedNode?.id === node.id;
-      const isHovered = this.hoveredNode?.id === node.id;
-
+    const r = this.settings.nodeSize;
+    const showAll = this.zoom >= this.settings.labelZoom;
+    for (const node of this.nodes) {
+      const focused = node.id === this.focusedId;
+      const hovered = node.id === this.hoveredId;
+      const selected = this.selection.has(node.id);
       ctx.save();
-
-      // Node shadow / outer halo when active
-      if (isSelected) {
+      if (selected) {
         ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius + 6, 0, Math.PI * 2);
-        ctx.fillStyle = withAlpha("foreground", 0.12);
+        ctx.arc(node.x, node.y, r + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = palette.success;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (focused) {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, r + 9, 0, Math.PI * 2);
+        ctx.fillStyle = withAlpha("foreground", 0.1);
         ctx.fill();
       }
-
-      // Base circle
       ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? palette.accent : palette.card;
+      ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = focused || selected ? palette.accent : palette.card;
       ctx.fill();
-
-      // Border stroke
-      if (isSelected) {
-        ctx.strokeStyle = palette.foreground;
-        ctx.lineWidth = 2.2;
-      } else if (isHovered) {
-        ctx.strokeStyle = palette.mutedForeground;
-        ctx.lineWidth = 1.8;
-      } else {
-        ctx.strokeStyle = palette.border;
-        ctx.lineWidth = 1.2;
-      }
+      ctx.strokeStyle = focused ? palette.foreground : hovered ? palette.mutedForeground : palette.border;
+      ctx.lineWidth = focused ? 2.2 : hovered ? 1.8 : 1.2;
       ctx.stroke();
 
-      // Status indicator dot
-      let statusColor: string = palette.success; // default sólido
-      if (node.status === "aprendendo") {
-        statusColor = palette.warning;
-      } else if (node.status === "revisar") {
-        statusColor = palette.danger;
-      }
-
+      const dot =
+        node.status === "aprendendo"
+          ? palette.warning
+          : node.status === "revisar"
+            ? palette.danger
+            : node.status === "sólido"
+              ? palette.success
+              : selected
+                ? palette.success
+                : palette.mutedForeground;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = statusColor;
+      ctx.arc(node.x, node.y, Math.max(2, r * 0.25), 0, Math.PI * 2);
+      ctx.fillStyle = dot;
       ctx.fill();
-
-      // Label with background badge for contrast
-      const labelText = node.name;
-      ctx.font = "500 11px 'JetBrains Mono', monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      const textWidth = ctx.measureText(labelText).width;
-      const labelY = node.y + node.radius + 14;
-      const padX = 6;
-      const padY = 3;
-
-      // Label background pill
-      ctx.fillStyle = withAlpha("background", 0.88);
-      ctx.strokeStyle = isSelected
-        ? withAlpha("foreground", 0.4)
-        : isHovered
-        ? withAlpha("mutedForeground", 0.4)
-        : withAlpha("border", 0.35);
-      ctx.lineWidth = 1;
-
-      ctx.beginPath();
-      ctx.roundRect(
-        node.x - textWidth / 2 - padX,
-        labelY - 7 - padY,
-        textWidth + padX * 2,
-        14 + padY * 2,
-        4
-      );
-      ctx.fill();
-      ctx.stroke();
-
-      // Text
-      ctx.fillStyle = isSelected || isHovered ? palette.foreground : withAlpha("foreground", 0.85);
-      ctx.fillText(labelText, node.x, labelY);
-
       ctx.restore();
-    });
-  }
 
-  // --- Coordinate Transformations ---
-
-  public screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
-    return {
-      x: (screenX - this.panX) / this.zoom,
-      y: (screenY - this.panY) / this.zoom,
-    };
-  }
-
-  public worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
-    return {
-      x: worldX * this.zoom + this.panX,
-      y: worldY * this.zoom + this.panY,
-    };
-  }
-
-  // --- Hit Testing & Node Picking ---
-
-  private getNodeAt(screenX: number, screenY: number): CanvasNode | null {
-    const world = this.screenToWorld(screenX, screenY);
-    for (let i = this.nodes.length - 1; i >= 0; i--) {
-      const node = this.nodes[i];
-      const dx = world.x - node.x;
-      const dy = world.y - node.y;
-      const hitRadius = node.radius + 6;
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-        return node;
+      if (showAll || focused || hovered || selected) {
+        this.drawLabel(ctx, node.name, node.x, node.y + r + 12, focused || hovered, false);
       }
+    }
+  }
+
+  private drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, hot: boolean, ghost: boolean) {
+    const size = this.settings.labelSize / Math.max(this.zoom, 0.75);
+    const label = text.length > 42 ? `${text.slice(0, 41)}…` : text;
+    ctx.save();
+    ctx.font = `500 ${size}px ${UI_FONT}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const w = ctx.measureText(label).width;
+    const padX = size * 0.5;
+    const h = size * 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2 - padX, y - h / 2, w + padX * 2, h, 4);
+    ctx.fillStyle = withAlpha("background", 0.88);
+    ctx.fill();
+    ctx.strokeStyle = hot ? withAlpha("foreground", 0.4) : withAlpha("border", 0.35);
+    ctx.lineWidth = 1 / Math.max(this.zoom, 0.75);
+    if (ghost) ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.fillStyle = hot ? palette.foreground : ghost ? palette.mutedForeground : withAlpha("foreground", 0.85);
+    ctx.fillText(label, x, y);
+    ctx.restore();
+  }
+
+  // --- Coordinates & picking -------------------------------------------------
+
+  public screenToWorld(sx: number, sy: number): Point {
+    return { x: (sx - this.panX) / this.zoom, y: (sy - this.panY) / this.zoom };
+  }
+
+  private pickNode(sx: number, sy: number): CanvasNode | null {
+    const w = this.screenToWorld(sx, sy);
+    const hit = this.settings.nodeSize + 6 / this.zoom;
+    for (let i = this.nodes.length - 1; i >= 0; i--) {
+      const n = this.nodes[i];
+      if ((w.x - n.x) ** 2 + (w.y - n.y) ** 2 <= hit * hit) return n;
     }
     return null;
   }
 
-  // --- Zoom & Pan Mechanics ---
+  private pickGhost(sx: number, sy: number): RoadmapItem | null {
+    const w = this.screenToWorld(sx, sy);
+    const hit = this.settings.nodeSize + 6 / this.zoom;
+    for (const g of this.ghosts) {
+      const p = this.ghostPos.get(g.id);
+      if (p && (w.x - p.x) ** 2 + (w.y - p.y) ** 2 <= hit * hit) return g;
+    }
+    return null;
+  }
 
-  private applyZoom(factor: number, originX: number, originY: number) {
-    const newZoom = Math.min(
-      this.maxZoom,
-      Math.max(this.minZoom, this.zoom * factor)
-    );
-    if (newZoom === this.zoom) return;
-
-    this.panX = originX - (originX - this.panX) * (newZoom / this.zoom);
-    this.panY = originY - (originY - this.panY) * (newZoom / this.zoom);
-    this.zoom = newZoom;
-
+  private applyZoom(factor: number, ox: number, oy: number) {
+    const z = Math.min(this.maxZoom, Math.max(this.minZoom, this.zoom * factor));
+    if (z === this.zoom) return;
+    this.panX = ox - (ox - this.panX) * (z / this.zoom);
+    this.panY = oy - (oy - this.panY) * (z / this.zoom);
+    this.zoom = z;
     this.requestRender();
   }
 
-  // --- Event Handling ---
+  // --- Events ----------------------------------------------------------------
+
+  private local(e: MouseEvent) {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
 
   private handleMouseDown = (e: MouseEvent) => {
-    const rect = this.canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    this.lastMouseX = mouseX;
-    this.lastMouseY = mouseY;
-    this.dragStartX = mouseX;
-    this.dragStartY = mouseY;
-    this.hasPannedDistance = 0;
-
-    const hit = this.getNodeAt(mouseX, mouseY);
+    if (e.button !== 0) return;
+    const { x, y } = this.local(e);
+    this.lastMouseX = x;
+    this.lastMouseY = y;
+    this.movedDistance = 0;
+    const hit = this.pickNode(x, y);
     if (hit) {
       this.draggedNode = hit;
-      hit.pinned = true;
-      this.canvas.style.cursor = "grabbing";
-      this.reheat(0.4);
     } else {
-      this.isDragging = true;
-      this.canvas.style.cursor = "grabbing";
+      this.panning = true;
     }
+    this.canvas.style.cursor = "grabbing";
   };
 
   private handleMouseMove = (e: MouseEvent) => {
-    const rect = this.canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const dx = mouseX - this.lastMouseX;
-    const dy = mouseY - this.lastMouseY;
-    this.lastMouseX = mouseX;
-    this.lastMouseY = mouseY;
-
-    this.hasPannedDistance += Math.abs(dx) + Math.abs(dy);
+    const { x, y } = this.local(e);
+    const dx = x - this.lastMouseX;
+    const dy = y - this.lastMouseY;
+    this.lastMouseX = x;
+    this.lastMouseY = y;
 
     if (this.draggedNode) {
-      const worldDeltaX = dx / this.zoom;
-      const worldDeltaY = dy / this.zoom;
-      this.draggedNode.x += worldDeltaX;
-      this.draggedNode.y += worldDeltaY;
-      this.draggedNode.vx = 0;
-      this.draggedNode.vy = 0;
-      this.reheat(0.2);
+      this.movedDistance += Math.abs(dx) + Math.abs(dy);
+      if (this.movedDistance < 4) return;
+      this.draggedNode.x += dx / this.zoom;
+      this.draggedNode.y += dy / this.zoom;
+      this.draggedNode.fixed = true;
+      this.updateClusters();
+      this.reheat(0.25);
+      this.start();
       this.requestRender();
       return;
     }
-
-    if (this.isDragging) {
+    if (this.panning) {
+      this.movedDistance += Math.abs(dx) + Math.abs(dy);
       this.panX += dx;
       this.panY += dy;
       this.requestRender();
       return;
     }
-
-    const hit = this.getNodeAt(mouseX, mouseY);
-    if (hit !== this.hoveredNode) {
-      this.hoveredNode = hit;
-      this.canvas.style.cursor = hit ? "pointer" : "default";
-      if (this.callbacks.onHoverNode) {
-        this.callbacks.onHoverNode(hit);
-      }
+    if (e.target !== this.canvas) return;
+    const node = this.pickNode(x, y);
+    const hovered = node?.id ?? this.pickGhost(x, y)?.id ?? null;
+    if (hovered !== this.hoveredId) {
+      this.hoveredId = hovered;
+      this.canvas.style.cursor = hovered ? "pointer" : "default";
       this.requestRender();
     }
   };
 
   private handleMouseUp = (e: MouseEvent) => {
-    const wasDraggingNode = !!this.draggedNode;
-    if (this.draggedNode) {
-      this.draggedNode.pinned = false;
-      this.draggedNode = null;
+    const dragged = this.draggedNode;
+    const wasPanning = this.panning;
+    this.draggedNode = null;
+    this.panning = false;
+    if (!dragged && !wasPanning) return;
+    this.canvas.style.cursor = this.hoveredId ? "pointer" : "default";
+
+    if (this.movedDistance >= 4) {
+      if (dragged) this.callbacks.onNodeMoved?.(dragged.id, { x: dragged.x, y: dragged.y });
+      return;
     }
-
-    this.isDragging = false;
-    this.canvas.style.cursor = this.hoveredNode ? "pointer" : "default";
-
-    if (this.hasPannedDistance < 6) {
-      const rect = this.canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const hit = this.getNodeAt(mouseX, mouseY);
-
-      if (hit) {
-        this.selectedNode = hit;
-        if (this.callbacks.onSelectNode) {
-          this.callbacks.onSelectNode(hit);
-        }
-      } else if (!wasDraggingNode) {
-        this.selectedNode = null;
-        if (this.callbacks.onSelectNode) {
-          this.callbacks.onSelectNode(null);
-        }
-        if (this.callbacks.onCanvasClick) {
-          this.callbacks.onCanvasClick();
-        }
-      }
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    if (dragged) {
+      if (!additive) this.focusedId = dragged.id;
+      this.callbacks.onNodeClick?.(dragged, additive);
       this.requestRender();
+      return;
     }
+    const { x, y } = this.local(e);
+    const ghost = this.pickGhost(x, y);
+    if (ghost) {
+      this.callbacks.onGhostClick?.(ghost);
+      return;
+    }
+    this.focusedId = null;
+    this.callbacks.onCanvasClick?.();
+    this.requestRender();
   };
 
   private handleWheel = (e: WheelEvent) => {
     e.preventDefault();
-    const rect = this.canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    this.applyZoom(zoomFactor, mouseX, mouseY);
+    const { x, y } = this.local(e);
+    this.applyZoom(e.deltaY < 0 ? 1.1 : 0.9, x, y);
   };
 
   private bindEvents() {

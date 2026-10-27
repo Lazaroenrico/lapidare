@@ -2,82 +2,98 @@
 
 import { useEventSubscription } from "@/components/server-events";
 import { useLocale } from "@/components/locale-provider";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { GraphView } from "@/components/graph-view";
-import { Composer } from "@/components/composer";
+import { Composer, type SelectedNodeRef } from "@/components/composer";
 import { ImportDialog } from "@/components/import-dialog";
 import { openSetup } from "@/components/setup-gate";
 import { getSetupStatus } from "@/lib/api";
-import type { SetupStatusResponse } from "@/lib/types";
+import { pruneSelection, type Selection } from "@/lib/graph-selection";
+import type { GraphSnapshot, SetupStatusResponse, SseEventType } from "@/lib/types";
 
+const SETUP_EVENTS: SseEventType[] = ["config:updated", "vault:changed"];
+
+/**
+ * Home híbrida (Fase 8B): full-bleed graph with floating chrome on top and the
+ * composer dock at the bottom. Node selection lives here because the graph
+ * produces it and the composer chip consumes it.
+ */
 export default function HomePage() {
   const { t } = useLocale();
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
-  const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
-  const [pendingTopic, setPendingTopic] = useState<string>("");
-
   const [setupError, setSetupError] = useState<string | null>(null);
-  useEventSubscription(["config:updated", "vault:changed"], () => {
-    getSetupStatus().then(setSetupStatus).catch(e => setSetupError(e.message));
-  });
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [pendingTopic, setPendingTopic] = useState("");
+  const [selection, setSelection] = useState<Selection>([]);
+  const [nodeNames, setNodeNames] = useState<Map<string, string>>(new Map());
 
-  // Fetch initial setup status on boot
+  const refreshSetup = useCallback(() => {
+    getSetupStatus()
+      .then((status) => {
+        setSetupStatus(status);
+        setSetupError(null);
+      })
+      .catch((err) => setSetupError(err instanceof Error ? err.message : t.setupUnavailable));
+  }, [t.setupUnavailable]);
+
   useEffect(() => {
-    let mounted = true;
-    const checkSetup = async () => {
-      try {
-        const status = await getSetupStatus();
-        if (mounted) {
-          setSetupStatus(status);
-        }
-      } catch (err) {
-        setSetupError(err instanceof Error ? err.message : t.setupUnavailable);
-      }
-    };
-
-    void checkSetup();
-
-    return () => {
-      mounted = false;
-    };
+    refreshSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isInitialized = setupStatus?.initialized ?? false;
-  const trackConfig = setupStatus?.config?.track;
+  useEventSubscription(SETUP_EVENTS, () => refreshSetup());
 
-  // Intercept submission when uninitialized: preserve typed text and open Setup
+  const handleSnapshot = useCallback((snapshot: GraphSnapshot) => {
+    setNodeNames(new Map(snapshot.nodes.map((n) => [n.id, n.name])));
+    const valid = new Set(snapshot.nodes.map((n) => n.id));
+    setSelection((prev) => pruneSelection(prev, valid));
+  }, []);
+
+  const selectedNodes = useMemo<SelectedNodeRef[]>(
+    () => selection.filter((id) => nodeNames.has(id)).map((id) => ({ id, name: nodeNames.get(id) as string })),
+    [selection, nodeNames],
+  );
+
   const handleOpenSetupWithTopic = (text?: string) => {
-    if (text) {
-      setPendingTopic(text);
-    }
+    if (text) setPendingTopic(text);
     openSetup();
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden bg-background">
-      {setupError && <p role="alert" className="p-4 font-ui text-xs">{setupError}</p>}
-      {/* Center 100%: Single Unified 2D Knowledge Graph (No Macro/Micro Toggle) */}
-      <main className="flex-1 w-full h-full relative">
-        <GraphView onOpenImport={() => setIsImportOpen(true)} />
-      </main>
+    <div className="relative w-full h-full flex-1 overflow-hidden bg-background">
+      {setupError && (
+        <p role="alert" className="absolute top-16 left-4 z-30 p-2 font-ui text-xs text-danger bg-card border border-border rounded">
+          {setupError}
+        </p>
+      )}
 
-      {/* Floating Composer at Bottom-Center with Contextual Track Chip above it */}
-      <div className="absolute bottom-6 left-0 right-0 px-4 pointer-events-none z-20">
-        <div className="pointer-events-auto">
+      {/* Full-bleed graph (single unified view, no Macro/Micro toggle) */}
+      <div className="absolute inset-0">
+        <GraphView
+          selection={selection}
+          onSelectionChange={setSelection}
+          onSnapshot={handleSnapshot}
+          onOpenImport={() => setIsImportOpen(true)}
+        />
+      </div>
+
+      {/* Floating composer dock (selection chip + track chip above it) */}
+      <div className="absolute bottom-4 left-0 right-0 px-4 pointer-events-none z-20">
+        <div>
           <Composer
-            initialized={isInitialized}
-            trackConfig={trackConfig}
+            className="pointer-events-auto"
+            initialized={setupStatus?.initialized ?? false}
+            trackConfig={setupStatus?.config?.track}
+            strongSlot={setupStatus?.config?.slots?.strong}
+            selectedNodes={selectedNodes}
+            onClearSelection={() => setSelection([])}
             initialTopic={pendingTopic}
             onOpenSetup={handleOpenSetupWithTopic}
           />
         </div>
       </div>
 
-      {/* Import Modal guided by MCP / local notes */}
-      <ImportDialog
-        isOpen={isImportOpen}
-        onClose={() => setIsImportOpen(false)}
-      />
+      <ImportDialog isOpen={isImportOpen} onClose={() => setIsImportOpen(false)} />
     </div>
   );
 }

@@ -523,13 +523,35 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                     <h3 className="font-title text-base font-bold text-foreground">
                       {t.sdStep4Title}
                     </h3>
+                    <p className="font-ui text-[11px] text-muted-foreground mt-1">
+                      {t.sdStep4Optional}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-1 font-prose">
                       {t.sdStep4Hint}
                     </p>
                   </div>
 
-                  {/* 3 Track Options */}
+                  {/* Track options — "Livre" first and default: the graph is the base, the track is an optional layer */}
                   <div className="space-y-2.5">
+                    <div
+                      onClick={() => setTrackMode("free")}
+                      className={`p-3.5 rounded border cursor-pointer transition-all ${
+                        trackMode === "free"
+                          ? "bg-accent border-foreground"
+                          : "bg-background border-border hover:border-muted-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <HardDrive className="w-4 h-4 text-foreground" />
+                        <span className="font-ui text-xs font-semibold text-foreground">
+                          {t.sdOption3}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 font-prose">
+                        {t.sdOption3Hint}
+                      </p>
+                    </div>
+
                     {/* Option 1: Local Repo & Binary Leveling */}
                     <div
                       onClick={() => setTrackMode("repo_binary")}
@@ -602,25 +624,6 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       )}
                     </div>
 
-                    {/* Option 3: Free Study Mode */}
-                    <div
-                      onClick={() => setTrackMode("free")}
-                      className={`p-3.5 rounded border cursor-pointer transition-all ${
-                        trackMode === "free"
-                          ? "bg-accent border-foreground"
-                          : "bg-background border-border hover:border-muted-foreground"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <HardDrive className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          {t.sdOption3}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1 font-prose">
-                        {t.sdOption3Hint}
-                      </p>
-                    </div>
                   </div>
                 </div>
               )}

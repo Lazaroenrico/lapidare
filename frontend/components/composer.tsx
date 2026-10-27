@@ -1,154 +1,89 @@
 "use client";
 
 import { useLocale } from "@/components/locale-provider";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  BookOpen,
-  Loader2,
-  Mic,
-  MicOff,
-  Route,
-  Send,
-  Target,
-} from "lucide-react";
-import type { SessionMode, TrackConfig, TrackItem } from "@/lib/types";
+import { BookOpen, Loader2, Mic, Route, Send, Target, X } from "lucide-react";
+import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig, TrackItem } from "@/lib/types";
 import { createChat } from "@/lib/api";
+import { differsFromSlot, modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
+import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
+import { appendDictation, useDictation } from "./use-dictation";
+import { ModelPicker } from "./model-picker";
 
-interface IWindow extends Window {
-  webkitSpeechRecognition?: any;
-  SpeechRecognition?: any;
+export interface SelectedNodeRef {
+  id: string;
+  name: string;
 }
 
 export interface ComposerProps {
   initialized: boolean;
   trackConfig?: TrackConfig;
+  /** `config.slots.strong`: default model/effort and the engine whose models are listed. */
+  strongSlot?: ModelSlotConfig;
+  /** Nodes selected on the graph (Shift/⌘-click, "Selecionar", Chains checkboxes). */
+  selectedNodes?: SelectedNodeRef[];
+  onClearSelection?: () => void;
   onOpenSetup?: (pendingText?: string) => void;
   onSubmit?: (text: string, mode: SessionMode) => Promise<void> | void;
   initialTopic?: string;
   className?: string;
 }
 
+const slotChoice = (slot?: ModelSlotConfig): ModelChoice => ({
+  model: slot?.model?.trim() || "auto",
+  effort: (slot?.effort as EffortLevel | undefined) ?? "medium",
+});
+
+const joinNames = (nodes: SelectedNodeRef[], max = 4) =>
+  nodes.length <= max ? nodes.map((n) => n.name).join(", ") : `${nodes.slice(0, max).map((n) => n.name).join(", ")} +${nodes.length - max}`;
+
 export function Composer({
   initialized,
   trackConfig,
+  strongSlot,
+  selectedNodes = [],
+  onClearSelection,
   onOpenSetup,
   onSubmit,
   initialTopic = "",
   className = "",
 }: ComposerProps) {
   const router = useRouter();
+  const { locale, t } = useLocale();
   const [mode, setMode] = useState<SessionMode>("TEACH");
-  const {locale, t} = useLocale();
   const [text, setText] = useState<string>(initialTopic);
   const [submitting, setSubmitting] = useState<boolean>(false);
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [speechSupported, setSpeechSupported] = useState<boolean>(false);
-  const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const dictation = useDictation(locale);
+  dictation.setSink((spoken) => setText((prev) => appendDictation(prev, spoken)));
 
-  // Sync initial topic
+  // Model choice: follows the strong slot until the learner picks something else.
+  const [choice, setChoice] = useState<ModelChoice>(() => slotChoice(strongSlot));
+  const [choiceTouched, setChoiceTouched] = useState(false);
   useEffect(() => {
-    if (initialTopic) {
-      setText(initialTopic);
-    }
+    if (!choiceTouched) setChoice(slotChoice(strongSlot));
+  }, [strongSlot, choiceTouched]);
+  const modelFields = choiceTouched && differsFromSlot(choice, strongSlot) ? modelChoicePayload(choice) : {};
+
+  useEffect(() => {
+    if (initialTopic) setText(initialTopic);
   }, [initialTopic]);
 
-  // Determine active track next item
-  const nextTrackStep = React.useMemo<TrackItem | null>(() => {
-    if (!trackConfig?.active || !trackConfig.items || trackConfig.items.length === 0) {
-      return null;
-    }
+  const nextTrackStep = useMemo<TrackItem | null>(() => {
+    if (!trackConfig?.active || !trackConfig.items || trackConfig.items.length === 0) return null;
     if (trackConfig.current_step_id) {
-      const current = trackConfig.items.find(
-        (it) => it.id === trackConfig.current_step_id
-      );
+      const current = trackConfig.items.find((it) => it.id === trackConfig.current_step_id);
       if (current && !current.completed) return current;
     }
-    const firstUnfinished = trackConfig.items.find((it) => !it.completed);
-    return firstUnfinished || null;
+    return trackConfig.items.find((it) => !it.completed) || null;
   }, [trackConfig]);
 
-  // Speech Recognition Setup
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const win = window as unknown as IWindow;
-    const SpeechRecognition =
-      win.SpeechRecognition || win.webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      setSpeechSupported(true);
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = locale === "en" ? "en-US" : "pt-BR";
-
-      recognition.onresult = (event: any) => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript;
-        }
-        if (transcript.trim()) {
-          setText((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        }
-      };
-
-      recognition.onerror = () => {
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-    }
-  }, []);
-
-  const toggleListening = () => {
-    if (!recognitionRef.current) return;
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch {
-        setIsListening(false);
-      }
-    }
-  };
-
-  // Submit Handler
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const trimmed = text.trim();
-    if (!trimmed || submitting) return;
-
-    // INVARIANT: If not initialized, intercept, preserve text and open SetupDialog
-    if (!initialized) {
-      if (onOpenSetup) {
-        onOpenSetup(trimmed);
-      }
-      return;
-    }
-
-    if (onSubmit) {
-      await onSubmit(trimmed, mode);
-      setText("");
-      return;
-    }
-
-    // Default submission creates chat and routes
+  const startSession = async (payload: Parameters<typeof createChat>[0], clearText: boolean) => {
     try {
       setSubmitting(true);
-      const session = await createChat({
-        mode,
-        topic: trimmed,
-      });
-      setText("");
+      const session = await createChat({ ...payload, ...modelFields });
+      if (clearText) setText("");
       router.push(`/chat/${session.id}`);
     } catch (err) {
       console.error("[Composer] Failed to create session:", err);
@@ -157,29 +92,53 @@ export function Composer({
     }
   };
 
-  // Track Step Click Handler
-  const handleContinueTrack = async () => {
-    if (!nextTrackStep) return;
-
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = text.trim();
+    if (!trimmed || submitting) return;
+    // INVARIANT: if not initialized, preserve the text and open Setup.
     if (!initialized) {
-      if (onOpenSetup) onOpenSetup(nextTrackStep.title);
+      onOpenSetup?.(trimmed);
       return;
     }
-
-    try {
-      setSubmitting(true);
-      const session = await createChat({
-        mode: "TEACH",
-        topic: nextTrackStep.title,
-        track_item_id: nextTrackStep.id,
-        source_file: nextTrackStep.source_path,
-      });
-      router.push(`/chat/${session.id}`);
-    } catch (err) {
-      console.error("[Composer] Failed to start track step session:", err);
-    } finally {
-      setSubmitting(false);
+    if (onSubmit) {
+      await onSubmit(trimmed, mode);
+      setText("");
+      return;
     }
+    await startSession(
+      { mode, topic: trimmed, ...(selectedNodes.length > 0 ? { graph_context: graphContextPayload(selectedNodes.map((n) => n.id)) } : {}) },
+      true,
+    );
+  };
+
+  /** "Ensinar a partir daqui" / "Praticar estes": the selection goes as graph_context. */
+  const handleSelectionAction = async (actionMode: SessionMode) => {
+    if (selectedNodes.length === 0 || submitting) return;
+    const names = joinNames(selectedNodes);
+    const typed = text.trim();
+    const topic = typed || (actionMode === "TEACH" ? t.selectionTeachTopic(names) : t.selectionPracticeTopic(names));
+    if (!initialized) {
+      onOpenSetup?.(topic);
+      return;
+    }
+    await startSession(
+      { mode: actionMode, topic, graph_context: graphContextPayload(selectedNodes.map((n) => n.id)) },
+      Boolean(typed),
+    );
+    onClearSelection?.();
+  };
+
+  const handleContinueTrack = async () => {
+    if (!nextTrackStep) return;
+    if (!initialized) {
+      onOpenSetup?.(nextTrackStep.title);
+      return;
+    }
+    await startSession(
+      { mode: "TEACH", topic: nextTrackStep.title, track_item_id: nextTrackStep.id, source_file: nextTrackStep.source_path },
+      false,
+    );
   };
 
   // Global shortcut: Ctrl/⌘+Enter with an empty composer triggers "Continuar ↵".
@@ -205,8 +164,7 @@ export function Composer({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Keyboard Navigation: Enter submits (Shift+Enter for new line).
-  // Ctrl/⌘+Enter bubbles to the global track shortcut above.
+  // Enter submits (Shift+Enter = new line). Ctrl/⌘+Enter on empty text bubbles to the track shortcut.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !text.trim()) return;
     if (e.key === "Enter" && !e.shiftKey) {
@@ -216,25 +174,52 @@ export function Composer({
   };
 
   const placeholderText = mode === "TEACH" ? t.teachPrompt : t.practicePrompt;
+  const pill =
+    "flex items-center gap-1 bg-accent hover:bg-border px-2 py-0.5 rounded-full text-[11px] text-foreground border border-border cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed";
 
   return (
-    <div className={`w-full max-w-3xl mx-auto flex flex-col items-center z-20 ${className}`}>
-      {/* INVARIANT: Contextual Track Chip directly above the composer */}
+    <div className={`w-full max-w-[720px] mx-auto flex flex-col items-center gap-2 z-20 ${className}`}>
+      {/* Node selection chip */}
+      {selectedNodes.length > 0 && (
+        <div className="w-full flex justify-center">
+          <div className="flex flex-wrap items-center justify-center gap-2 bg-card/95 backdrop-blur border border-success/40 rounded-full px-3.5 py-1.5 shadow-lg text-xs font-ui text-muted-foreground">
+            <span className="text-foreground" title={selectedNodes.map((n) => n.name).join(", ")}>
+              {t.selectionCount(selectedNodes.length)}
+            </span>
+            {selectedNodes.length > MAX_GRAPH_CONTEXT && (
+              <span className="text-[10.5px] text-warning">{t.selectionCapped(MAX_GRAPH_CONTEXT)}</span>
+            )}
+            <span>·</span>
+            <button type="button" disabled={submitting} onClick={() => void handleSelectionAction("TEACH")} className={pill}>
+              <BookOpen className="w-3 h-3 text-success" />
+              {t.selectionTeach}
+            </button>
+            <button type="button" disabled={submitting} onClick={() => void handleSelectionAction("PRACTICE")} className={pill}>
+              <Target className="w-3 h-3 text-warning" />
+              {t.selectionPractice}
+            </button>
+            <button type="button" onClick={onClearSelection} className={pill}>
+              <X className="w-3 h-3" />
+              {t.selectionClear}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* INVARIANT: contextual track chip directly above the composer (only with a track) */}
       {nextTrackStep && (
-        <div className="mb-2 w-full flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className="w-full flex justify-center">
           <button
             type="button"
-            onClick={handleContinueTrack}
+            onClick={() => void handleContinueTrack()}
             disabled={submitting}
             className="group flex items-center gap-2 bg-card/95 hover:bg-accent backdrop-blur border border-border hover:border-muted-foreground rounded-full px-3.5 py-1.5 shadow-lg transition-all cursor-pointer text-xs font-ui text-muted-foreground hover:text-foreground"
             title={t.composerContinueTitle(nextTrackStep.title)}
             aria-keyshortcuts="Control+Enter Meta+Enter"
           >
             <Route className="w-3.5 h-3.5 text-success" />
-            <span className="text-muted-foreground">{t.composerTrackActive}</span>
-            <span className="text-foreground font-medium max-w-xs truncate">
-              {nextTrackStep.title}
-            </span>
+            <span>{t.composerTrackActive}</span>
+            <span className="text-foreground font-medium max-w-xs truncate">{nextTrackStep.title}</span>
             <span className="flex items-center gap-1 bg-accent group-hover:bg-border px-2 py-0.5 rounded-full text-[11px] text-foreground border border-border">
               {t.composerContinue}
             </span>
@@ -242,47 +227,31 @@ export function Composer({
         </div>
       )}
 
-      {/* Main Elevated Composer Container */}
       <div className="w-full bg-card border border-border focus-within:border-muted-foreground rounded-2xl shadow-2xl transition-all duration-200 p-3">
-        {/* Top Controls: STRICTLY TWO MODES (TEACH and PRACTICE) */}
-        <div className="flex items-center justify-between pb-2 border-b border-accent mb-2 px-1">
+        {/* STRICTLY TWO MODES */}
+        <div className="flex items-center justify-between gap-2 pb-2 border-b border-accent mb-2 px-1">
           <div className="flex items-center gap-1 bg-background p-1 rounded-lg border border-accent">
-            {/* TEACH Mode */}
-            <button
-              type="button"
-              onClick={() => setMode("TEACH")}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
-                mode === "TEACH"
-                  ? "bg-accent text-foreground border border-border shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5 text-success" />
-              <span>TEACH</span>
-            </button>
-
-            {/* PRACTICE Mode */}
-            <button
-              type="button"
-              onClick={() => setMode("PRACTICE")}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
-                mode === "PRACTICE"
-                  ? "bg-accent text-foreground border border-border shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Target className="w-3.5 h-3.5 text-warning" />
-              <span>PRACTICE</span>
-            </button>
+            {(["TEACH", "PRACTICE"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
+                  mode === m ? "bg-accent text-foreground border border-border shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {m === "TEACH" ? <BookOpen className="w-3.5 h-3.5 text-success" /> : <Target className="w-3.5 h-3.5 text-warning" />}
+                <span>{m}</span>
+              </button>
+            ))}
           </div>
-
-          <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground">
-            <span>{nextTrackStep ? t.composerHintTrack : t.composerHint}</span>
-          </div>
+          <span className="hidden sm:inline text-[11px] font-ui text-muted-foreground truncate">
+            {nextTrackStep ? t.composerHintTrack : t.composerHint}
+          </span>
         </div>
 
-        {/* Text Input Area */}
-        <div className="px-1">
+        <div className="px-1 flex items-end gap-2">
           <textarea
             ref={textareaRef}
             rows={2}
@@ -290,68 +259,55 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholderText}
-            className="w-full bg-transparent text-foreground placeholder-muted-foreground font-prose text-[15px] resize-none border-none outline-none focus:outline-none focus:ring-0 leading-relaxed block"
+            className="flex-1 bg-transparent text-foreground placeholder-muted-foreground font-prose text-[15px] resize-none border-none leading-relaxed block"
           />
-        </div>
-
-        {/* Bottom Toolbar */}
-        <div className="flex items-center justify-between pt-2 border-t border-accent mt-2 px-1">
-          <div className="flex items-center gap-2">
-            {/* Voice Dictation (🎙) */}
-            {speechSupported && (
-              <button
-                type="button"
-                onClick={toggleListening}
-                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  isListening
-                    ? "bg-danger/20 border-danger text-danger animate-pulse"
-                    : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-accent"
-                }`}
-                title={
-                  isListening
-                    ? t.micRecording
-                    : t.micDictate
-                }
-              >
-                {isListening ? (
-                  <Mic className="w-4 h-4" />
-                ) : (
-                  <MicOff className="w-4 h-4" />
-                )}
-              </button>
-            )}
-
-            {isListening && (
-              <span className="text-[11px] font-ui text-danger flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-danger animate-ping" />
-                {t.listening}
-              </span>
-            )}
-          </div>
-
-          {/* Send Button */}
           <button
             type="button"
             onClick={() => void handleSubmit()}
             disabled={!text.trim() || submitting}
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-ui font-semibold transition-all cursor-pointer ${
+            title={`${t.send} (↵)`}
+            aria-label={t.send}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-ui font-semibold transition-all cursor-pointer shrink-0 ${
               text.trim() && !submitting
                 ? "bg-foreground text-background hover:bg-foreground/90 shadow-md"
                 : "bg-accent text-muted-foreground border border-border cursor-not-allowed"
             }`}
           >
-            {submitting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>{t.starting}</span>
-              </>
-            ) : (
-              <>
-                <span>{t.send}</span>
-                <Send className="w-3.5 h-3.5" />
-              </>
-            )}
+            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            <span>{submitting ? t.starting : "↵"}</span>
           </button>
+        </div>
+
+        {/* Wide dictation bar */}
+        <button
+          type="button"
+          onClick={dictation.toggle}
+          disabled={!dictation.supported}
+          aria-pressed={dictation.listening}
+          title={dictation.supported ? (dictation.listening ? t.micRecording : t.micDictate) : t.speechUnsupported}
+          className={`mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-lg border text-xs font-ui transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+            dictation.listening
+              ? "bg-danger/15 border-danger text-danger"
+              : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+          }`}
+        >
+          {dictation.listening ? <span className="w-2 h-2 rounded-full bg-danger animate-pulse" /> : <Mic className="w-3.5 h-3.5" />}
+          <span>{dictation.listening ? t.dictateStop : t.dictateBar}</span>
+        </button>
+
+        <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-accent px-1">
+          <ModelPicker
+            engine={strongSlot?.engine ?? "agy"}
+            value={choice}
+            defaultModel={strongSlot?.model}
+            placement="up"
+            inlineEffort
+            disabled={submitting}
+            onChange={(next) => {
+              setChoiceTouched(true);
+              setChoice(next);
+            }}
+          />
         </div>
       </div>
     </div>

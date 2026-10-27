@@ -20,16 +20,21 @@ import {
   Send,
   Sparkles,
 } from "lucide-react";
-import type { SessionRecord } from "@/lib/types";
+import type { EffortLevel, ModelSlotConfig, SessionRecord, SseEventType } from "@/lib/types";
 import { buildTranscript, normalizePhase } from "@/lib/session-wire";
 import {
   createDemo,
   createDrawing,
   getBackgroundJobs,
   getChat,
+  getSetupStatus,
   resumeChat,
   sendChatMessage,
+  updateChatSettings,
 } from "@/lib/api";
+import { modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
+import { formatTokens } from "@/lib/usage";
+import { ModelPicker } from "@/components/model-picker";
 import { useEventSubscription } from "@/components/server-events";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
@@ -41,6 +46,20 @@ import { DemoIframe } from "@/components/demo-iframe";
 
 interface ChatPageProps {
   params: Promise<{ id: string }>;
+}
+
+const SESSION_EVENTS: SseEventType[] = ["session:updated", "dock:opened", "dock:resolved", "plan:updated", "usage:updated"];
+const FLASH_MS = 1800;
+
+/** "#message-<id>" → "<id>" (null for any other hash). */
+function messageIdFromHash(hash: string): string | null {
+  const m = /^#message-(.+)$/.exec(hash);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
 }
 
 export default function ChatPage({ params }: ChatPageProps) {
@@ -148,19 +167,80 @@ export default function ChatPage({ params }: ChatPageProps) {
   }, [id]);
 
   // Subscribe to SSE events for real-time reactivity without polling
-  useEventSubscription(
-    ["session:updated", "dock:opened", "dock:resolved", "plan:updated"],
-    () => {
-      void fetchSessionData();
-    }
-  );
+  useEventSubscription(SESSION_EVENTS, () => {
+    void fetchSessionData();
+  });
 
-  // Scroll to bottom on message update
+  // Deep link #message-<id>: scroll to the message and flash it (on load and on hashchange).
+  // While a deep link is pending, the auto-scroll-to-bottom stays out of the way.
+  const pendingAnchorRef = useRef<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollToAnchor = React.useCallback((messageId: string): boolean => {
+    const el = document.getElementById(`message-${messageId}`);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.remove("message-flash");
+    // Restart the animation even when the same message is targeted twice.
+    void el.offsetWidth;
+    el.classList.add("message-flash");
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => el.classList.remove("message-flash"), FLASH_MS);
+    return true;
+  }, []);
+
   useEffect(() => {
+    pendingAnchorRef.current = messageIdFromHash(window.location.hash);
+    const onHash = () => {
+      const target = messageIdFromHash(window.location.hash);
+      if (target && !scrollToAnchor(target)) pendingAnchorRef.current = target;
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, [id, scrollToAnchor]);
+
+  // Scroll to bottom on message update (unless a deep link is still being resolved)
+  useEffect(() => {
+    const anchor = pendingAnchorRef.current;
+    if (anchor) {
+      if (scrollToAnchor(anchor)) pendingAnchorRef.current = null;
+      return;
+    }
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [session?.messages.length, session?.pending_quiz?.quiz_id]);
+  }, [session?.messages.length, session?.pending_quiz?.quiz_id, scrollToAnchor]);
+
+  // Model chip: effective slot of the session (override or the strong slot).
+  const [strongSlot, setStrongSlot] = useState<ModelSlotConfig | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  useEffect(() => {
+    getSetupStatus()
+      .then((s) => setStrongSlot(s.config?.slots?.strong ?? null))
+      .catch(() => setStrongSlot(null));
+  }, []);
+  const activeSlot: ModelSlotConfig | null = session?.effective_slot ?? session?.slot_override ?? strongSlot;
+  const modelValue: ModelChoice = {
+    model: activeSlot?.model || "auto",
+    effort: (activeSlot?.effort as EffortLevel | undefined) ?? "medium",
+  };
+
+  const handleModelChange = async (next: ModelChoice) => {
+    if (!id || modelBusy) return;
+    setModelBusy(true);
+    setActionError(null);
+    try {
+      const updated = await updateChatSettings(id, modelChoicePayload(next));
+      if (updated) setSession(updated);
+      else await fetchSessionData();
+    } catch (err) {
+      setActionError(`${t.modelChangeFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setModelBusy(false);
+    }
+  };
 
   // Handle open citation drawer
   const handleOpenCitation = (sourceName: string, paragraphId: string) => {
@@ -402,8 +482,29 @@ export default function ChatPage({ params }: ChatPageProps) {
           </div>
         </div>
 
-        {/* Action Buttons: Simulador Interativo & Desenhar de Memória */}
-        <div className="flex items-center gap-2">
+        {/* Model chip + session usage, then Simulador Interativo & Desenhar de Memória */}
+        <div className="flex flex-wrap items-center gap-2">
+          <ModelPicker
+            engine={activeSlot?.engine ?? strongSlot?.engine ?? "agy"}
+            value={modelValue}
+            defaultModel={strongSlot?.model}
+            placement="down"
+            busy={modelBusy}
+            disabled={modelBusy}
+            onChange={(next) => void handleModelChange(next)}
+          />
+          {session.usage && session.usage.total_tokens > 0 && (
+            <span
+              className="font-ui text-[11px] text-muted-foreground px-2 py-1 rounded-md border border-accent"
+              title={t.usageBreakdown(
+                formatTokens(session.usage.input_tokens, locale),
+                formatTokens(session.usage.output_tokens, locale),
+                formatTokens(session.usage.thinking_tokens, locale),
+              )}
+            >
+              {t.sessionUsage(formatTokens(session.usage.total_tokens, locale), session.usage.turns)}
+            </span>
+          )}
           <button
             type="button"
             onClick={handleSpawnDemo}
@@ -476,7 +577,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             const message = item.message;
             if (message.role === "user") {
               return (
-                <div key={item.key} className="flex justify-end my-2">
+                <div key={item.key} id={`message-${message.id}`} className="flex justify-end my-2 scroll-mt-24">
                   <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm whitespace-pre-wrap">
                     <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
                       {t.you}
@@ -489,7 +590,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
             // Assistant message: Render editorial whiteboard prose with KaTeX and Citations
             return (
-              <div key={item.key} className="my-3 flex flex-col gap-2">
+              <div key={item.key} id={`message-${message.id}`} className="my-3 flex flex-col gap-2 scroll-mt-24">
                 <div className="flex items-center justify-between text-[11px] font-ui text-muted-foreground border-b border-accent pb-1 select-none">
                   <span className="tracking-wider uppercase font-semibold">
                     {t.teacherHarness}

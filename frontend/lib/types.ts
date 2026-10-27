@@ -234,6 +234,14 @@ export interface SessionRecord {
   answers: Record<string, CalibrationResult>;
   /** Result of `probe_done` (diagnosis per strand). */
   assessment: ProbeAssessment | null;
+  /** Per-session model override (replaces `slots.strong`), Fase 8B. */
+  slot_override?: ModelSlotConfig | null;
+  /** Slot actually used by the session (override or strong slot). */
+  effective_slot?: ModelSlotConfig | null;
+  /** Accumulated token usage, when the provider reports it. */
+  usage?: UsageCounters | null;
+  /** Graph node ids handed to the session as context. */
+  graph_context?: string[];
 }
 
 // --- 3. Questions & Calibration ---
@@ -320,13 +328,28 @@ export interface CalibrationResult {
 
 export type ConceptStatus = "aprendendo" | "sólido" | "revisar";
 
+/** Where a proposition was born / reinforced (GET /api/graph `nodes[].sessions`). */
+export interface NodeSessionRef {
+  session_id: string;
+  title: string;
+  message_id: string | null;
+}
+
+/**
+ * Graph node. Fase 8B propositions carry `statement`/`sessions`; legacy concept
+ * notes may still carry `status`/`depends_on`/`file_path`.
+ */
 export interface ConceptNode {
   id: string;
   name: string;
-  status: ConceptStatus;
+  /** Self-contained true statement (falls back to the legacy `summary`). */
+  statement: string;
   summary: string;
+  status?: ConceptStatus;
   file_path: string;
   depends_on: string[];
+  aliases: string[];
+  sessions: NodeSessionRef[];
   cluster?: string;
   x?: number;
   y?: number;
@@ -335,22 +358,70 @@ export interface ConceptNode {
 export interface GraphEdge {
   source: string;
   target: string;
-  kind?: "dependency" | "implication" | "reinforces";
+  kind?: "dependency" | "implication" | "reinforces" | "chain";
 }
 
 export interface LogicalChain {
   id: string;
+  /** Node ids when resolvable; otherwise the raw legacy premise strings. */
   premises: string[];
   conclusion: string;
-  formula?: string;
-  source_session_id?: string;
+  premise_names: string[];
+  conclusion_name: string;
+  /** "A ∧ B ⟹ C" with names. */
+  expression: string;
+  created_at?: string;
+  session_id?: string;
   notes?: string;
+}
+
+export type GraphClusterKind = "session" | "notes" | "legacy";
+
+export interface GraphCluster {
+  id: string;
+  label: string;
+  kind: GraphClusterKind;
+  size: number;
+}
+
+/** Track item not yet completed, rendered as a ghost node when ⇶ Roteiro is on. */
+export interface RoadmapItem {
+  /** "track:<item_id>". */
+  id: string;
+  title: string;
+  status: string;
+  linked_node_ids: string[];
+  depends_on: string[];
 }
 
 export interface GraphSnapshot {
   nodes: ConceptNode[];
   edges: GraphEdge[];
   chains: LogicalChain[];
+  clusters: GraphCluster[];
+  roadmap: RoadmapItem[];
+  updated_at?: string;
+}
+
+/** Token counters (SessionRecord.usage and GET /api/usage buckets). */
+export interface UsageCounters {
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens: number;
+  turns: number;
+  /** input + output + thinking (or the server-sent `total_tokens`). */
+  total_tokens: number;
+}
+
+export interface SessionUsageEntry extends UsageCounters {
+  session_id: string;
+  title: string;
+}
+
+export interface UsageReport {
+  today: UsageCounters;
+  total: UsageCounters;
+  by_session: SessionUsageEntry[];
 }
 
 // --- 5. Practice & Hint Ladder (R0-R5) ---
@@ -422,7 +493,8 @@ export type SseEventType =
   | "vault:changed"
   | "graph:updated"
   | "jobs:updated"
-  | "config:updated";
+  | "config:updated"
+  | "usage:updated";
 
 export type BackgroundJobKind = "practice_gen" | "extraction" | "track_gen" | "demo_builder" | (string & {});
 
