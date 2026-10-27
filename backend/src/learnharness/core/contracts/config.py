@@ -231,6 +231,20 @@ class GraphSettings(BaseModel):
     extraction_chunk_tokens: int = Field(default=4096, ge=1)
 
 
+class ToolToggles(BaseModel):
+    """Background-job tools the agent may use (Settings → Agente)."""
+    research: bool = True
+    pdf: bool = True
+    visual: bool = True
+    demo: bool = True
+
+
+class AgentSettings(BaseModel):
+    tools: ToolToggles = Field(default_factory=ToolToggles)
+    # History beyond this many estimated tokens (chars/4) is summarized (Fase 12).
+    compaction_tokens: int = Field(default=150_000, ge=32_000)
+
+
 class HarnessConfig(BaseModel):
     """Root configuration for LearnHarness persisted in .harness/config.json."""
     configured: bool = False
@@ -244,3 +258,4 @@ class HarnessConfig(BaseModel):
     # Prompt segment path -> use the Vault override in .harness/prompts/<path> (Fase 8).
     prompt_overrides: dict[str, bool] = Field(default_factory=dict)
     graph: GraphSettings = Field(default_factory=GraphSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
