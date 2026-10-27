@@ -22,6 +22,7 @@ class SseEventType(StrEnum):
     GRAPH_UPDATED = "graph:updated"
     JOBS_UPDATED = "jobs:updated"
     USAGE_UPDATED = "usage:updated"
+    CONFIG_UPDATED = "config:updated"
 
 
 class BackgroundJobStatus(BaseModel):

@@ -82,7 +82,7 @@ function errorDetail(errBody: unknown): string | null {
   return JSON.stringify(detail);
 }
 
-async function fetchJson<T>(
+export async function fetchJson<T>(
   endpoint: string,
   options: RequestInit = {},
   { silent = false }: FetchJsonOptions = {}

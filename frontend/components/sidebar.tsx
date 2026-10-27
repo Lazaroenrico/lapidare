@@ -23,6 +23,7 @@ import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/type
 import { createChat, extractSessionToGraph, listChats, retryJob } from "@/lib/api";
 import { useEventSubscription, useServerEvents } from "./server-events";
 import { useLocale } from "./locale-provider";
+import { SettingsComboHint } from "./use-combo-label";
 
 type FilterMode = "TEACHING" | "PRACTICE" | "ALL";
 
@@ -618,6 +619,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         >
           <Settings className="w-3.5 h-3.5" />
           <span className="tracking-wider text-[10.5px]">{t.settingsLabel}</span>
+          <SettingsComboHint />
         </Link>
       </div>
     </aside>
