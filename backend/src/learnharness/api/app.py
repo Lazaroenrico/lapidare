@@ -18,6 +18,7 @@ from learnharness.api.routes.import_content import import_router
 from learnharness.api.routes.import_github import import_github_router
 from learnharness.api.routes.jobs import jobs_router
 from learnharness.api.routes.prompts import prompts_router
+from learnharness.api.routes.settings_agent import settings_agent_router
 from learnharness.api.routes.setup import setup_router
 from learnharness.api.routes.usage import usage_router
 from learnharness.api.sse import sse_router
@@ -166,6 +167,7 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     app.include_router(drawings_router)
     app.include_router(jobs_router)
     app.include_router(prompts_router)
+    app.include_router(settings_agent_router)
     app.include_router(usage_router)
     app.mount(MCP_MOUNT, ExecutionTokenGate(mcp_app, state))
 

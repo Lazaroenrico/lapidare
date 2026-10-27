@@ -5,6 +5,8 @@ import { ServerEventsProvider } from "@/components/server-events";
 import { LocaleProvider } from "@/components/locale-provider";
 import { Sidebar } from "@/components/sidebar";
 import { SetupGate } from "@/components/setup-gate";
+import { AppearanceApplier } from "@/components/appearance-applier";
+import { GlobalShortcuts } from "@/components/global-shortcuts";
 
 export const metadata: Metadata = {
   title: "learnharness — Local-First Learning Harness",
@@ -28,6 +30,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className="dark">
       <body className="bg-background text-foreground min-h-screen antialiased select-text">
+        <AppearanceApplier />
         <ServerEventsProvider>
           <LocaleProvider>
           <div className="flex h-screen w-screen overflow-hidden bg-background">
@@ -37,6 +40,7 @@ export default function RootLayout({
             </main>
           </div>
           <SetupGate />
+          <GlobalShortcuts />
           </LocaleProvider>
         </ServerEventsProvider>
       </body>

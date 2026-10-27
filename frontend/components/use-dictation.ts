@@ -1,22 +1,40 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { registerCommandTarget, TOGGLE_DICTATION_EVENT } from "@/lib/command-events";
 
 /**
  * Web Speech dictation. Each final transcript goes to the CURRENT sink
  * (`setSink`), so the dock can redirect dictation to whichever field is active
  * without restarting recognition.
  */
-export function useDictation(locale: string) {
+export function useDictation(locale: string, options: { field?: RefObject<HTMLElement | null> } = {}) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const sinkRef = useRef<(text: string) => void>(() => undefined);
+  const stateRef = useRef({ supported, listening });
+  stateRef.current = { supported, listening };
+  const toggleRef = useRef<() => void>(() => undefined);
+  const fieldRef = options.field;
 
   useEffect(() => {
     setSupported(typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window));
     return () => recognitionRef.current?.stop();
   }, []);
+
+  // ⌘D (`learnharness:toggle-dictation`): the instance already listening stops; otherwise
+  // the one whose field holds focus, else the most recently mounted, starts.
+  useEffect(
+    () =>
+      registerCommandTarget(TOGGLE_DICTATION_EVENT, {
+        run: () => toggleRef.current(),
+        eligible: () => stateRef.current.supported,
+        claims: () =>
+          stateRef.current.listening || !!fieldRef?.current?.contains(document.activeElement),
+      }),
+    [fieldRef],
+  );
 
   const setSink = (sink: (text: string) => void) => {
     sinkRef.current = sink;
@@ -52,6 +70,8 @@ export function useDictation(locale: string) {
       setListening(false);
     }
   };
+
+  toggleRef.current = toggle;
 
   return { supported, listening, toggle, setSink };
 }

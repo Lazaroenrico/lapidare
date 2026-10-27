@@ -8,7 +8,7 @@
     "start": "next start --port 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsc lib/config-wire.ts lib/types.ts lib/question-core.ts lib/plan-layout.ts lib/session-wire.ts lib/graph-wire.ts lib/graph-selection.ts lib/ghost-layout.ts lib/graph-settings.ts lib/usage.ts lib/model-choice.ts lib/practice.ts lib/keyboard.ts lib/job-steer.ts lib/session-ux.ts --outDir /tmp/learnharness-frontend-tests --module commonjs --target es2020 --skipLibCheck && node --test tests/*.test.cjs"
+    "test": "tsc lib/config-wire.ts lib/types.ts lib/question-core.ts lib/plan-layout.ts lib/session-wire.ts lib/graph-wire.ts lib/graph-selection.ts lib/ghost-layout.ts lib/graph-settings.ts lib/usage.ts lib/model-choice.ts lib/practice.ts lib/keyboard.ts lib/job-steer.ts lib/session-ux.ts lib/appearance.ts lib/settings-wire.ts lib/key-capture.ts lib/command-events.ts --outDir /tmp/learnharness-frontend-tests --module commonjs --target es2020 --skipLibCheck && node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",

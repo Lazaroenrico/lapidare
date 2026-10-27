@@ -128,7 +128,7 @@ export function LessonProse({
   );
 
   return (
-    <div className={`lesson-prose select-text font-prose text-[16px] text-foreground leading-[1.65] ${className}`}>
+    <div className={`lesson-prose select-text font-prose text-[length:var(--prose-size)] text-foreground leading-[1.65] ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
@@ -154,17 +154,17 @@ export function LessonProse({
             </h4>
           ),
           p: ({ children }) => (
-            <p className="my-3 font-prose text-[16px] leading-[1.65] text-foreground">
+            <p className="my-3 font-prose text-[length:var(--prose-size)] leading-[1.65] text-foreground">
               {children}
             </p>
           ),
           ul: ({ children }) => (
-            <ul className="my-3 pl-5 list-disc space-y-1 font-prose text-[16px] leading-[1.6] text-foreground">
+            <ul className="my-3 pl-5 list-disc space-y-1 font-prose text-[length:var(--prose-size)] leading-[1.6] text-foreground">
               {children}
             </ul>
           ),
           ol: ({ children }) => (
-            <ol className="my-3 pl-5 list-decimal space-y-1 font-prose text-[16px] leading-[1.6] text-foreground">
+            <ol className="my-3 pl-5 list-decimal space-y-1 font-prose text-[length:var(--prose-size)] leading-[1.6] text-foreground">
               {children}
             </ol>
           ),

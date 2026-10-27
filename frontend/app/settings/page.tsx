@@ -6,17 +6,23 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowLeft,
+  Bot,
   CheckCircle2,
   Cpu,
   FolderOpen,
   Globe,
   HardDrive,
+  Keyboard,
   Key,
   Layers,
   Loader2,
+  Network,
+  Palette,
+  Plug,
   RefreshCw,
   Route,
   Save,
+  Settings2,
   Terminal,
 } from "lucide-react";
 import type {
@@ -32,16 +38,39 @@ import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { GithubTrackLinker } from "@/components/github-track-linker";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
+import { openSetup } from "@/components/setup-gate";
+import { AgentSection } from "@/components/settings/agent-section";
+import { GraphSection } from "@/components/settings/graph-section";
+import { AppearanceSection } from "@/components/settings/appearance-section";
+import { KeyboardSection } from "@/components/settings/keyboard-section";
+import { buttonClass, SectionHeader } from "@/components/settings/ui";
 import { normalizeSlots } from "@/lib/config-wire";
+import { settingsText } from "@/lib/settings-i18n";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
 const DEFAULT_REPO_PATH = "";
 
-type SettingsTab = "connectors" | "vault" | "mcp" | "track";
+const SECTIONS = ["connectors", "agent", "graph", "appearance", "keyboard", "general"] as const;
+type SettingsSection = (typeof SECTIONS)[number];
+
+const SECTION_ICONS: Record<SettingsSection, React.ComponentType<{ className?: string }>> = {
+  connectors: Plug,
+  agent: Bot,
+  graph: Network,
+  appearance: Palette,
+  keyboard: Keyboard,
+  general: Settings2,
+};
+
+/** Sections whose fields are saved by the header "Save" (POST /api/setup/complete). */
+const SETUP_SECTIONS = new Set<SettingsSection>(["connectors", "general"]);
+
+const isSection = (value: string): value is SettingsSection => (SECTIONS as readonly string[]).includes(value);
 
 export default function SettingsPage() {
-  const {t} = useLocale();
-  const [activeTab, setActiveTab] = useState<SettingsTab>("connectors");
+  const {t, locale} = useLocale();
+  const s = settingsText(locale);
+  const [activeSection, setActiveSection] = useState<SettingsSection>("connectors");
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{
@@ -70,6 +99,26 @@ export default function SettingsPage() {
   const [trackMode, setTrackMode] = useState<TrackMode>("free");
   const [trackRepoPath, setTrackRepoPath] = useState<string>(DEFAULT_REPO_PATH);
   const [goalDescription, setGoalDescription] = useState<string>(t.defaultGoal);
+
+  // Deep link: /settings#keyboard opens that section (the `?` cheat sheet links there).
+  useEffect(() => {
+    const fromHash = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if (isSection(hash)) setActiveSection(hash);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  const selectSection = (section: SettingsSection) => {
+    setActiveSection(section);
+    try {
+      window.history.replaceState(null, "", `#${section}`);
+    } catch {
+      /* History API unavailable: the section still switches. */
+    }
+  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -171,6 +220,8 @@ export default function SettingsPage() {
     }
   };
 
+  const showSetupSave = SETUP_SECTIONS.has(activeSection);
+
   return (
     <div className="flex-1 min-h-screen bg-background text-foreground flex flex-col font-prose overflow-y-auto">
       {/* Top Bar */}
@@ -194,440 +245,382 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={loadSettings}
-            disabled={loading || saving}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-card rounded border border-border cursor-pointer transition-colors"
-            title={t.reloadFromServer}
-            aria-label={t.reloadFromServer}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        {showSetupSave && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={loadSettings}
+              disabled={loading || saving}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-card rounded border border-border cursor-pointer transition-colors"
+              title={t.reloadFromServer}
+              aria-label={t.reloadFromServer}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-foreground text-background font-ui text-xs font-semibold rounded hover:bg-foreground/90 cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>{t.saving}</span>
-              </>
-            ) : (
-              <>
-                <Save className="w-3.5 h-3.5" />
-                <span>{t.saveChanges}</span>
-              </>
-            )}
-          </button>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-4xl w-full mx-auto p-6 space-y-6">
-        {statusMessage && (
-          <div
-            className={`p-3 rounded border text-xs font-ui flex items-center gap-2 ${
-              statusMessage.type === "success"
-                ? "bg-success/10 border-success/40 text-success"
-                : "bg-danger/10 border-danger/40 text-danger"
-            }`}
-          >
-            {statusMessage.type === "success" ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-success" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
-            )}
-            <span>{statusMessage.text}</span>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || loading}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-foreground text-background font-ui text-xs font-semibold rounded hover:bg-foreground/90 cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>{t.saving}</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{t.saveChanges}</span>
+                </>
+              )}
+            </button>
           </div>
         )}
+      </header>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-border gap-2 font-ui text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab("connectors")}
-            className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
-              activeTab === "connectors"
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.tabConnectors}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("vault")}
-            className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
-              activeTab === "vault"
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.tabVault}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("mcp")}
-            className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
-              activeTab === "mcp"
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.tabMcp}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("track")}
-            className={`pb-2.5 px-3 border-b-2 transition-colors cursor-pointer font-medium ${
-              activeTab === "track"
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.tabTrack}
-          </button>
-        </div>
+      <div className="max-w-6xl w-full mx-auto p-4 md:p-6 flex flex-col md:flex-row gap-6">
+        {/* Side navigation */}
+        <nav aria-label={s.navLabel} className="md:w-48 shrink-0">
+          <ul className="flex md:flex-col gap-1 overflow-x-auto md:sticky md:top-24 font-ui text-xs">
+            {SECTIONS.map((section) => {
+              const Icon = SECTION_ICONS[section];
+              const active = section === activeSection;
+              return (
+                <li key={section}>
+                  <button
+                    type="button"
+                    onClick={() => selectSection(section)}
+                    aria-current={active ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded border transition-colors cursor-pointer whitespace-nowrap ${
+                      active
+                        ? "bg-accent border-border text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-card"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    {s.nav[section]}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
 
-        {/* Tab Content */}
-        {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="font-ui text-xs">{t.settingsLoading}</span>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* TAB 1: CONNECTORS & SLOTS */}
-            {activeTab === "connectors" && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="font-title text-base font-bold text-foreground">
-                    {t.connectorsHeading}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t.connectorsHint}
-                  </p>
-                </div>
+        <div className="flex-1 min-w-0 space-y-6">
+          {showSetupSave && statusMessage && (
+            <div
+              className={`p-3 rounded border text-xs font-ui flex items-center gap-2 ${
+                statusMessage.type === "success"
+                  ? "bg-success/10 border-success/40 text-success"
+                  : "bg-danger/10 border-danger/40 text-danger"
+              }`}
+            >
+              {statusMessage.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-success" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+          )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {/* agy */}
-                  <div className="p-4 bg-card border border-border rounded space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Terminal className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          Google Antigravity CLI (agy)
-                        </span>
-                      </div>
-                      <ConnectorStateBadge
-                        available={connector("agy")?.available}
-                        verified={verifiedEngines.has("agy")}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t.agyDescription}{" "}
-                      <code className="text-foreground font-ui">
-                        stream-json
-                      </code>
-                      .
-                    </p>
-                  </div>
+          {activeSection === "agent" && <AgentSection />}
+          {activeSection === "graph" && <GraphSection />}
+          {activeSection === "appearance" && <AppearanceSection />}
+          {activeSection === "keyboard" && <KeyboardSection />}
 
-                  {/* gemini-cli */}
-                  <div className="p-4 bg-card border border-border rounded space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          @google/gemini-cli (ACP)
-                        </span>
-                      </div>
-                      <ConnectorStateBadge
-                        available={connector("gemini")?.available}
-                        verified={verifiedEngines.has("gemini")}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t.geminiCliDescription}
-                    </p>
-                  </div>
-                </div>
+          {showSetupSave && loading && (
+            <div className="py-20 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="font-ui text-xs">{t.settingsLoading}</span>
+            </div>
+          )}
 
-                {slots.strong.engine === "agy" && <AgyPermissionCard />}
+          {/* 1. CONNECTORS, SLOTS, AGY PERMISSION, CONTENT MCPS */}
+          {activeSection === "connectors" && !loading && (
+            <div className="space-y-6">
+              <SectionHeader title={t.connectorsHeading} hint={t.connectorsHint} />
 
-                {/* API Key Fallback */}
-                <div className="p-4 bg-card border border-border rounded space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* agy */}
+                <div className="p-4 bg-card border border-border rounded space-y-2">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Key className="w-4 h-4 text-muted-foreground" />
+                      <Terminal className="w-4 h-4 text-foreground" />
                       <span className="font-ui text-xs font-semibold text-foreground">
-                        Google AI Studio / Vertex AI (SDK Fallback)
+                        Google Antigravity CLI (agy)
                       </span>
                     </div>
                     <ConnectorStateBadge
-                      available={connector("sdk")?.available}
-                      verified={verifiedEngines.has("sdk")}
+                      available={connector("agy")?.available}
+                      verified={verifiedEngines.has("agy")}
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {t.apiKeyHint}{" "}
-                    <code className="text-foreground font-ui">google-genai</code>.
-                  </p>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={t.apiKeyPlaceholder}
-                    aria-label={t.apiKeyPlaceholder}
-                    className="w-full bg-background border border-border rounded px-3 py-2 font-ui text-xs text-foreground placeholder-muted-foreground"
-                  />
-                </div>
-
-                {/* Model Slot Configuration */}
-                <div className="p-4 bg-card border border-border rounded space-y-3">
-                  <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
-                    {t.slotsHeading}
-                  </span>
-                  <ModelSlotsEditor
-                    slots={slots}
-                    onChange={setSlots}
-                    apiKey={apiKey}
-                    onEngineVerified={markVerified}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: VAULT & LANGUAGE */}
-            {activeTab === "vault" && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="font-title text-base font-bold text-foreground">
-                    {t.vaultHeading}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t.vaultHint}
+                    {t.agyDescription}{" "}
+                    <code className="text-foreground font-ui">
+                      stream-json
+                    </code>
+                    .
                   </p>
                 </div>
 
-                {/* Language Switcher */}
-                <div className="p-4 bg-card border border-border rounded space-y-2.5">
-                  <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
-                    <Globe className="w-3.5 h-3.5 text-muted-foreground" />
-                    {t.systemLanguage}
-                  </label>
-                  <div className="grid grid-cols-2 gap-3 font-ui text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setLanguage("pt-br")}
-                      className={`p-3 rounded border text-left cursor-pointer transition-colors ${
-                        language === "pt-br"
-                          ? "bg-accent border-foreground text-foreground"
-                          : "bg-background border-border text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <div className="font-semibold">Português (PT-BR)</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">
-                        Aulas/, Conceitos/, Fontes/, 00 Mapa.md
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setLanguage("en")}
-                      className={`p-3 rounded border text-left cursor-pointer transition-colors ${
-                        language === "en"
-                          ? "bg-accent border-foreground text-foreground"
-                          : "bg-background border-border text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <div className="font-semibold">English (EN)</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">
-                        Lessons/, Concepts/, Sources/, 00 Map.md
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Vault Directory */}
-                <div className="p-4 bg-card border border-border rounded space-y-3">
-                  <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
-                    <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
-                    {t.vaultDirectory}
-                  </label>
-                  <input
-                    type="text"
-                    value={vaultPath}
-                    onChange={(e) => setVaultPath(e.target.value)}
-                    className="w-full bg-background border border-border rounded px-3 py-2 font-ui text-xs text-foreground"
-                  />
-
-                  {/* Folder Mapping Spec */}
-                  <div className="p-3 bg-background border border-border rounded font-ui text-[11px] space-y-1">
-                    <div className="text-muted-foreground uppercase text-[10px] tracking-wider mb-1">
-                      {t.folderMapping}
+                {/* gemini-cli */}
+                <div className="p-4 bg-card border border-border rounded space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-foreground" />
+                      <span className="font-ui text-xs font-semibold text-foreground">
+                        @google/gemini-cli (ACP)
+                      </span>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-foreground">
-                      <div>
-                        {t.folderLessons} <span className="text-muted-foreground">{language === "pt-br" ? "Aulas/" : "Lessons/"}</span>
-                      </div>
-                      <div>
-                        {t.folderConcepts}{" "}
-                        <span className="text-muted-foreground">{language === "pt-br" ? "Conceitos/" : "Concepts/"}</span>
-                      </div>
-                      <div>
-                        {t.folderSources} <span className="text-muted-foreground">{language === "pt-br" ? "Fontes/" : "Sources/"}</span>
-                      </div>
-                      <div>
-                        {t.folderDrawings}{" "}
-                        <span className="text-muted-foreground">{language === "pt-br" ? "Desenhos/" : "Drawings/"}</span>
-                      </div>
-                    </div>
+                    <ConnectorStateBadge
+                      available={connector("gemini")?.available}
+                      verified={verifiedEngines.has("gemini")}
+                    />
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t.geminiCliDescription}
+                  </p>
                 </div>
               </div>
-            )}
 
-            {/* TAB 3: CONTENT MCPS */}
-            {activeTab === "mcp" && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="font-title text-base font-bold text-foreground">
-                    {t.mcpSettingsTitle}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">{t.mcpSettingsHint}</p>
+              {slots.strong.engine === "agy" && <AgyPermissionCard />}
+
+              {/* API Key Fallback */}
+              <div className="p-4 bg-card border border-border rounded space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-muted-foreground" />
+                    <span className="font-ui text-xs font-semibold text-foreground">
+                      Google AI Studio / Vertex AI (SDK Fallback)
+                    </span>
+                  </div>
+                  <ConnectorStateBadge
+                    available={connector("sdk")?.available}
+                    verified={verifiedEngines.has("sdk")}
+                  />
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  {t.apiKeyHint}{" "}
+                  <code className="text-foreground font-ui">google-genai</code>.
+                </p>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={t.apiKeyPlaceholder}
+                  aria-label={t.apiKeyPlaceholder}
+                  className="w-full bg-background border border-border rounded px-3 py-2 font-ui text-xs text-foreground placeholder-muted-foreground"
+                />
+              </div>
+
+              {/* Model Slot Configuration */}
+              <div className="p-4 bg-card border border-border rounded space-y-3">
+                <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
+                  {t.slotsHeading}
+                </span>
+                <ModelSlotsEditor
+                  slots={slots}
+                  onChange={setSlots}
+                  apiKey={apiKey}
+                  onEngineVerified={markVerified}
+                />
+              </div>
+
+              {/* Content MCP servers (saved individually by the manager) */}
+              <div className="space-y-3">
+                <SectionHeader title={t.mcpSettingsTitle} hint={t.mcpSettingsHint} />
                 <McpServerManager
                   className="bg-card border border-border rounded min-h-[320px]"
                   selected={selectedMcp}
                   onSelect={setSelectedMcp}
                 />
               </div>
-            )}
+            </div>
+          )}
 
-            {/* TAB 4: TRACK CONFIGURATION */}
-            {activeTab === "track" && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="font-title text-base font-bold text-foreground">
-                    {t.trackHeading}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t.trackHint}
+          {/* 6. GENERAL: LANGUAGE, TRACK, VAULT PATH (read-only) */}
+          {activeSection === "general" && !loading && (
+            <div className="space-y-6">
+              <SectionHeader title={s.generalHeading} hint={s.generalHint} />
+
+              {/* Language Switcher */}
+              <div className="p-4 bg-card border border-border rounded space-y-2.5">
+                <label className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+                  <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                  {t.systemLanguage}
+                </label>
+                <div className="grid grid-cols-2 gap-3 font-ui text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setLanguage("pt-br")}
+                    aria-pressed={language === "pt-br"}
+                    className={`p-3 rounded border text-left cursor-pointer transition-colors ${
+                      language === "pt-br"
+                        ? "bg-accent border-foreground text-foreground"
+                        : "bg-background border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <div className="font-semibold">Português (PT-BR)</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      Aulas/, Conceitos/, Fontes/, 00 Mapa.md
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLanguage("en")}
+                    aria-pressed={language === "en"}
+                    className={`p-3 rounded border text-left cursor-pointer transition-colors ${
+                      language === "en"
+                        ? "bg-accent border-foreground text-foreground"
+                        : "bg-background border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <div className="font-semibold">English (EN)</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      Lessons/, Concepts/, Sources/, 00 Map.md
+                    </div>
+                  </button>
+                </div>
+                <p className="font-ui text-[11px] text-muted-foreground">{s.saveSectionHint}</p>
+              </div>
+
+              {/* Vault Directory (read-only; switching Vaults goes through the Setup) */}
+              <div className="p-4 bg-card border border-border rounded space-y-3">
+                <label
+                  htmlFor="settings-vault-path"
+                  className="font-ui text-xs font-semibold text-foreground flex items-center gap-2"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                  {s.vaultPath}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="settings-vault-path"
+                    type="text"
+                    value={vaultPath}
+                    readOnly
+                    className="flex-1 min-w-0 bg-background border border-border rounded px-3 py-2 font-ui text-xs text-muted-foreground"
+                  />
+                  <button type="button" onClick={openSetup} className={`${buttonClass} shrink-0`}>
+                    {s.openSetup}
+                  </button>
+                </div>
+                <p className="font-ui text-[11px] text-muted-foreground">{s.vaultPathHint}</p>
+              </div>
+
+              {/* Track configuration */}
+              <div className="space-y-3">
+                <SectionHeader title={t.trackHeading} hint={t.trackHint} />
+
+                {/* Repo + Binary Leveling */}
+                <div
+                  onClick={() => setTrackMode("repo_binary")}
+                  className={`p-4 rounded border cursor-pointer transition-all ${
+                    trackMode === "repo_binary"
+                      ? "bg-accent border-foreground"
+                      : "bg-card border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Route className="w-4 h-4 text-foreground" />
+                    <span className="font-ui text-xs font-semibold text-foreground">
+                      {t.trackOption1}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 font-prose">
+                    {t.trackOption1Before}{" "}
+                    <code className="text-foreground font-ui">
+                      00 Mapa.md / LEARNING.md
+                    </code>
+                    {t.trackOption1After}
+                  </p>
+                  {trackMode === "repo_binary" && (
+                    <div
+                      className="mt-3 pt-3 border-t border-border"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <GithubTrackLinker onLinked={() => void refreshTrack()} />
+                    </div>
+                  )}
+                  {trackMode === "repo_binary" && (
+                    <div className="mt-3 pt-2.5 border-t border-border">
+                      <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                        {t.courseDirectory}
+                      </label>
+                      <input
+                        type="text"
+                        value={trackRepoPath}
+                        onChange={(e) => setTrackRepoPath(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Goal Generated Track */}
+                <div
+                  onClick={() => setTrackMode("goal_generated")}
+                  className={`p-4 rounded border cursor-pointer transition-all ${
+                    trackMode === "goal_generated"
+                      ? "bg-accent border-foreground"
+                      : "bg-card border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-foreground" />
+                    <span className="font-ui text-xs font-semibold text-foreground">
+                      {t.trackOption2}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 font-prose">
+                    {t.trackOption2Hint}
+                  </p>
+                  {trackMode === "goal_generated" && (
+                    <div className="mt-3 pt-2.5 border-t border-border">
+                      <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
+                        {t.goalDescription}
+                      </label>
+                      <textarea
+                        value={goalDescription}
+                        onChange={(e) => setGoalDescription(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        rows={3}
+                        className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground resize-none"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Free Mode */}
+                <div
+                  onClick={() => setTrackMode("free")}
+                  className={`p-4 rounded border cursor-pointer transition-all ${
+                    trackMode === "free"
+                      ? "bg-accent border-foreground"
+                      : "bg-card border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <HardDrive className="w-4 h-4 text-foreground" />
+                    <span className="font-ui text-xs font-semibold text-foreground">
+                      {t.trackOption3}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 font-prose">
+                    {t.trackOption3Hint}
                   </p>
                 </div>
-
-                <div className="space-y-3">
-                  {/* Repo + Binary Leveling */}
-                  <div
-                    onClick={() => setTrackMode("repo_binary")}
-                    className={`p-4 rounded border cursor-pointer transition-all ${
-                      trackMode === "repo_binary"
-                        ? "bg-accent border-foreground"
-                        : "bg-card border-border hover:border-muted-foreground"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Route className="w-4 h-4 text-foreground" />
-                      <span className="font-ui text-xs font-semibold text-foreground">
-                        {t.trackOption1}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 font-prose">
-                      {t.trackOption1Before}{" "}
-                      <code className="text-foreground font-ui">
-                        00 Mapa.md / LEARNING.md
-                      </code>
-                      {t.trackOption1After}
-                    </p>
-                    {trackMode === "repo_binary" && (
-                      <div
-                        className="mt-3 pt-3 border-t border-border"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <GithubTrackLinker onLinked={() => void refreshTrack()} />
-                      </div>
-                    )}
-                    {trackMode === "repo_binary" && (
-                      <div className="mt-3 pt-2.5 border-t border-border">
-                        <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                          {t.courseDirectory}
-                        </label>
-                        <input
-                          type="text"
-                          value={trackRepoPath}
-                          onChange={(e) => setTrackRepoPath(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Goal Generated Track */}
-                  <div
-                    onClick={() => setTrackMode("goal_generated")}
-                    className={`p-4 rounded border cursor-pointer transition-all ${
-                      trackMode === "goal_generated"
-                        ? "bg-accent border-foreground"
-                        : "bg-card border-border hover:border-muted-foreground"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-foreground" />
-                      <span className="font-ui text-xs font-semibold text-foreground">
-                        {t.trackOption2}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 font-prose">
-                      {t.trackOption2Hint}
-                    </p>
-                    {trackMode === "goal_generated" && (
-                      <div className="mt-3 pt-2.5 border-t border-border">
-                        <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                          {t.goalDescription}
-                        </label>
-                        <textarea
-                          value={goalDescription}
-                          onChange={(e) => setGoalDescription(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          rows={3}
-                          className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground resize-none"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Free Mode */}
-                  <div
-                    onClick={() => setTrackMode("free")}
-                    className={`p-4 rounded border cursor-pointer transition-all ${
-                      trackMode === "free"
-                        ? "bg-accent border-foreground"
-                        : "bg-card border-border hover:border-muted-foreground"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <HardDrive className="w-4 h-4 text-foreground" />
-                      <span className="font-ui text-xs font-semibold text-foreground">
-                        {t.trackOption3}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 font-prose">
-                      {t.trackOption3Hint}
-                    </p>
-                  </div>
-                </div>
               </div>
-            )}
-          </div>
-        )}
-      </main>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

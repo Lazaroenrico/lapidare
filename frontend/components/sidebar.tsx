@@ -41,6 +41,7 @@ import { useLocale } from "./locale-provider";
 import { useShortcut } from "./use-shortcut";
 import { ConfirmDialog } from "./session-ux";
 import { requestComposerFocus } from "./composer-focus";
+import { SettingsComboHint } from "./use-combo-label";
 
 const COLLAPSED_STORAGE_KEY = "learnharness:sidebar-collapsed";
 
@@ -842,6 +843,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
         >
           <Settings className="w-3.5 h-3.5" />
           <span className="tracking-wider text-[10.5px]">{t.settingsLabel}</span>
+          <SettingsComboHint />
         </Link>
       </div>
       <ConfirmDialog

@@ -65,6 +65,8 @@
   --font-title: "CMU Serif", "Computer Modern Serif", Georgia, serif;
   --font-prose: "Source Sans 3", system-ui, -apple-system, sans-serif;
   --font-ui: "JetBrains Mono", monospace;
+  /* Teaching prose size; Settings → Aparência overrides it inline on :root (14–20px). */
+  --prose-size: 16px;
 }
 
 /* Strict elimination of native browser focus outlines */

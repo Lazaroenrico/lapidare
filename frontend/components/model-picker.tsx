@@ -5,6 +5,7 @@ import { Check, ChevronDown, Cpu, Loader2 } from "lucide-react";
 import type { EffortLevel, EngineKind, ModelOption } from "@/lib/types";
 import { getModels, isAbortError } from "@/lib/api";
 import { EFFORT_LEVELS, modelChipLabel, pinnedEffort, type ModelChoice } from "@/lib/model-choice";
+import { OPEN_MODEL_PICKER_EVENT, registerCommandTarget } from "@/lib/command-events";
 import { useLocale } from "./locale-provider";
 
 interface ModelPickerProps {
@@ -85,6 +86,19 @@ export function ModelPicker({
   const [custom, setCustom] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const loadedEngineRef = useRef<EngineKind | null>(null);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+
+  // ⌘K (Settings → Teclado `modelPicker`): one visible, enabled picker opens.
+  useEffect(
+    () =>
+      registerCommandTarget(OPEN_MODEL_PICKER_EVENT, {
+        run: () => setOpen(true),
+        eligible: () => !disabledRef.current && !!rootRef.current && rootRef.current.offsetParent !== null,
+        claims: () => !!rootRef.current?.contains(document.activeElement),
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!open || loadedEngineRef.current === engine) return;
