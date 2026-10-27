@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from learnharness.engines.cli_protocol import EngineError, json_events, transcript
 from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
+from learnharness.engines.usage import gemini_cli_usage, report_usage
 
 # Native tools the learning harness never wants the CLI to run on the learner's machine.
 EXCLUDED_NATIVE_TOOLS = [
@@ -127,6 +128,10 @@ class GeminiHeadlessEngine:
             return "text", event.get("content", "")
         return "event", event
 
+    def _usage_counts(self, result):
+        """Token counts carried by this CLI's terminal ``result`` event (``engines.usage``)."""
+        return gemini_cli_usage(result)
+
     def _learner_pending(self):
         if self.is_waiting_on_learner is None or self._session_id is None:
             return False
@@ -144,7 +149,11 @@ class GeminiHeadlessEngine:
             )
         ) as events:
             async for event in events:
-                yield self._parse(event)
+                kind, value = self._parse(event)
+                if kind == "result":
+                    report_usage(slot.model_id if slot else self.default_model,
+                                 self._usage_counts(value))
+                yield kind, value
 
     async def stream_turn(
         self, prompt, session_id, history=None, slot=None, tools=None, system_instruction=None

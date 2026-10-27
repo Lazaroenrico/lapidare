@@ -142,7 +142,8 @@ class SessionService:
         append_session_event(self.state.vault_path, session.id, session)
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session.id, "sequence": session.sequence})
 
-    async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True):
+    async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True,
+                     slot_override=None):
         config = self.state.get_config()
         if not config.configured:
             raise SessionConflict("Complete setup before starting a session")
@@ -161,7 +162,7 @@ class SessionService:
         session = SessionRecord(
             id=session_id, title=(topic or "Nova sessão").strip()[:240], mode=mode,
             context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
-            source_path=source_file, track_item_id=track_item_id,
+            source_path=source_file, track_item_id=track_item_id, slot_override=slot_override,
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
         )
         session.lesson_vault_path = self._create_lesson_note(session, config)
@@ -572,6 +573,7 @@ class SessionService:
         """Execute one agent turn. Returns True when a follow-up handoff turn is due."""
         completed = False
         follow_up = False
+        usage = self.state.usage.capture(session_id=session_id)
         try:
             session = self.get(session_id)
             if session.pending_quiz or session.recovery_required or session.phase == "completed":
@@ -595,7 +597,8 @@ class SessionService:
                         "O agy ainda não tem permissão para usar as ferramentas do harness. "
                         "Conceda em Configurações → Conectores (regra mcp(harness/*))."
                     )
-            engine = self.state.engine(config.slots.strong)
+            slot = session.teaching_slot(config.slots.strong)
+            engine = self.state.engine(slot)
             persistent = bool(getattr(engine, "session_persistent", False))
             # One token per session, re-bound to this execution (stale ones stay rejected).
             token = self.state.session_token(session_id, session.execution_id)
@@ -632,7 +635,7 @@ class SessionService:
                     current = self.get(session_id)
                     current.prompt_phase = family
                     self.save(current)
-                stream = engine.stream_turn(prompt, session_id, history=history, slot=config.slots.strong, tools=tools, system_instruction=system + "\n" + TURN_RULES)
+                stream = engine.stream_turn(prompt, session_id, history=history, slot=slot, tools=tools, system_instruction=system + "\n" + TURN_RULES)
             else:
                 history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
                 prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + TURN_RULES
@@ -640,7 +643,7 @@ class SessionService:
                     prompt += "\n\nNOW:\n" + opening_request(session)
                 if handoff:
                     prompt += "\n\nNOW:\n" + handoff
-                stream = engine.stream_turn(prompt, session_id, slot=config.slots.strong, tools=tools)
+                stream = engine.stream_turn(prompt, session_id, slot=slot, tools=tools)
             message_id = f"msg-{uuid4().hex}"
             text = ""
             last_flush = 0.0
@@ -677,6 +680,7 @@ class SessionService:
             session.error = self.state.redact(str(exc))
             self.save(session)
         finally:
+            usage.close()  # charges this turn's provider usage to session.usage
             self.streaming.pop(session_id, None)
             if completed:
                 await self._release_runtime(session_id)
