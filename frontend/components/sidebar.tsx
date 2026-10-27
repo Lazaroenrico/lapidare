@@ -911,7 +911,8 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
 
       {/* Footer: Background Agents Tray & Settings */}
       <div className="border-t border-border bg-background p-2 flex flex-col gap-0.5">
-        {/* Collapsible Background Agents Tray (quiet row; collapsed when empty) */}
+        {/* Collapsible Background Agents Tray (quiet row; collapsed when empty). Lists only
+            queued/running jobs, not the whole job history. */}
         <div className="overflow-hidden">
           <button
             type="button"
@@ -934,12 +935,12 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
 
           {showAgentsTray && (
             <div className="p-2 border-t border-border flex flex-col gap-1.5 bg-background">
-              {activeJobs.length === 0 ? (
+              {runningJobs.length === 0 ? (
                 <p className="text-[10.5px] text-muted-foreground italic py-1 text-center">
                   {t.agentsIdle}
                 </p>
               ) : (
-                activeJobs.map((job) => {
+                runningJobs.map((job) => {
                   const canRetry = job.status === "failed" || job.status === "interrupted";
                   const busy = job.status === "queued" || job.status === "running";
                   const err = retryError[job.job_id] || job.error;
