@@ -318,21 +318,37 @@ def test_practice_generation_provider_failure_marks_job_failed(client: TestClien
     assert client.get("/api/practice/sets").json() == []
 
 
-def test_extract_route_queues_engine_backed_job(client: TestClient, fake_engine: FakeEngine) -> None:
-    """POST /api/jobs/extract goes through the JobManager, which supplies the background engine."""
-    payload = {"session_id": "chat-1", "topic": "Atenção", "messages_text": "A atenção pondera valores."}
-    res = client.post("/api/jobs/extract", json=payload)
+def test_extract_route_queues_engine_backed_job(client: TestClient, fake_engine: FakeEngine, app_state) -> None:
+    """POST /api/graph/extract/{id} (and its legacy alias /api/jobs/extract) queue the session's
+    extraction job, which reads only uncovered teacher prose through the background engine."""
+    from learnharness.core.contracts.graph import ExtractionPayload
+    from learnharness.core.contracts.session import SessionMessage, SessionRecord
+    from learnharness.vault.jsonl_store import append_session_event
+
+    append_session_event(app_state.vault_path, "chat-1", SessionRecord(id="chat-1", title="Atenção", messages=[
+        SessionMessage(id="m1", role="assistant", content="A atenção pondera valores.", created_at="t")]))
+    fake_engine.program(ExtractionPayload, {"propositions": [
+        {"key": "p1", "name": "Atenção", "statement": "A atenção pondera valores pelo softmax.", "message_id": "m1"}]})
+
+    def finished(job_id):
+        jobs = poll_until(lambda: client.get("/api/jobs").json(),
+                          lambda js: any(j["job_id"] == job_id and j["status"] in ("completed", "failed") for j in js))
+        return next(j for j in jobs if j["job_id"] == job_id)
+
+    res = client.post("/api/jobs/extract", json={"session_id": "chat-1", "topic": "x", "messages_text": "ignored"})
     assert res.status_code == 202
     job = res.json()
-    assert job["kind"] == "extraction" and job["payload"]["session_id"] == "chat-1"
-    assert client.post("/api/jobs/extract", json=payload).json()["job_id"] == job["job_id"]  # dedup
-    jobs = poll_until(lambda: client.get("/api/jobs").json(),
-                      lambda js: any(j["job_id"] == job["job_id"] and j["status"] in ("completed", "failed")
-                                     for j in js))
-    done = next(j for j in jobs if j["job_id"] == job["job_id"])
-    # The engine was actually invoked (no "requires a configured engine" error).
-    assert fake_engine.structured_calls
-    assert "configured engine" not in (done["error"] or "")
+    assert job["kind"] == "extraction" and job["payload"] == {"session_id": "chat-1", "topic": "Atenção", "reason": "manual"}
+    done = finished(job["job_id"])
+    assert done["status"] == "completed", done["error"]
+    assert len(fake_engine.structured_calls) == 1
+    assert [n["name"] for n in client.get("/api/graph").json()["nodes"]] == ["Atenção"]
+
+    again = client.post("/api/graph/extract/chat-1")
+    assert again.status_code == 202 and again.json()["job_id"] != job["job_id"]
+    assert finished(again.json()["job_id"])["result"]["batches"] == 0  # nothing new to read
+    assert len(fake_engine.structured_calls) == 1
+    assert client.post("/api/graph/extract/nope").status_code == 404
 
 
 def test_first_setup_without_slots_uses_recommended_connector(tmp_path, monkeypatch):

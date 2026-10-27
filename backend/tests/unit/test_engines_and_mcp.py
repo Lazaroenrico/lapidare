@@ -226,8 +226,9 @@ async def test_plan_init_and_advance_requires_calibrated_check(runtime) -> None:
     res_adv = await tools["plan_advance"]("node-truth", "mastered")
     assert res_adv["plan"][0]["status"] == "mastered"
     assert state.sessions.get(session_id).plan.nodes[0].status == "mastered"
-    # Mastery enqueues the extraction job for the node.
-    assert any(job["kind"] == "extraction" for job in state.active_jobs.values())
+    # Fase 8B: mastery is one case of the general graph trigger; with no uncovered
+    # teacher prose (and below the token threshold) nothing is queued.
+    assert not any(job["kind"] == "extraction" for job in state.active_jobs.values())
 
 
 def test_build_system_prompt() -> None:

@@ -58,18 +58,15 @@ class JobManager:
         self.state.active_jobs[record["job_id"]] = record
         self.state.sse_hub.broadcast(SseEventType.JOBS_UPDATED, {"job_id": record["job_id"]})
 
-    def submit(self, kind, payload, *, key=None):
+    def submit(self, kind, payload, *, key=None, dedup_statuses=("queued", "running", "completed")):
         if key:
-            existing = next((j for j in self.state.active_jobs.values() if j.get("dedup_key") == key and j["status"] in ("queued", "running", "completed")), None)
+            existing = next((j for j in self.state.active_jobs.values() if j.get("dedup_key") == key and j["status"] in dedup_statuses), None)
             if existing:
                 return existing
         record = {"job_id": f"job-{uuid4().hex}", "kind": kind, "status": "queued", "label": payload.get("topic") or kind, "payload": payload, "dedup_key": key, "result_id": None, "error": None, "created_at": now()}
         self.save(record)
         self.tasks[record["job_id"]] = asyncio.create_task(self.run(record))
         return record
-
-    def extraction(self, session, node_id):
-        return self.submit("extraction", {"session_id": session.id, "topic": session.title, "messages_text": "\n\n".join(m.content for m in session.messages if m.role == "assistant"), "source_ref": session.source_path}, key=f"extract:{session.id}:{node_id}")
 
     async def run(self, record):
         # Provider usage of the whole job goes to the global ledger (job_kind, no session).
@@ -85,12 +82,10 @@ class JobManager:
                     self.save_practice(item)
                     record["result_id"] = item.set_id
                 elif record["kind"] == "extraction":
-                    from learnharness.pipelines.extraction import run_extraction_pipeline
-                    result = await run_extraction_pipeline(self.state.vault_path, **record["payload"], engine=self.state.engine(config.slots.background))
-                    if result.get("status") == "failed":
-                        raise RuntimeError("; ".join(result.get("errors", ["Extraction failed"])))
+                    # Payload: {session_id, topic, reason}; the service drains uncovered prose.
+                    summary = await self.state.graph.extract_session(record["payload"]["session_id"])
                     record["result_id"] = record["payload"]["session_id"]
-                    self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
+                    record["result"] = {k: summary[k] for k in ("batches", "new_node_ids", "new_chain_ids")}
                 elif record["kind"] == "track_gen":
                     await self.state.tracks.generate()
                     record["result_id"] = "track"

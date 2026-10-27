@@ -1,481 +1,228 @@
-"""Unit tests for the LangGraph Extraction Pipeline (Extractor -> Auditor -> Merger).
+"""Extraction pipeline (Fase 8B): Extractor -> Auditor -> Merger over a TEACH session.
 
-Verifies:
-1. build_extraction_graph() compiles as a valid LangGraph CompiledStateGraph.
-2. Running await run_extraction_pipeline(...) extracts ConceptNodes and LogicalChains
-   from session text about "Multi-Head Attention e KV Cache".
-3. Notes in Conceitos/*.md are created/merged non-destructively, preserving manual user text.
-4. Logical chains are appended to .harness/chains.jsonl.
-5. Cycle detection in auditor_node prevents self-dependencies, 2-node cycles, and N-node cycles.
-6. 00 Mapa.md is updated non-destructively with new concept links.
+Uses the scripted ``FakeEngine``: every structured answer is programmed by the test.
+Covers: graph compilation, extraction into ``.harness/graph/`` + ``Conceitos/`` notes,
+paraphrase fusion by the auditor, adoption of an existing user note without losing
+text, "nothing new -> no engine call", and failure propagation.
+
+The previous concept/dependency pipeline (``depends_on``/``used_in`` DAG with cycle
+detection, ``parse_structured_markdown`` and the ``00 Mapa.md`` region) was removed on
+purpose: the trace is now propositions + implication chains.
 """
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
 from langgraph.graph.state import CompiledStateGraph
 
-from learnharness.core.contracts.graph import ConceptNode, LogicalChain
+from learnharness.api.state import AppState
+from learnharness.core.contracts.graph import AuditPayload, ExtractionPayload
+from learnharness.core.contracts.session import SessionMessage, SessionRecord
+from learnharness.core.graph_merge import coverage_index, select_batch, uncovered_messages
 from learnharness.pipelines.extraction import (
-    ExtractionState,
-    auditor_node,
     build_extraction_graph,
     extractor_node,
-    merger_node,
-    parse_structured_markdown,
     run_extraction_pipeline,
 )
-from learnharness.vault.bootstrap import bootstrap_vault
-from learnharness.vault.jsonl_store import load_chains
-from learnharness.vault.markdown_ast import parse_concept_note
+from learnharness.vault.graph_store import load_coverage, load_graph_chains, load_nodes
+from learnharness.vault.jsonl_store import append_session_event
+from learnharness.vault.markdown_ast import read_frontmatter
+from tests.conftest import FakeEngine, configure_vault
 
-SAMPLE_SESSION_TEXT = """# Multi-Head Attention e KV Cache
+DOT = "O produto escalar soma os produtos coordenada a coordenada e mede alinhamento entre vetores."
+ATT = "A atenção pondera os valores pelo softmax dos produtos escalares entre consulta e chave."
 
-## Multi-Head Attention
-**Verdade incondicional / definição:** Mecanismo que divide as matrizes de consulta, chave e valor em h sub-espaços lineares paralelos para aprender correlações em diferentes dimensões simultaneamente.
-Depende de:: [[Self-Attention]], [[Projeções Lineares]]
-Usado em:: [[Transformer Decoder]], [[KV Cache]]
-
-## KV Cache
-**Verdade incondicional / definição:** Estrutura de retenção de memória dos tensores Key e Value dos passos de tempo anteriores para evitar recomputação durante geração autorregressiva.
-Depende de:: [[Multi-Head Attention]]
-Usado em:: [[Inferência Autorregressiva]]
-
-## Mecanismo
-Durante a fase de decodificação token-a-token, cada novo token precisa calcular atenção com todos os anteriores. Sem o KV Cache, a complexidade computacional total por sequência seria quadrática.
-
-## Cadeias Lógicas
-[[Self-Attention]] ∧ [[Projeções Lineares]] ⟹ [[Multi-Head Attention]]
-[[Multi-Head Attention]] ∧ [[Inferência Autorregressiva]] ⟹ [[KV Cache]]
-"""
+EXTRACTED = {
+    "propositions": [
+        {"key": "p1", "name": "Produto escalar", "statement": "O produto escalar soma os produtos das coordenadas.",
+         "aliases": ["Dot product"], "message_id": "msg-1"},
+        {"key": "p2", "name": "Atenção pondera valores", "statement": "A atenção pondera valores pelo softmax.",
+         "message_id": "msg-2"},
+    ],
+    "chains": [{"premises": ["p1"], "conclusion": "p2"}],
+}
 
 
-class FakeExtractionEngine:
-    """Scripted provider: answers with the concepts explicitly written in the evidence."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    async def run_structured(self, prompt, schema, **kwargs):
-        self.calls.append({"prompt": prompt, "schema": schema, **kwargs})
-        nodes, chains = parse_structured_markdown(SAMPLE_SESSION_TEXT, session_id="fixture", topic="Attention")
-        return schema.model_validate({
-            "concepts": [n.model_dump() for n in nodes],
-            "chains": [c.model_dump() for c in chains],
-        })
+def _session(vault: Path, session_id: str = "sess-1", texts=(DOT, ATT), title: str = "Atenção") -> SessionRecord:
+    record = SessionRecord(
+        id=session_id, title=title, lesson_vault_path=f"Aulas/2026-10-27 {title}.md",
+        messages=[SessionMessage(id=f"msg-{i}", role="assistant", content=t, created_at="t")
+                  for i, t in enumerate(texts, start=1)]
+        + [SessionMessage(id="u-1", role="user", content="Não sei.", created_at="t")],
+    )
+    append_session_event(vault, session_id, record)
+    return record
 
 
-# ============================================================================
-# 1. Compilation & Structure Tests
-# ============================================================================
+def _batch(vault: Path, session: SessionRecord, budget: int = 4096):
+    index = coverage_index(load_coverage(vault))
+    return select_batch(uncovered_messages(session.id, ((m.id, m.role, m.content) for m in session.messages), index), budget)
 
-def test_build_extraction_graph_compiles():
-    """Verify build_extraction_graph compiles into a valid CompiledStateGraph."""
+
+@pytest.fixture
+def vault(tmp_path: Path) -> Path:
+    return configure_vault(tmp_path / "Vault")
+
+
+def test_build_extraction_graph_compiles() -> None:
     graph = build_extraction_graph()
-    assert graph is not None
     assert isinstance(graph, CompiledStateGraph)
-    assert hasattr(graph, "ainvoke")
-    assert hasattr(graph, "invoke")
-
-    # Verify nodes exist in compiled graph
-    node_names = set(graph.nodes.keys())
-    assert "extractor" in node_names
-    assert "auditor" in node_names
-    assert "merger" in node_names
-
-
-# ============================================================================
-# 2. Node-level Unit Tests
-# ============================================================================
-
-def test_parse_structured_markdown_reads_explicit_structure():
-    """The pure template parser extracts only explicitly written concepts and chains."""
-    candidate_nodes, candidate_chains = parse_structured_markdown(
-        SAMPLE_SESSION_TEXT,
-        session_id="test-sess-1",
-        topic="Multi-Head Attention e KV Cache",
-        source_ref="Fontes/Mentoria/aula-04.md#^p12",
-    )
-
-    # Verify extracted concepts
-    node_titles = {n.title: n for n in candidate_nodes}
-    assert "Multi-Head Attention" in node_titles
-    assert "KV Cache" in node_titles
-
-    mha = node_titles["Multi-Head Attention"]
-    assert "Self-Attention" in mha.depends_on
-    assert "Projeções Lineares" in mha.depends_on
-    assert "sub-espaços lineares" in mha.unconditional_truth
-    assert mha.sources == ["Fontes/Mentoria/aula-04.md#^p12"]
-
-    kv = node_titles["KV Cache"]
-    assert "Multi-Head Attention" in kv.depends_on
-    assert "retenção de memória" in kv.unconditional_truth
-
-    # Verify extracted chains
-    assert len(candidate_chains) >= 2
-    chain_conclusions = {c.conclusion: c for c in candidate_chains}
-    assert "Multi-Head Attention" in chain_conclusions
-    assert "KV Cache" in chain_conclusions
-
-    mha_chain = chain_conclusions["Multi-Head Attention"]
-    assert "Self-Attention" in mha_chain.premises
-    assert "Projeções Lineares" in mha_chain.premises
-
-
-@pytest.mark.asyncio
-async def test_auditor_node_cycle_and_self_dependency_detection(tmp_path: Path):
-    """Verify auditor_node eliminates self-dependencies, 2-node cycles, and invalid chains."""
-    vault = tmp_path / "AuditVault"
-    bootstrap_vault(vault, language="pt-BR")
-
-    # Candidate with a self-dependency
-    node_a = ConceptNode(
-        id="conceito-a",
-        title="Conceito A",
-        depends_on=["Conceito A", "Conceito B"],
-    )
-
-    # Candidate forming a 2-node cycle: A depends on B, B depends on A
-    node_b = ConceptNode(
-        id="conceito-b",
-        title="Conceito B",
-        depends_on=["Conceito A"],
-    )
-
-    # Invalid chain with self-implication: A ∧ B ⟹ A
-    invalid_chain = LogicalChain(
-        chain_id="chain-inv-1",
-        premises=["Conceito A", "Conceito B"],
-        conclusion="Conceito A",
-        expression="Conceito A ∧ Conceito B ⟹ Conceito A",
-    )
-
-    # Valid chain: A ∧ B ⟹ Conceito C
-    valid_chain = LogicalChain(
-        chain_id="chain-val-1",
-        premises=["Conceito A", "Conceito B"],
-        conclusion="Conceito C",
-        expression="Conceito A ∧ Conceito B ⟹ Conceito C",
-    )
-
-    state: ExtractionState = {
-        "vault_path": str(vault),
-        "candidate_nodes": [node_a, node_b],
-        "candidate_chains": [invalid_chain, valid_chain],
-    }
-
-    result = await auditor_node(state)
-
-    audited_nodes = result["audited_nodes"]
-    audited_chains = result["audited_chains"]
-    rejected_nodes = result["rejected_nodes"]
-    rejected_chains = result["rejected_chains"]
-
-    # 1. Self-dependency check: Conceito A must NOT depend on Conceito A
-    node_a_audited = next(n for n in audited_nodes if n.id == "conceito-a")
-    assert "Conceito A" not in node_a_audited.depends_on
-
-    # 2. 2-Node Cycle check: Conceito A and Conceito B cannot mutually depend on each other
-    node_b_audited = next(n for n in audited_nodes if n.id == "conceito-b")
-    # One of the directions was accepted, the returning direction was rejected to keep DAG acyclic
-    is_a_in_b = "Conceito A" in node_b_audited.depends_on
-    is_b_in_a = "Conceito B" in node_a_audited.depends_on
-    assert not (is_a_in_b and is_b_in_a), "Both A->B and B->A dependencies were accepted, forming a cycle!"
-    assert len(rejected_nodes) >= 2  # 1 self-dependency + 1 cycle rejection
-
-    # 3. Chains check: invalid self-implication was rejected, valid chain was preserved
-    assert len(rejected_chains) == 1
-    assert "Self-implication" in rejected_chains[0]["reason"]
-    assert len(audited_chains) == 1
-    assert audited_chains[0].conclusion == "Conceito C"
-
-
-@pytest.mark.asyncio
-async def test_auditor_node_multi_node_cycle(tmp_path: Path):
-    """Verify auditor_node eliminates 3-node cycles (A -> B -> C -> A)."""
-    vault = tmp_path / "Cycle3Vault"
-    bootstrap_vault(vault, language="pt-BR")
-
-    node_1 = ConceptNode(id="n1", title="N1", depends_on=["N2"])
-    node_2 = ConceptNode(id="n2", title="N2", depends_on=["N3"])
-    node_3 = ConceptNode(id="n3", title="N3", depends_on=["N1"])
-
-    state: ExtractionState = {
-        "vault_path": str(vault),
-        "candidate_nodes": [node_1, node_2, node_3],
-        "candidate_chains": [],
-    }
-
-    result = await auditor_node(state)
-    audited = {n.title: n for n in result["audited_nodes"]}
-
-    # Ensure no cycle N1 -> N2 -> N3 -> N1 exists
-    # N3's dependency on N1 should have been rejected
-    assert "N1" not in audited["N3"].depends_on
-    assert len(result["rejected_nodes"]) >= 1
-
-
-@pytest.mark.asyncio
-async def test_merger_node_preserves_user_content(tmp_path: Path):
-    """Verify merger_node non-destructively preserves user comments and manual sections."""
-    vault = tmp_path / "MergeVault"
-    bootstrap_vault(vault, language="pt-BR")
-
-    # Pre-create a concept note with manual user notes
-    concept_file = vault / "Conceitos" / "KV Cache.md"
-    manual_content = """---
-tags: [conceito]
-status: aprendendo
-fontes: []
-criado: 2026-10-26
----
-# KV Cache
-
-**Verdade incondicional / definição:** Definição inicial manual
-
-Depende de:: [[Multi-Head Attention]]
-Usado em:: 
-
-## Mecanismo
-
-## Na prática
-Minhas anotações manuais sobre economia de VRAM em batching dinâmico.
-> [!note] Lembrar de verificar PagedAttention / vLLM.
-
-## Onde as fontes divergem
-
-## Como eu poderia ter descoberto isso
-
-## Erros que eu cometi
-- Erro manual número 1
-
-## Desenhos
-"""
-    concept_file.write_text(manual_content, encoding="utf-8")
-
-    # Create audited node with new mechanism summary and additional dependencies
-    audited_kv = ConceptNode(
-        id="kv-cache",
-        title="KV Cache",
-        status="sólido",
-        unconditional_truth="Definição atualizada pelo agente",
-        depends_on=["Multi-Head Attention", "PagedAttention"],
-        used_in=["Inferência Autorregressiva"],
-        sources=["Fontes/Mentoria/aula-04.md#^p10"],
-        mechanism_summary="Alocação prévia de blocos K e V nos passos de geração.",
-    )
-
-    state: ExtractionState = {
-        "vault_path": str(vault),
-        "audited_nodes": [audited_kv],
-        "audited_chains": [],
-    }
-
-    res = await merger_node(state)
-    assert "kv-cache" in res["merged_node_ids"]
-
-    # Verify file content
-    merged_text = concept_file.read_text(encoding="utf-8")
-
-    # Invariant: user-written notes and callouts MUST be 100% preserved
-    assert "Minhas anotações manuais sobre economia de VRAM em batching dinâmico." in merged_text
-    assert "> [!note] Lembrar de verificar PagedAttention / vLLM." in merged_text
-    assert "- Erro manual número 1" in merged_text
-
-    # Verify agent updates were merged
-    assert "[[PagedAttention]]" in merged_text
-    assert "[[Multi-Head Attention]]" in merged_text
-
-
-# ============================================================================
-# 3. End-to-End Pipeline Tests
-# ============================================================================
-
-@pytest.mark.asyncio
-async def test_run_extraction_pipeline_end_to_end(tmp_path: Path):
-    """End-to-end test of run_extraction_pipeline on Multi-Head Attention and KV Cache."""
-    vault = tmp_path / "E2EVault"
-    bootstrap_vault(vault, language="pt-BR")
-
-    progress_log: list[tuple[str, float]] = []
-
-    def on_progress(label: str, pct: float) -> None:
-        progress_log.append((label, pct))
-
-    result = await run_extraction_pipeline(
-        vault_path=vault,
-        engine=FakeExtractionEngine(),
-        session_id="session-attn-kv",
-        topic="Multi-Head Attention e KV Cache",
-        messages_text=SAMPLE_SESSION_TEXT,
-        source_ref="Fontes/Mentoria/aula-04.md#^p1",
-        on_progress=on_progress,
-    )
-
-    # 1. Pipeline result checks
-    assert result["status"] == "completed"
-    assert "multi-head-attention" in result["merged_node_ids"]
-    assert "kv-cache" in result["merged_node_ids"]
-    assert len(result["merged_chain_ids"]) >= 2
-
-    # 2. Check concept files on disk
-    mha_file = vault / "Conceitos" / "Multi-Head Attention.md"
-    kv_file = vault / "Conceitos" / "KV Cache.md"
-    assert mha_file.is_file()
-    assert kv_file.is_file()
-
-    mha_node = parse_concept_note(mha_file)
-    assert mha_node.title == "Multi-Head Attention"
-    assert "Self-Attention" in mha_node.depends_on
-    assert "Projeções Lineares" in mha_node.depends_on
-    assert "sub-espaços lineares" in mha_node.unconditional_truth
-
-    kv_node = parse_concept_note(kv_file)
-    assert kv_node.title == "KV Cache"
-    assert "Multi-Head Attention" in kv_node.depends_on
-
-    # 3. Check chains appended to .harness/chains.jsonl
-    chains = load_chains(vault)
-    assert len(chains) >= 2
-    chain_exprs = [c.expression for c in chains]
-    assert any("Self-Attention" in e and "Multi-Head Attention" in e for e in chain_exprs)
-    assert any("KV Cache" in e for e in chain_exprs)
-
-    # 4. Check 00 Mapa.md updated
-    map_file = vault / "00 Mapa.md"
-    map_text = map_file.read_text(encoding="utf-8")
-    assert "[[Multi-Head Attention]]" in map_text
-    assert "[[KV Cache]]" in map_text
-
-    # 5. Check progress reporting
-    assert len(progress_log) >= 3
-    assert progress_log[-1][1] == 1.0
-
-
-@pytest.mark.asyncio
-async def test_run_extraction_pipeline_preserves_existing_concept_in_vault(tmp_path: Path):
-    """Verify end-to-end extraction preserves pre-existing user concept note."""
-    vault = tmp_path / "NonDestructiveE2E"
-    bootstrap_vault(vault, language="pt-BR")
-
-    # User wrote an early concept note with custom notes
-    mha_file = vault / "Conceitos" / "Multi-Head Attention.md"
-    mha_file.write_text(
-        """---
-tags: [conceito]
-status: aprendendo
-fontes: []
-criado: 2026-10-20
----
-# Multi-Head Attention
-
-**Verdade incondicional / definição:** Minha intuição primitiva
-
-Depende de:: [[Self-Attention]]
-Usado em:: 
-
-## Mecanismo
-
-## Na prática
-Aqui está minha anotação de benchmark: 8 cabeças d_k=64 vs 1 cabeça d_model=512.
-> [!important] Nunca apague meu benchmark!
-
-## Onde as fontes divergem
-
-## Como eu poderia ter descoberto isso
-
-## Erros que eu cometi
-- Erro no reshape de tensores antes da multiplicação de matrizes
-
-## Desenhos
-""",
-        encoding="utf-8",
-    )
-
-    await run_extraction_pipeline(
-        vault_path=vault,
-        engine=FakeExtractionEngine(),
-        session_id="session-attn-update",
-        topic="Multi-Head Attention e KV Cache",
-        messages_text=SAMPLE_SESSION_TEXT,
-    )
-
-    updated_text = mha_file.read_text(encoding="utf-8")
-
-    # Invariants: manual text and callout intact
-    assert "Aqui está minha anotação de benchmark: 8 cabeças d_k=64 vs 1 cabeça d_model=512." in updated_text
-    assert "> [!important] Nunca apague meu benchmark!" in updated_text
-    assert "- Erro no reshape de tensores antes da multiplicação de matrizes" in updated_text
-
-    # Dependencies merged
-    assert "[[Projeções Lineares]]" in updated_text
-    assert "[[Self-Attention]]" in updated_text
-
-
-async def test_failure_propagates_without_checkpoint_fallback(tmp_path):
-    bootstrap_vault(tmp_path, language="pt-BR")
-    calls = []
-
-    class BrokenEngine:
-        async def run_structured(self, **kwargs):
-            calls.append(kwargs)
-            raise RuntimeError("provider failed")
-
+    assert {"extractor", "auditor", "merger"} <= set(graph.nodes)
+
+
+async def test_extracts_into_graph_coverage_and_notes(vault: Path) -> None:
+    session = _session(vault)
+    engine = FakeEngine().program(ExtractionPayload, EXTRACTED)
+    result = await run_extraction_pipeline(vault, session.id, _batch(vault, session), engine=engine,
+                                           slot="bg", session_title=session.title)
+
+    nodes = load_nodes(vault)
+    assert len(nodes) == 2 and set(result["new_node_ids"]) == set(nodes)
+    dot = next(n for n in nodes.values() if n.name == "Produto escalar")
+    att = next(n for n in nodes.values() if n.name == "Atenção pondera valores")
+    assert dot.id.startswith("n_") and len(dot.id) == 14
+    assert dot.aliases == ["Dot product"]
+    assert [(p.session_id, p.message_id) for p in dot.provenance] == [("sess-1", "msg-1")]
+    chains = load_graph_chains(vault, set(nodes))
+    assert [(c.premises, c.conclusion) for c in chains] == [([dot.id], att.id)]
+    assert chains[0].id.startswith("arg_")
+    assert {c.message_id for c in load_coverage(vault)} == {"msg-1", "msg-2"}  # user prose is never covered
+
+    # The extractor saw the labelled teacher messages; no auditor call on an empty graph.
+    assert [c["schema"] for c in engine.structured_calls] == [ExtractionPayload]
+    call = engine.structured_calls[0]
+    assert "TEACHER [msg-1]" in call["prompt"] and "TEACHER [msg-2]" in call["prompt"]
+    assert "Não sei." not in call["prompt"] and call["slot"] == "bg"
+    assert "Never record the learner's state" in call["system_instruction"]
+
+    note = (vault / dot.vault_rel_path).read_text(encoding="utf-8")
+    assert dot.vault_rel_path == "Conceitos/Produto escalar.md" and dot.note_created
+    fm = read_frontmatter(note)
+    assert fm["harness_id"] == dot.id and fm["aliases"] == ["Dot product"] and fm["sessions"] == ["sess-1"]
+    assert "**Afirmação:** O produto escalar soma os produtos das coordenadas." in note
+    assert "**Origem:** [[Aulas/2026-10-27 Atenção]]" in note
+    att_note = (vault / att.vault_rel_path).read_text(encoding="utf-8")
+    assert "**Premissas:**\n- [[Produto escalar]]" in att_note
+
+
+async def test_auditor_fuses_paraphrase_across_sessions(vault: Path) -> None:
+    first = _session(vault)
+    await run_extraction_pipeline(vault, first.id, _batch(vault, first),
+                                  engine=FakeEngine().program(ExtractionPayload, EXTRACTED))
+    dot_id = next(n.id for n in load_nodes(vault).values() if n.name == "Produto escalar")
+
+    second = _session(vault, "sess-2", ("Produto interno: soma dos produtos das coordenadas dos vetores.",),
+                      title="Vetores")
+    engine = FakeEngine()
+    engine.program(ExtractionPayload, {"propositions": [
+        {"key": "p1", "name": "Produto interno", "statement": "A soma dos produtos das coordenadas de dois vetores.",
+         "message_id": "msg-1"}]})
+    engine.program(AuditPayload, lambda prompt: {"links": [{"key": "p1", "link_to": dot_id}]})
+    result = await run_extraction_pipeline(vault, second.id, _batch(vault, second), engine=engine)
+
+    nodes = load_nodes(vault)
+    assert len(nodes) == 2 and result["new_node_ids"] == [] and result["linked_node_ids"] == [dot_id]
+    dot = nodes[dot_id]
+    assert "Produto interno" in dot.aliases
+    assert {p.session_id for p in dot.provenance} == {"sess-1", "sess-2"}
+    audit_call = engine.structured_calls[1]
+    assert audit_call["schema"] is AuditPayload and f"[{dot_id}] Produto escalar" in audit_call["prompt"]
+    note = (vault / dot.vault_rel_path).read_text(encoding="utf-8")
+    fm = read_frontmatter(note)
+    assert fm["sessions"] == ["sess-1", "sess-2"] and "Produto interno" in fm["aliases"]
+    assert "[[Aulas/2026-10-27 Vetores]]" in note
+
+
+async def test_exact_name_links_without_auditor_call(vault: Path) -> None:
+    first = _session(vault)
+    await run_extraction_pipeline(vault, first.id, _batch(vault, first),
+                                  engine=FakeEngine().program(ExtractionPayload, EXTRACTED))
+    second = _session(vault, "sess-2", ("O produto escalar outra vez.",))
+    engine = FakeEngine().program(ExtractionPayload, {"propositions": [
+        {"key": "p1", "name": "produto ESCALAR", "statement": "Outra redação."}]})
+    await run_extraction_pipeline(vault, second.id, _batch(vault, second), engine=engine)
+    assert len(load_nodes(vault)) == 2
+    assert [c["schema"] for c in engine.structured_calls] == [ExtractionPayload]
+
+
+async def test_existing_user_note_is_adopted_without_losing_text(vault: Path) -> None:
+    user_note = vault / "Conceitos" / "Produto Escalar.md"
+    original = ("---\ntags: [conceito]\naliases: [Dot]\ncriado: 2024-01-01 # meu\n---\n# Produto Escalar\n\n"
+                "Minha definição própria.\n\n> [!note] Não apagar.\n")
+    user_note.write_text(original, encoding="utf-8")
+    session = _session(vault)
+    await run_extraction_pipeline(vault, session.id, _batch(vault, session),
+                                  engine=FakeEngine().program(ExtractionPayload, EXTRACTED))
+
+    dot = next(n for n in load_nodes(vault).values() if n.name == "Produto escalar")
+    assert dot.vault_rel_path == "Conceitos/Produto Escalar.md" and not dot.note_created
+    assert not (vault / "Conceitos" / "Produto escalar.md").exists()
+    assert not (vault / "Conceitos" / "Produto escalar (2).md").exists()
+    text = user_note.read_text(encoding="utf-8")
+    assert "Minha definição própria.\n\n> [!note] Não apagar.\n" in text
+    assert "criado: 2024-01-01 # meu" in text
+    fm = read_frontmatter(text)
+    assert fm["harness_id"] == dot.id and fm["aliases"] == ["Dot", "Dot product"]
+    assert "**Afirmação:**" in text
+
+
+async def test_second_run_without_new_text_extracts_nothing(vault: Path) -> None:
+    session = _session(vault)
+    engine = FakeEngine().program(ExtractionPayload, EXTRACTED)
+    state = AppState(vault_path=vault, engine_factory=lambda slot: engine)
+    try:
+        first = await state.graph.extract_session(session.id)
+        assert first["batches"] == 1 and len(first["new_node_ids"]) == 2
+        second = await state.graph.extract_session(session.id)
+        assert second["batches"] == 0 and second["new_node_ids"] == []
+        assert len(engine.structured_calls) == 1
+    finally:
+        await state.close()
+
+
+async def test_drains_uncovered_prose_in_budgeted_batches(vault: Path) -> None:
+    session = _session(vault, texts=("a" * 400, "b" * 400, "c" * 400))
+    engine = FakeEngine().program(ExtractionPayload, {"propositions": []})
+    state = AppState(vault_path=vault, engine_factory=lambda slot: engine)
+    config = state.get_config()
+    config.graph.extraction_chunk_tokens = 200
+    from learnharness.vault.bootstrap import save_config
+    save_config(vault, config)
+    try:
+        summary = await state.graph.extract_session(session.id)
+    finally:
+        await state.close()
+    assert summary["batches"] == 2  # 100 + 100 tokens, then 100
+    assert len(load_coverage(vault)) == 3
+
+
+async def test_failure_propagates_and_writes_nothing(vault: Path) -> None:
+    session = _session(vault)
+    engine = FakeEngine().program(ExtractionPayload, RuntimeError("provider failed"))
     with pytest.raises(RuntimeError, match="provider failed"):
-        await asyncio.wait_for(run_extraction_pipeline(tmp_path, "failure", "topic", "evidence", engine=BrokenEngine()), 3)
-    assert len(calls) == 1
-    assert not list((tmp_path / "Conceitos").glob("*.md"))
+        await run_extraction_pipeline(vault, session.id, _batch(vault, session), engine=engine)
+    assert load_nodes(vault) == {} and load_coverage(vault) == []
+    assert not list((vault / "Conceitos").glob("*.md"))
 
 
-async def test_repeat_extraction_deduplicates_chains(tmp_path):
-    bootstrap_vault(tmp_path, language="pt-BR")
-    for _ in range(2):
-        await asyncio.wait_for(run_extraction_pipeline(tmp_path, "same-source", "Attention", SAMPLE_SESSION_TEXT, engine=FakeExtractionEngine()), 3)
-    chains = load_chains(tmp_path)
-    assert len(chains) == 2
-    assert (tmp_path / ".harness/langgraph.sqlite").exists()
-
-
-def test_no_fabrication_from_topic_without_evidence():
-    nodes, chains = parse_structured_markdown("", topic="Made up topic")
-    assert nodes == []
-    assert chains == []
-
-
-async def test_extractor_node_requires_engine_no_deterministic_fallback():
-    state: ExtractionState = {"session_id": "s", "topic": "t", "messages_text": SAMPLE_SESSION_TEXT}
+async def test_pipeline_requires_engine(vault: Path) -> None:
     with pytest.raises(ValueError, match="configured engine"):
-        await extractor_node(state, {"configurable": {}})
-
-
-async def test_extractor_node_uses_engine_from_config():
-    engine = FakeExtractionEngine()
-    state: ExtractionState = {"session_id": "s", "topic": "Attention", "messages_text": "evidence",
-                              "source_ref": "Fontes/x.md#^p1"}
-    result = await extractor_node(state, {"configurable": {"engine": engine, "slot": "bg"}})
-    assert len(engine.calls) == 1
-    assert engine.calls[0]["slot"] == "bg"
-    assert "evidence" in engine.calls[0]["prompt"]
-    assert {n.title for n in result["candidate_nodes"]} >= {"Multi-Head Attention", "KV Cache"}
-    assert all(n.sources == ["Fontes/x.md#^p1"] for n in result["candidate_nodes"])
-
-
-async def test_pipeline_invokes_engine_on_every_run(tmp_path):
-    """Each job is a fresh run: a finished checkpoint for the session is never resumed."""
-    bootstrap_vault(tmp_path, language="pt-BR")
-    engine = FakeExtractionEngine()
-    for _ in range(2):
-        result = await run_extraction_pipeline(tmp_path, "same-session", "Attention", "evidence", engine=engine)
-        assert result["status"] == "completed"
-        assert result["errors"] == []
-    assert len(engine.calls) == 2
-
-
-async def test_pipeline_requires_engine(tmp_path):
-    bootstrap_vault(tmp_path, language="pt-BR")
+        await run_extraction_pipeline(vault, "s", [], engine=None)
     with pytest.raises(ValueError, match="configured engine"):
-        await run_extraction_pipeline(tmp_path, "s", "t", "evidence", engine=None)
+        await extractor_node({"vault_path": str(vault), "session_id": "s", "batch": []}, {"configurable": {}})
+
+
+async def test_extractor_prompt_shows_session_graph_so_far(vault: Path) -> None:
+    session = _session(vault)
+    await run_extraction_pipeline(vault, session.id, _batch(vault, session),
+                                  engine=FakeEngine().program(ExtractionPayload, EXTRACTED))
+    later = _session(vault, texts=(DOT, ATT, "Mais texto sobre atenção multi-cabeça."))
+    engine = FakeEngine().program(ExtractionPayload, {"propositions": []})
+    await run_extraction_pipeline(vault, later.id, _batch(vault, later), engine=engine)
+    prompt = engine.structured_calls[0]["prompt"]
+    dot_id = next(n.id for n in load_nodes(vault).values() if n.name == "Produto escalar")
+    assert f"[{dot_id}] Produto escalar" in prompt
+    assert "Produto escalar ⟹ Atenção pondera valores" in prompt
+    assert "TEACHER [msg-3]" in prompt and "TEACHER [msg-1]" not in prompt  # covered prose is not re-read

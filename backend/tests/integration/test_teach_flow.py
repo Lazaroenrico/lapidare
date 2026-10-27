@@ -1,7 +1,7 @@
 """End-to-end TEACH flow over the real FastAPI app with a scripted in-process engine.
 
 Covers: probe_done -> plan_init -> quiz (blocks) -> REST answer -> quiz-log -> plan_advance(mastered)
--> extraction job -> Conceitos/ note, while Fontes/ stays byte-identical. Also covers the
+-> end-of-run extraction job -> Conceitos/ note, while Fontes/ stays byte-identical. Also covers the
 HTTP error mapping for an unconfigured vault and redaction of provider secrets.
 """
 
@@ -58,7 +58,8 @@ class ScriptedTeachEngine:
     async def run_structured(self, prompt, schema, slot=None, system_instruction=None):
         self.structured_calls.append(schema.__name__)
         return schema.model_validate({
-            "concepts": [{"title": CONCEPT_TITLE, "unconditional_truth": "Soma dos produtos coordenada a coordenada.", "cluster_id": "algebra"}],
+            "propositions": [{"key": "p1", "name": CONCEPT_TITLE,
+                              "statement": "O produto escalar soma os produtos coordenada a coordenada."}],
             "chains": [],
         })
 
@@ -112,6 +113,8 @@ async def _wait_until(predicate, timeout: float = 5.0, interval: float = 0.02):
 async def _run_teach_flow(tmp_path: Path) -> dict[str, Any]:
     vault = _configured_vault(tmp_path)
     config = load_config(vault)
+    config.graph.extraction_chunk_tokens = 1  # Every finished run feeds the graph.
+    save_config(vault, config)
     source = vault / config.folders.sources_dir / "Aula Original.md"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("# Aula\n\nTexto do autor. ^p1\n", encoding="utf-8")
@@ -150,7 +153,8 @@ async def _run_teach_flow(tmp_path: Path) -> dict[str, Any]:
 
         job = await _wait_until(extraction_done)
         assert job["status"] == "completed", job["error"]
-        assert job["dedup_key"] == f"extract:{chat_id}:dot"
+        assert job["dedup_key"] == f"extract:{chat_id}"
+        assert job["payload"]["reason"] == "threshold"
 
         async def turn_finished():
             return not state.sessions.is_running(chat_id)
@@ -181,7 +185,7 @@ async def test_teach_free_topic_end_to_end(tmp_path: Path) -> None:
 
 async def test_extraction_job_uses_engine_structured_output(tmp_path: Path) -> None:
     flow = await _run_teach_flow(tmp_path)
-    assert "_ExtractionStructuredPayload" in flow["engine"].structured_calls
+    assert flow["engine"].structured_calls == ["ExtractionPayload"]
 
 
 async def test_creating_chat_on_unconfigured_vault_is_conflict(tmp_path: Path) -> None:

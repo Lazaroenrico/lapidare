@@ -197,6 +197,8 @@ class SessionRecord(BaseModel):
     # Model/effort chosen for this session; replaces config.slots.strong for its teaching turns.
     slot_override: ModelSlotConfig | None = None
     usage: SessionUsage = Field(default_factory=SessionUsage)
+    # Graph node ids the learner picked as context (Fase 8B; at most 64).
+    graph_context: list[str] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 

@@ -22,6 +22,7 @@ class CreateChatPayload(BaseModel):
     topic: str | None = Field(default=None, max_length=10000)
     source_file: str | None = None
     track_item_id: str | None = None
+    graph_context: list[str] = Field(default_factory=list, max_length=64)
     # Optional per-session model/effort (the strong slot's engine is kept).
     model_id: str | None = Field(default=None, max_length=200)
     effort: EffortLevel | None = None

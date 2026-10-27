@@ -224,6 +224,13 @@ def default_slots(engine: EngineKind) -> ModelSlots:
     )
 
 
+class GraphSettings(BaseModel):
+    """Knowledge-trace extraction settings (Fase 8B)."""
+    # Uncovered teacher prose (len/4 tokens) that triggers extraction at the end of a run;
+    # also the token budget of one extraction batch.
+    extraction_chunk_tokens: int = Field(default=4096, ge=1)
+
+
 class HarnessConfig(BaseModel):
     """Root configuration for LearnHarness persisted in .harness/config.json."""
     configured: bool = False
@@ -236,3 +243,4 @@ class HarnessConfig(BaseModel):
     track: TrackConfig = Field(default_factory=TrackConfig)
     # Prompt segment path -> use the Vault override in .harness/prompts/<path> (Fase 8).
     prompt_overrides: dict[str, bool] = Field(default_factory=dict)
+    graph: GraphSettings = Field(default_factory=GraphSettings)

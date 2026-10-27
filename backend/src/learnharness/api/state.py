@@ -43,6 +43,7 @@ class AppState:
         self.watcher = None
         self.started = False
         self.refresh_content_mcp_client()
+        from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
         from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
@@ -51,6 +52,7 @@ class AppState:
         self.usage = UsageService(self)
         self.jobs = JobManager(self)
         self.tracks = TrackService(self)
+        self.graph = GraphService(self)
 
     def refresh_content_mcp_client(self):
         servers = self.get_config().content_mcps
