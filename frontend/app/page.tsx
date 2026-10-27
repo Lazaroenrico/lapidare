@@ -7,10 +7,11 @@ import { useSearchParams } from "next/navigation";
 import { GraphView } from "@/components/graph-view";
 import { Composer, type SelectedNodeRef } from "@/components/composer";
 import { ImportDialog } from "@/components/import-dialog";
+import { HomeEmptyState } from "@/components/home-empty-state";
 import { openSetup } from "@/components/setup-gate";
 import { getSetupStatus } from "@/lib/api";
 import { pruneSelection, type Selection } from "@/lib/graph-selection";
-import type { GraphSnapshot, SetupStatusResponse, SseEventType } from "@/lib/types";
+import type { GraphSnapshot, RoadmapItem, SetupStatusResponse, SseEventType } from "@/lib/types";
 
 const SETUP_EVENTS: SseEventType[] = ["config:updated", "vault:changed"];
 
@@ -35,6 +36,12 @@ export default function HomePage() {
   const [selection, setSelection] = useState<Selection>([]);
   const [nodeNames, setNodeNames] = useState<Map<string, string>>(new Map());
   const [focusId, setFocusId] = useState<string | null>(null);
+  /** Graph counts for the empty Home (Fase 18); `loaded` flips on the first snapshot. */
+  const [graphInfo, setGraphInfo] = useState<{ loaded: boolean; nodeCount: number; roadmap: RoadmapItem[] }>({
+    loaded: false,
+    nodeCount: 0,
+    roadmap: [],
+  });
 
   const refreshSetup = useCallback(() => {
     getSetupStatus()
@@ -54,6 +61,7 @@ export default function HomePage() {
 
   const handleSnapshot = useCallback((snapshot: GraphSnapshot) => {
     setNodeNames(new Map(snapshot.nodes.map((n) => [n.id, n.name])));
+    setGraphInfo({ loaded: true, nodeCount: snapshot.nodes.length, roadmap: snapshot.roadmap });
     const valid = new Set(snapshot.nodes.map((n) => n.id));
     setSelection((prev) => pruneSelection(prev, valid));
   }, []);
@@ -90,6 +98,14 @@ export default function HomePage() {
           focusId={focusId}
         />
       </div>
+
+      {/* Fase 18: first steps over the empty canvas (gone once the first node arrives) */}
+      <HomeEmptyState
+        graphLoaded={graphInfo.loaded}
+        nodeCount={graphInfo.nodeCount}
+        roadmap={graphInfo.roadmap}
+        onOpenImport={() => setIsImportOpen(true)}
+      />
 
       {/* Floating composer dock (selection chip + track chip above it) */}
       <div className="absolute bottom-4 left-0 right-0 px-4 pointer-events-none z-20">
