@@ -176,6 +176,10 @@ export class GraphCanvasEngine {
   private pulsePhase = 0.35;
 
   private nebula: HTMLCanvasElement | null = null;
+  /** Bumped whenever clusters, positions, roadmap or settings change: the blurred nebula
+   * buffer is rebuilt only when this (or the camera/viewport) changed since the last draw. */
+  private geometryVersion = 0;
+  private nebulaKey = "";
   /** Per-cluster scratch buffer: the region is drawn opaque here, then blurred + tinted once. */
   private scratch: HTMLCanvasElement | null = null;
   /** Radial plan (sectors, depth rings, outer band) of the current data. */
@@ -203,10 +207,13 @@ export class GraphCanvasEngine {
   private movedDistance = 0;
 
   private frame: number | null = null;
+  private renderFrame: number | null = null;
   private alpha = 1;
   private readonly alphaDecay = 0.015;
   private readonly alphaMin = 0.002;
   private running = false;
+  /** Node, junction and link ids of the last ``setData`` (reheat only when they change). */
+  private structure = "";
 
   constructor(canvas: HTMLCanvasElement, callbacks: GraphCanvasCallbacks = {}) {
     this.canvas = canvas;
@@ -225,6 +232,14 @@ export class GraphCanvasEngine {
     const prevJunctions = new Map(this.junctions.map((j) => [j.id, j]));
 
     const wiring = buildConstellation(rawNodes, rawEdges, chains);
+    // Same bodies and links (a label, a title or a status changed): no new physics.
+    const structure = [
+      rawNodes.map((n) => n.id).join(" "),
+      wiring.junctions.map((j) => j.id).join(" "),
+      wiring.links.map((l) => `${l.source}>${l.target}:${l.kind}`).join(" "),
+    ].join("|");
+    const reshaped = structure !== this.structure;
+    this.structure = structure;
     this.clusterOrder = clusters.map((c) => c.id);
     this.wiring = wiring;
     this.plan = this.buildPlan(rawNodes);
@@ -275,8 +290,12 @@ export class GraphCanvasEngine {
     this.updateClusters();
     for (const id of [...this.selection]) if (!this.nodeMap.has(id)) this.selection.delete(id);
     if (this.focusedId && !this.nodeMap.has(this.focusedId)) this.focusedId = null;
-    this.reheat(prev.size === 0 ? 1 : 0.5);
-    this.start();
+    if (reshaped) {
+      this.reheat(prev.size === 0 ? 1 : 0.5);
+      this.start();
+    } else {
+      this.requestRender();
+    }
   }
 
   /** Radial plan of the current graph: derivation arcs = direct links + junction premise→conclusion pairs. */
@@ -299,6 +318,7 @@ export class GraphCanvasEngine {
     opts: { trackOrder?: readonly string[]; defaultModuleTitle?: string } = {},
   ) {
     this.roadmap.setItems(items, tone ?? (() => null), opts);
+    this.geometryVersion++;
     if (this.hoveredId && !this.nodeMap.has(this.hoveredId) && !this.roadmap.item(this.hoveredId)) this.hoveredId = null;
     this.updateRoadmapPlacement();
     this.syncPulse();
@@ -391,6 +411,7 @@ export class GraphCanvasEngine {
   public setSettings(settings: GraphSettings) {
     const prev = this.settings;
     this.settings = settings;
+    this.geometryVersion++;
     if (prev.ringRadius !== settings.ringRadius || prev.depthSpacing !== settings.depthSpacing) {
       this.plan = this.buildPlan(this.nodes);
     }
@@ -501,6 +522,8 @@ export class GraphCanvasEngine {
     this.stop();
     if (this.pulseFrame !== null) cancelAnimationFrame(this.pulseFrame);
     this.pulseFrame = null;
+    if (this.renderFrame !== null) cancelAnimationFrame(this.renderFrame);
+    this.renderFrame = null;
     this.unbindEvents();
   }
 
@@ -659,6 +682,7 @@ export class GraphCanvasEngine {
     }
     this.clusters = clusters;
     this.updateRoadmapPlacement();
+    this.geometryVersion++;
   }
 
   /** Keeps the roadmap region beside the (settling) graph. */
@@ -683,8 +707,13 @@ export class GraphCanvasEngine {
 
   // --- Rendering -------------------------------------------------------------
 
+  /** Coalesced to one draw per display frame (a 1000 Hz mouse would otherwise draw per event). */
   public requestRender() {
-    if (!this.running) this.render();
+    if (this.running || this.renderFrame !== null) return;
+    this.renderFrame = requestAnimationFrame(() => {
+      this.renderFrame = null;
+      if (!this.running) this.render();
+    });
   }
 
   /** Dot radius in world units: grows gently (√zoom) on screen when zooming in. */
@@ -751,8 +780,15 @@ export class GraphCanvasEngine {
       }
       return buf;
     };
+    const key = `${this.geometryVersion}|${this.panX}|${this.panY}|${this.zoom}|${bw}|${bh}`;
+    if (key === this.nebulaKey && this.nebula) {
+      // Hover, selection and pulse frames reuse the blurred buffer as is.
+      this.blitNebula(ctx, bw, bh);
+      return;
+    }
     this.nebula = fit(this.nebula);
     this.scratch = fit(this.scratch);
+    this.nebulaKey = key;
     const o = this.nebula.getContext("2d");
     const sc = this.scratch.getContext("2d");
     if (!o || !sc) return;
@@ -803,6 +839,11 @@ export class GraphCanvasEngine {
     o.setTransform(k, 0, 0, k, this.panX * NEBULA_SCALE, this.panY * NEBULA_SCALE);
     this.roadmap.drawNebulae(o, intensity, blurPx, supportsFilter);
     o.filter = "none";
+    this.blitNebula(ctx, bw, bh);
+  }
+
+  private blitNebula(ctx: CanvasRenderingContext2D, bw: number, bh: number) {
+    if (!this.nebula) return;
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.nebula, 0, 0, bw, bh, 0, 0, bw / NEBULA_SCALE, bh / NEBULA_SCALE);

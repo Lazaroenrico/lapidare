@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -19,18 +20,22 @@ export interface ServerEventFrame {
 
 type EventListener = (event: ServerEventFrame) => void;
 
+type Subscribe = (
+  eventTypes: SseEventType | SseEventType[],
+  callback: EventListener
+) => () => void;
+
 interface ServerEventsContextValue {
   connected: boolean;
   activeJobs: BackgroundJobStatus[];
-  lastEvent: ServerEventFrame | null;
-  subscribe: (
-    eventTypes: SseEventType | SseEventType[],
-    callback: EventListener
-  ) => () => void;
+  subscribe: Subscribe;
   refreshJobs: () => Promise<void>;
 }
 
 const ServerEventsContext = createContext<ServerEventsContextValue | null>(null);
+// `subscribe` never changes: subscribers read it from here, so a frame (or a jobs
+// refresh) re-renders only the components whose own callbacks set state.
+const SubscribeContext = createContext<Subscribe | null>(null);
 
 const KNOWN_EVENT_TYPES: SseEventType[] = [
   "session:updated",
@@ -51,7 +56,6 @@ export function ServerEventsProvider({
 }) {
   const [connected, setConnected] = useState<boolean>(false);
   const [activeJobs, setActiveJobs] = useState<BackgroundJobStatus[]>([]);
-  const [lastEvent, setLastEvent] = useState<ServerEventFrame | null>(null);
 
   // Map of event listeners
   const listenersRef = useRef<Map<SseEventType, Set<EventListener>>>(new Map());
@@ -78,8 +82,6 @@ export function ServerEventsProvider({
         data,
         timestamp: Date.now(),
       };
-
-      setLastEvent(frame);
 
       if (type === "jobs:updated") {
         void fetchJobs();
@@ -224,18 +226,15 @@ export function ServerEventsProvider({
     []
   );
 
+  const value = useMemo(
+    () => ({ connected, activeJobs, subscribe, refreshJobs: fetchJobs }),
+    [connected, activeJobs, subscribe, fetchJobs]
+  );
+
   return (
-    <ServerEventsContext.Provider
-      value={{
-        connected,
-        activeJobs,
-        lastEvent,
-        subscribe,
-        refreshJobs: fetchJobs,
-      }}
-    >
-      {children}
-    </ServerEventsContext.Provider>
+    <SubscribeContext.Provider value={subscribe}>
+      <ServerEventsContext.Provider value={value}>{children}</ServerEventsContext.Provider>
+    </SubscribeContext.Provider>
   );
 }
 
@@ -253,14 +252,19 @@ export function useEventSubscription(
   eventTypes: SseEventType | SseEventType[],
   callback: (event: ServerEventFrame) => void
 ): void {
-  const { subscribe } = useServerEvents();
+  const subscribe = useContext(SubscribeContext);
+  if (!subscribe) {
+    throw new Error("useEventSubscription must be used within a <ServerEventsProvider />");
+  }
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
+  // Keyed by content, so an inline array literal does not resubscribe on every render.
+  const key = (Array.isArray(eventTypes) ? eventTypes : [eventTypes]).join(" ");
 
   useEffect(() => {
-    const unsub = subscribe(eventTypes, (frame) => {
+    const unsub = subscribe(key.split(" ") as SseEventType[], (frame) => {
       callbackRef.current(frame);
     });
     return unsub;
-  }, [subscribe, eventTypes]);
+  }, [subscribe, key]);
 }

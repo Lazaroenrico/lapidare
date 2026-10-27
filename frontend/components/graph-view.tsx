@@ -164,6 +164,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const onSelectionChangeRef = useRef(onSelectionChange);
   onSelectionChangeRef.current = onSelectionChange;
   const onSnapshotRef = useRef(onSnapshot);
+  const fingerprintRef = useRef<string | null>(null);
   onSnapshotRef.current = onSnapshot;
   // `?focus=` target: applied once per id, after the initial fit (so the fit does not undo it).
   const focusIdRef = useRef(focusId);
@@ -230,6 +231,10 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const loadGraph = useCallback(async () => {
     try {
       const data = await getGraphSnapshot();
+      // `updated_at` is the response time: an otherwise identical snapshot changes nothing.
+      const fingerprint = JSON.stringify({ ...data, updated_at: null });
+      if (fingerprint === fingerprintRef.current) return;
+      fingerprintRef.current = fingerprint;
       setSnapshot(data);
       onSnapshotRef.current?.(data);
       setFocused((prev) => (prev ? data.nodes.find((n) => n.id === prev.id) ?? null : null));
