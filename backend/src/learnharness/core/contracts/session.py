@@ -16,7 +16,8 @@ from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload
 SessionMode = Literal["TEACH", "PRACTICE"]
 
 # Context kind that the TEACH mode adapts to automatically
-TeachContextKind = Literal["free_topic", "dense_source", "track_step", "drawing_review"]
+# ``leveling`` (Fase 15): a short diagnosis that finds where to start a track (binary search).
+TeachContextKind = Literal["free_topic", "dense_source", "track_step", "drawing_review", "leveling"]
 
 # State-machine phase of an active session: probing -> planning -> teaching -> completed.
 # "awaiting_answer" and "consolidating" only exist in records written before Fase 8
@@ -44,6 +45,35 @@ class ProbeAssessment(BaseModel):
     strands: list[ProbeStrand] = Field(min_length=1)
     summary: str | None = None
     created_at: str = ""
+
+
+class LevelingItemRef(BaseModel):
+    """A track step as the leveling record remembers it (title kept for the transcript card)."""
+    id: str
+    title: str = ""
+
+
+class LevelingItemFlags(BaseModel):
+    """A track step's progress flags right before ``leveling_done`` changed them (undo snapshot)."""
+    id: str
+    completed: bool = False
+    status_detail: str = ""
+
+
+class LevelingResult(BaseModel):
+    """Outcome of a leveling session (``leveling_done``, Fase 15) plus what undo restores."""
+    track_id: str
+    known_items: list[LevelingItemRef] = Field(default_factory=list)
+    start_item: LevelingItemRef | None = None
+    summary: str = ""
+    snapshot: list[LevelingItemFlags] = Field(default_factory=list)
+    previous_active_item_id: str | None = None
+    created_at: str = ""
+    undone_at: str | None = None
+
+    @property
+    def known_item_ids(self) -> list[str]:
+        return [item.id for item in self.known_items]
 
 
 class DenseBlockDimensions(BaseModel):
@@ -212,6 +242,8 @@ class SessionRecord(BaseModel):
     pending_quiz: QuizPayload | None = None
     answers: dict[str, CalibrationResult] = Field(default_factory=dict)
     assessment: ProbeAssessment | None = None
+    # Fase 15: what ``leveling_done`` marked on the track (``context_kind="leveling"`` only).
+    leveling: LevelingResult | None = None
     # probe_done happened and the teacher's planning turn has not completed yet.
     handoff_pending: bool = False
     # Prompt family ("prober" | "teacher" | "practice") last sent to a persistent process.

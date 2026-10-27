@@ -111,6 +111,25 @@ const ptBR = {
   setupTrackFailed: (msg: string) => `Configuração salva, mas a trilha não foi criada: ${msg}`,
   // Setup MCP step
   mcpHint: "Conecte qualquer servidor MCP de conteúdo (HTTP, SSE ou stdio). O botão “↑ Import” lista e importa os itens dele para Fontes/. Opcional: dá para fazer depois em Configurações → Conectores.",
+  // Nivelamento (Fase 15)
+  levelTrack: "Nivelar esta trilha",
+  levelTrackTitle: (pending: number) =>
+    `Diagnóstico curto (até 12 perguntas) que acha onde começar entre os ${pending} passos pendentes e marca os já sabidos`,
+  levelFailed: "Não foi possível iniciar o nivelamento.",
+  levelingPhase: "Nivelamento",
+  levelingDone: "Nivelamento concluído",
+  levelingKnown: (n: number) =>
+    n === 0 ? "Nenhum passo marcado como já sabido" : n === 1 ? "1 passo marcado como já sabido" : `${n} passos marcados como já sabidos`,
+  levelingShowList: "Ver passos",
+  levelingHideList: "Ocultar passos",
+  levelingStart: (title: string) => `Começar por: ${title}`,
+  levelingUndo: "Desfazer",
+  levelingUndoTitle: "Desfazer o nivelamento?",
+  levelingUndoBody: (n: number) =>
+    `Os ${n} passo(s) voltam a ficar pendentes e a trilha volta ao passo em que estava. Só funciona se nenhum deles mudou depois.`,
+  levelingUndoing: "Desfazendo…",
+  levelingUndone: "Nivelamento desfeito: os passos voltaram a ficar pendentes.",
+  levelingUndoFailed: "Não foi possível desfazer o nivelamento.",
 };
 
 type TracksText = typeof ptBR;
@@ -214,6 +233,24 @@ const en: TracksText = {
     `You already have ${n} track(s). A track created here is added to them; manage them all in Settings → Tracks.`,
   setupTrackFailed: (msg: string) => `Settings saved, but the track was not created: ${msg}`,
   mcpHint: "Connect any content MCP server (HTTP, SSE or stdio). The “↑ Import” button lists its items and imports them into Sources/. Optional: you can do it later in Settings → Connectors.",
+  levelTrack: "Level this track",
+  levelTrackTitle: (pending: number) =>
+    `A short diagnosis (up to 12 questions) that finds where to start among the ${pending} pending steps and marks the ones you know`,
+  levelFailed: "Could not start the leveling.",
+  levelingPhase: "Leveling",
+  levelingDone: "Leveling complete",
+  levelingKnown: (n: number) =>
+    n === 0 ? "No step marked as already known" : n === 1 ? "1 step marked as already known" : `${n} steps marked as already known`,
+  levelingShowList: "Show steps",
+  levelingHideList: "Hide steps",
+  levelingStart: (title: string) => `Start at: ${title}`,
+  levelingUndo: "Undo",
+  levelingUndoTitle: "Undo the leveling?",
+  levelingUndoBody: (n: number) =>
+    `The ${n} step(s) become pending again and the track goes back to the step it was on. Only works if none of them changed since.`,
+  levelingUndoing: "Undoing…",
+  levelingUndone: "Leveling undone: the steps are pending again.",
+  levelingUndoFailed: "Could not undo the leveling.",
 };
 
 export function tracksText(locale: string): TracksText {

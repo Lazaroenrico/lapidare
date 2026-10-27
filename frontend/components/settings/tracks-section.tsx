@@ -8,9 +8,11 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Check, Loader2, Pencil, Plus, RefreshCw, Target, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Check, ListChecks, Loader2, Pencil, Plus, RefreshCw, Target, Trash2 } from "lucide-react";
 import { canRegenerate, orderTracks, toneForTrack, trackTones, TITLE_MAX_TRACK, type TrackSummary } from "@/lib/tracks";
 import { activateTrack, deleteTrack, regenerateTrack, updateTrack } from "@/lib/tracks-api";
+import { canLevelTrack, pendingSteps } from "@/lib/leveling";
+import { useStartLeveling } from "@/components/leveling-ui";
 import { tracksText } from "@/lib/tracks-i18n";
 import { useLocale } from "@/components/locale-provider";
 import { useTracks } from "@/components/use-tracks";
@@ -41,6 +43,7 @@ export function TracksSection() {
   const [draft, setDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<TrackSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const leveling = useStartLeveling();
 
   const run = async (track: TrackSummary, action: Action, fn: () => Promise<unknown>) => {
     setBusy({ id: track.id, action });
@@ -179,6 +182,18 @@ export function TracksSection() {
             )}
             {track.archived ? tt.unarchive : tt.archive}
           </button>
+          {canLevelTrack(track) && (
+            <button
+              type="button"
+              disabled={busy !== null || leveling.busyId !== null}
+              title={tt.levelTrackTitle(pendingSteps(track))}
+              onClick={() => void leveling.start(track.id)}
+              className={iconButton}
+            >
+              {leveling.busyId === track.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />}
+              {tt.levelTrack}
+            </button>
+          )}
           {canRegenerate(track) && !track.archived && (
             <button
               type="button"
@@ -205,6 +220,11 @@ export function TracksSection() {
           </button>
         </div>
 
+        {leveling.error?.trackId === track.id && (
+          <p role="alert" className="pl-4 font-ui text-[11px] text-danger break-words">
+            {leveling.error.text}
+          </p>
+        )}
         {rowError?.id === track.id && (
           <p role="alert" className="pl-4 font-ui text-[11px] text-danger break-words">
             {rowError.text}

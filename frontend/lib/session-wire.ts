@@ -8,6 +8,7 @@ import type {
   CalibrationBand,
   CalibrationResult,
   DenseBlockDimensions,
+  LevelingResult,
   PlanDag,
   PlanNode,
   PlanNodeKind,
@@ -28,6 +29,7 @@ import { decodeUsageCounters } from "./usage";
 import { decodePractice } from "./practice";
 import { decodeCompaction } from "./session-ux";
 import { decodeJobSteer, type JobSteer } from "./job-steer";
+import { decodeLeveling } from "./leveling";
 
 type Raw = Record<string, unknown>;
 
@@ -225,6 +227,7 @@ export function decodeSession(raw: unknown): SessionRecord {
     pending_quiz: decodeQuiz(r.pending_quiz),
     answers,
     assessment: decodeAssessment(r.assessment),
+    leveling: decodeLeveling(r.leveling),
     plan: r.plan === undefined || r.plan === null ? undefined : decodePlan(r.plan),
     slot_override: decodeSlotOverride(r.slot_override),
     effective_slot: decodeSlotOverride(r.effective_slot),
@@ -261,6 +264,7 @@ export type TranscriptItem =
   | { type: "job"; key: string; message: SessionMessage; job: JobSteer }
   | { type: "answer"; key: string; answer: CalibrationResult }
   | { type: "probe_done"; key: string; assessment: ProbeAssessment }
+  | { type: "leveling_done"; key: string; leveling: LevelingResult }
   | { type: "pending"; key: string; quiz: QuizPayload };
 
 /** A question that is part of teaching (not a probe, not an ungraded ask) on a plan node. */
@@ -282,7 +286,8 @@ export function parseAnswerMessage(message: SessionMessage): CalibrationResult |
  * ProbeDoneCard and phase dividers (Diagnóstico → Planejamento → Ensino).
  */
 export function buildTranscript(
-  session: Pick<SessionRecord, "mode" | "messages" | "answers" | "assessment" | "pending_quiz">,
+  session: Pick<SessionRecord, "mode" | "messages" | "answers" | "assessment" | "pending_quiz"> &
+    Partial<Pick<SessionRecord, "leveling">>,
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const teach = session.mode !== "PRACTICE";
@@ -331,6 +336,8 @@ export function buildTranscript(
   }
 
   showPlanning();
+  // Fase 15: the leveling closes the session; its card (with Undo) comes last.
+  if (session.leveling) items.push({ type: "leveling_done", key: "leveling-done", leveling: session.leveling });
   const pending = session.pending_quiz;
   if (pending) {
     if (isTeachingQuestion(pending)) showTeaching();

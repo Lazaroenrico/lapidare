@@ -29,6 +29,23 @@ export const activateTrack = async (id: string): Promise<TrackSummary | null> =>
 export const regenerateTrack = async (id: string): Promise<TrackSummary | null> =>
   maybeTrack(await fetchJson<unknown>(trackPath(id, "/regenerate"), { method: "POST" }, silent));
 
+/** Fase 15: opens (or reopens) the leveling TEACH session; returns its id. */
+export const startLeveling = async (trackId: string): Promise<string> => {
+  const raw = await fetchJson<{ id?: unknown }>(trackPath(trackId, "/leveling"), { method: "POST" }, silent);
+  if (!raw || typeof raw.id !== "string" || !raw.id) throw new Error("Leveling session without id");
+  return raw.id;
+};
+
+/** Fase 15: restores the flags from the leveling snapshot (409 once a leveled step changed). */
+export const undoLeveling = async (trackId: string, sessionId: string): Promise<TrackSummary | null> =>
+  maybeTrack(
+    await fetchJson<unknown>(
+      trackPath(trackId, `/leveling/${encodeURIComponent(sessionId)}/undo`),
+      { method: "POST" },
+      silent,
+    ),
+  );
+
 export const deleteTrack = async (id: string): Promise<void> => {
   await fetchJson<unknown>(trackPath(id), { method: "DELETE" }, silent);
 };

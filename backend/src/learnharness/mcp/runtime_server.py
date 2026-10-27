@@ -31,6 +31,7 @@ from learnharness.core.contracts.practice import (
 from learnharness.core.contracts.quiz import QuizMode, QuizOption, QuizPayload
 from learnharness.core.contracts.session import ProbeAssessment, ProbeStrand
 from learnharness.core.latex_heal import heal_latex
+from learnharness.core.leveling import MAX_LEVELING_QUESTIONS
 from learnharness.core.plan_mermaid import PlanSyntaxError
 from learnharness.services.sessions import SessionConflict, now
 
@@ -177,7 +178,9 @@ def _targets(value: Any) -> list[str]:
 
 # Which session mode each mode-specific tool belongs to (the rest work in both).
 TEACH_ONLY = frozenset({"probe", "recall", "quiz", "explain", "probe_done", "plan_init", "grade_recall",
-                        "plan_advance", "track_foundation", "spawn_demo", "visual"})
+                        "plan_advance", "track_foundation", "spawn_demo", "visual", "leveling_done"})
+# Fase 15: a leveling session only diagnoses (probe/recall) and closes with leveling_done.
+NOT_IN_LEVELING = frozenset({"plan_init", "quiz", "explain", "probe_done", "plan_advance"})
 PRACTICE_ONLY = frozenset({"problem", "conclude"})
 
 # Background-job tools: toggle in config.agent.tools -> refusal when it is off.
@@ -207,14 +210,16 @@ def _dispatched(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _mode_guard(state, session_id, fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-    """Refuse TEACH tools in PRACTICE sessions (and vice versa) with corrective text."""
+    """Refuse TEACH tools in PRACTICE sessions (and vice versa), and teaching tools in a track
+    leveling session (Fase 15), with corrective text."""
     name = fn.__name__
     if name not in TEACH_ONLY and name not in PRACTICE_ONLY:
         return fn
 
     @functools.wraps(fn)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        mode = state.sessions.get(session_id).mode
+        session = state.sessions.get(session_id)
+        mode = session.mode
         if mode == "PRACTICE" and name in TEACH_ONLY:
             raise ToolError(
                 f"{name} is a TEACH tool and this is a PRACTICE session. Use problem to pose one problem, "
@@ -223,6 +228,19 @@ def _mode_guard(state, session_id, fn: Callable[..., Awaitable[Any]]) -> Callabl
             )
         if mode != "PRACTICE" and name in PRACTICE_ONLY:
             raise ToolError(f"{name} is a PRACTICE tool and this is a TEACH session; teach with quiz/explain.")
+        leveling = session.context_kind == "leveling"
+        if leveling and name in NOT_IN_LEVELING:
+            raise ToolError(
+                f"{name} is not available while leveling a track: nothing is taught here. Ask probe/recall "
+                "questions about items of the pending queue and close with leveling_done(known_item_ids, "
+                "start_item_id, summary)."
+            )
+        if leveling and name in ("probe", "recall") and not session.pending_quiz and sum(
+                1 for a in session.answers.values() if a.kind in ("quiz", "explain")) >= MAX_LEVELING_QUESTIONS:
+            raise ToolError(f"The leveling budget of {MAX_LEVELING_QUESTIONS} questions is spent; call "
+                            "leveling_done now with what the answers established.")
+        if name == "leveling_done" and not leveling:
+            raise ToolError("leveling_done only exists in a track leveling session.")
         return await fn(*args, **kwargs)
 
     return wrapper
@@ -333,6 +351,23 @@ def session_tools(state, session_id) -> list[Callable[..., Awaitable[Any]]]:
         except ValidationError as exc:
             raise ToolError("strands must be {strand, assessment} objects with non-empty text.") from exc
         return await state.sessions.probe_done(session_id, assessment)
+
+    async def leveling_done(known_item_ids: list[str] | str, start_item_id: str, summary: str) -> dict[str, Any]:
+        """Track leveling only: close the diagnosis exactly once, with no question pending.
+
+        known_item_ids: ids from the pending queue the learner already masters (they are marked
+        done); never an item whose prerequisite is not also known. start_item_id: the first
+        pending item NOT mastered (the track resumes there; never one of known_item_ids).
+        summary: two or three sentences on the evidence. After it succeeds, tell the learner
+        where the track starts in one or two sentences and end your turn.
+        """
+        raw = _heal_json(known_item_ids)
+        if isinstance(raw, str):
+            raw = [raw] if raw.strip() else []
+        if not isinstance(raw, list) or not all(isinstance(i, str) for i in raw):
+            raise ToolError('known_item_ids must be a list of item ids, e.g. ["s1", "s2"] (or [] when none).')
+        start = _required_text(start_item_id, "start_item_id", "the id of the first pending item not mastered")
+        return await state.leveling.done(session_id, raw, start, heal_latex(str(summary or "")))
 
     async def plan_init(mermaid: str, approach_prose: str = "",
                         node_details: dict[str, NodeDetailIn] | str | None = None) -> dict[str, Any]:
@@ -478,7 +513,7 @@ def session_tools(state, session_id) -> list[Callable[..., Awaitable[Any]]]:
 
     tools = [probe, recall, quiz, explain, ask_user_question, probe_done, plan_init,
              grade_recall, plan_advance, track_foundation, spawn_demo, problem, conclude, graph_search,
-             research, read_pdf, visual]
+             research, read_pdf, visual, leveling_done]
     return [_refusals(_mode_guard(state, session_id, t)) for t in tools]
 
 

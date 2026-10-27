@@ -3,7 +3,8 @@
 Layout (all paths relative to this package, which is also the override key):
 
 - ``shared/NN-*.md``   — identity, voice, accuracy, questions, confidence, formatting, Vault;
-- ``prober/NN-*.md``   — diagnosis (phase ``probing``);
+- ``prober/NN-*.md``   — diagnosis (phase ``probing``); ``prober/30-leveling.md`` only (and instead
+  of the generic diagnosis) for the ``leveling`` context kind (Fase 15);
 - ``teacher/NN-*.md``  — method, planning, teaching (phases ``planning``/``teaching``);
   fragments named ``NN-context-<kind>.md`` are included only for that context kind;
 - ``practice/NN-*.md`` — PRACTICE mode;
@@ -36,6 +37,10 @@ PRACTICE_SHARED_EXCLUDE = frozenset({"shared/50-questions.md"})
 PROBING_PHASES = frozenset({"probing"})
 LANGUAGE_NAMES = {"pt-BR": "Brazilian Portuguese (pt-BR)", "en": "English (en)"}
 _CONTEXT_RE = re.compile(r"^\d+-context-(?P<kind>[\w]+)\.md$")
+# Fragments bound to one context kind besides the ``NN-context-<kind>.md`` naming convention.
+CONTEXT_ONLY = {"prober/30-leveling.md": "leveling"}
+# A track leveling replaces the generic diagnosis (strands, probe_done) with its own doctrine.
+REPLACED_BY_CONTEXT = {"leveling": frozenset({"prober/10-diagnosis.md", "prober/20-contexts.md"})}
 
 
 def _sort_key(name: str) -> tuple[int, str]:
@@ -66,6 +71,10 @@ def _text(path: str, overrides: Mapping[str, str] | None) -> str:
 
 
 def _applies(path: str, context_kind: str) -> bool:
+    if path in CONTEXT_ONLY:
+        return CONTEXT_ONLY[path] == context_kind
+    if path in REPLACED_BY_CONTEXT.get(context_kind, ()):
+        return False
     match = _CONTEXT_RE.match(path.rsplit("/", 1)[-1])
     return match is None or match.group("kind") == context_kind
 

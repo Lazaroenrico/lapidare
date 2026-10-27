@@ -70,6 +70,8 @@ import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { PlanWindow } from "@/components/plan-window";
 import { AnsweredQuestionCard, PhaseChip, PhaseDivider, ProbeDoneCard } from "@/components/transcript-cards";
+import { LevelingDoneCard, LevelingPhaseChip } from "@/components/leveling-ui";
+import { isLevelingSession } from "@/lib/leveling";
 import { SourceCitationPane } from "@/components/source-citation-pane";
 import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
@@ -701,6 +703,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   const renderTeachItem = (item: ReturnType<typeof buildTranscript>[number]): React.ReactNode => {
     if (item.type === "divider") return <PhaseDivider key={item.key} phase={item.phase} />;
     if (item.type === "probe_done") return <ProbeDoneCard key={item.key} assessment={item.assessment} />;
+    if (item.type === "leveling_done") {
+      return <LevelingDoneCard key={item.key} leveling={item.leveling} sessionId={session.id} />;
+    }
     if (item.type === "answer") return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
     if (item.type === "job") return <JobCard key={item.key} job={item.job} message={item.message} />;
     if (item.type === "pending") {
@@ -773,7 +778,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                 onEditingChange={setRenaming}
               />
               {renderContextBadge()}
-              {teachPhase && <PhaseChip phase={teachPhase} />}
+              {teachPhase && isLevelingSession(session) ? (
+                <LevelingPhaseChip completed={teachPhase === "completed"} />
+              ) : (
+                teachPhase && <PhaseChip phase={teachPhase} />
+              )}
             </div>
 
             <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5">

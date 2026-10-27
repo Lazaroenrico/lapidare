@@ -26,7 +26,7 @@ from learnharness.vault.bootstrap import bootstrap_vault, load_config, save_conf
 
 EXPECTED_TOOLS = {"probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
                   "grade_recall", "plan_advance", "track_foundation", "spawn_demo", "problem", "conclude",
-                  "graph_search", "research", "read_pdf", "visual"}
+                  "graph_search", "research", "read_pdf", "visual", "leveling_done"}
 
 
 class IdleEngine:

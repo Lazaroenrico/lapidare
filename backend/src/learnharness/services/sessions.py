@@ -89,8 +89,18 @@ PRACTICE_TURN_RULES = (
 )
 
 
+LEVELING_TURN_RULES = (
+    "TRACK LEVELING (Fase 15): every question goes through probe or recall, never in prose, one per "
+    "turn, about one item of the pending queue in the session state; grade every recall answer with "
+    "grade_recall before commenting. plan_init, quiz, explain and probe_done do not exist here; nothing "
+    "is taught. Close with exactly one leveling_done(known_item_ids, start_item_id, summary) and end the turn."
+)
+
+
 def turn_rules(session: SessionRecord) -> str:
-    return PRACTICE_TURN_RULES if session.mode == "PRACTICE" else TURN_RULES
+    if session.mode == "PRACTICE":
+        return PRACTICE_TURN_RULES
+    return LEVELING_TURN_RULES if session.context_kind == "leveling" else TURN_RULES
 
 
 def prompt_family(session: SessionRecord) -> str:
@@ -131,6 +141,9 @@ def opening_request(session):
             f'Begin the practice session. The learner asked to practice: "{session.title}". '
             "Open directly with the first problem (no warm-up)."
         )
+    if session.context_kind == "leveling":
+        return ("Begin the track leveling. Say in one sentence what this short diagnosis is for, then "
+                "ask the first question about the middle item of the pending queue.")
     return (
         f'Begin the session. The learner opened it with: "{session.title}". Treat that as '
         "their stated goal; ask to clarify only if two readings would lead to different lessons."
@@ -202,13 +215,18 @@ class SessionService:
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session.id, "sequence": session.sequence})
 
     async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True,
-                     slot_override=None, graph_context=None, track_id=None):
+                     slot_override=None, graph_context=None, track_id=None, context_kind=None):
         config = self.state.get_config()
         if not config.configured:
             raise SessionConflict("Complete setup before starting a session")
         graph_context = self.state.graph.validate_context(graph_context or [])  # Fase 8B
         track = None
-        if track_item_id or track_id:
+        if context_kind == "leveling":  # Fase 15: the whole track, no single step.
+            track = config.find_track(track_id)
+            if track is None:
+                raise SessionConflict("Unknown track")
+            track_item_id = None
+        elif track_item_id or track_id:
             # Fase 14: the step is (track_id, item_id); no track_id means the track in focus.
             track = config.find_track(track_id) if track_id else config.active_track()
             if track is None:
@@ -228,7 +246,8 @@ class SessionService:
         session_id = f"sess-{uuid4().hex}"
         session = SessionRecord(
             id=session_id, title=(topic or "Nova sessão").strip()[:240], mode=mode,
-            context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
+            context_kind=context_kind or (
+                "track_step" if track_item_id else ("dense_source" if source_file else "free_topic")),
             source_path=source_file, track_item_id=track_item_id, slot_override=slot_override,
             track_id=track.id if track else None,
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
@@ -837,6 +856,8 @@ class SessionService:
             }
             if practice:
                 context_data["practice"] = self.state.practice.state_context(session)
+            if session.context_kind == "leveling":  # Fase 15: the ordered pending queue.
+                context_data["leveling"] = self._leveling_context(session, config)
             context = json.dumps(context_data, ensure_ascii=False)
             overrides = load_overrides(self.state.vault_path, config)
             system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
@@ -924,6 +945,14 @@ class SessionService:
             if completed:
                 await self._release_runtime(session_id)
         return follow_up
+
+    @staticmethod
+    def _leveling_context(session: SessionRecord, config) -> dict[str, Any] | None:
+        from learnharness.core.leveling import leveling_context
+
+        track = config.find_track(session.track_id)
+        asked = sum(1 for a in session.answers.values() if a.kind in ("quiz", "explain"))
+        return leveling_context(track, asked) if track is not None else None
 
     async def _compact_at_settle(self, session_id: str, follow_up: bool) -> bool:
         """Compact the history when it outgrew the budget; the next turn waits for it (Fase 12).
