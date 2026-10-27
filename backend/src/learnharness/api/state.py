@@ -77,7 +77,8 @@ class AppState:
             return HarnessConfig(configured=False, vault_path=str(self.vault_path))
         return load_config(self.vault_path)
 
-    def engine(self, slot):
+    def engine(self, slot, **overrides):
+        """``overrides`` (e.g. ``timeout``) go to the real engine; injected factories ignore them."""
         if self.engine_factory:
             return self.engine_factory(slot)
         from learnharness.engines import get_engine
@@ -86,6 +87,7 @@ class AppState:
             slot,
             runtime_config={"api_key": self.api_key},
             is_waiting_on_learner=lambda sid: self.dock_registry.get_pending_quiz(sid) is not None,
+            **overrides,
         )
 
     def redact(self, text):

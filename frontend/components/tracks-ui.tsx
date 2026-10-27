@@ -71,9 +71,12 @@ export function TrackJobState({
   }
   if (track.error) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10.5px] text-danger" title={track.error}>
-        <AlertCircle className="w-3 h-3" aria-hidden />
-        {errorLabel}
+      <span className="inline-flex items-start gap-1 text-[10.5px] text-danger" title={track.error}>
+        <AlertCircle className="w-3 h-3 shrink-0 mt-px" aria-hidden />
+        {/* The reason says what to do (e.g. quota spent → switch the main model), so show it. */}
+        <span className="line-clamp-3">
+          {errorLabel}: {track.error}
+        </span>
       </span>
     );
   }

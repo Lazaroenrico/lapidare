@@ -34,6 +34,22 @@ TRACK_PROMPT = (
 )
 
 
+_QUOTA = re.compile(r"quota|rate.?limit|resets? in", re.IGNORECASE)
+_IDLE = re.compile(r"idle for \d+s", re.IGNORECASE)
+
+
+def explain_generation_failure(message: str, model: str) -> str:
+    """Plain-language reason for a failed generation, with what the learner can do about it."""
+    label = model or "do slot principal"
+    if _QUOTA.search(message):
+        return (f"A cota do modelo {label} acabou ({message.strip()}). Troque o modelo principal em "
+                "Configurações → Modelos e gere a trilha de novo.")
+    if _IDLE.search(message):
+        return (f"O modelo {label} ficou tempo demais sem responder. Tente de novo, ou use um modelo "
+                "mais rápido no slot principal para currículos grandes.")
+    return message
+
+
 class GeneratedTrack(BaseModel):
     items: list[TrackItem] = Field(min_length=1, max_length=100)
 
