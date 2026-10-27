@@ -10,6 +10,14 @@
 }
 
 @font-face {
+  font-family: "Source Sans 3";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Source Sans 3"), url("/fonts/SourceSans3-Regular.ttf") format("truetype");
+}
+
+@font-face {
   font-family: "CMU Serif";
   font-style: normal;
   font-weight: 700;
