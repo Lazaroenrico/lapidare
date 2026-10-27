@@ -69,3 +69,20 @@ async def test_job_steer_wakes_an_idle_session(tmp_path):
         assert stored.steer_kind == "job" and stored.details["kind"] == "research" and stored.delivered
     finally:
         await state.close()
+
+
+async def test_live_view_serves_streaming_text_without_persisting_it(tmp_path):
+    engine = GatedEngine()
+    engine.release.set()
+    state = AppState(vault_path=configure_vault(tmp_path / "Vault"), engine_factory=lambda slot: engine)
+    try:
+        session = await state.sessions.create(topic="Atenção", start=False)
+        before = state.sessions.get(session.id).sequence
+        state.sessions.streaming[session.id] = ["msg-live", "texto em andamento", 0]
+        view = state.sessions.live_view(state.sessions.get(session.id))
+        assert view.messages[-1].id == "msg-live" and view.messages[-1].content == "texto em andamento"
+        stored = state.sessions.get(session.id)
+        assert stored.sequence == before and all(m.id != "msg-live" for m in stored.messages)
+    finally:
+        state.sessions.streaming.pop(session.id, None)
+        await state.close()

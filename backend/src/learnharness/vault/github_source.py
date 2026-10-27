@@ -408,6 +408,10 @@ async def _cached_commit(target: Path) -> str | None:
     return commit if _SHA.match(commit) else None
 
 
+_LISTING_CACHE_SIZE = 16
+_LISTINGS: dict[tuple[str, str, str], tuple[list[RepoFile], bool]] = {}
+
+
 async def ensure_clone(
     vault: Path, url: str, *, refresh: bool = False, revalidate: bool = False
 ) -> RepoClone:
@@ -462,7 +466,15 @@ async def ensure_clone(
         owner=parsed.owner, repo=parsed.repo, ref=ref, resolved_ref=resolved, commit=commit,
         subpath=subpath, is_file=parsed.kind == "blob", root=target,
     )
-    clone.files, clone.truncated = list_repo_files(target, subpath)
+    key = (str(target), commit, subpath)
+    if key not in _LISTINGS:
+        # A clone at a fixed commit never changes: list (and title) its files once, off the
+        # event loop, instead of on every preview/import/track request.
+        _LISTINGS[key] = await asyncio.to_thread(list_repo_files, target, subpath)
+        while len(_LISTINGS) > _LISTING_CACHE_SIZE:
+            _LISTINGS.pop(next(iter(_LISTINGS)))
+    files, clone.truncated = _LISTINGS[key]
+    clone.files = list(files)
     if subpath and not clone.files and not safe_path(target, subpath).exists():
         raise GitHubSourceError("Path not found in repository", 404)
     return clone
@@ -610,15 +622,27 @@ def _repo_path_of(note: Path) -> str | None:
     return meta.get("repo_path") if isinstance(meta, dict) else None
 
 
-def _unique_basename(vault: Path, name: str, relative: str) -> str:
-    """Prefix the nearest meaningful ancestor while another source already uses the name."""
+def _source_index(vault: Path) -> dict[str, list[Path]]:
+    """Basename (stem) → source files, built once per import (one walk of ``Fontes/``)."""
     sources = safe_path(vault, folder_map(vault).sources_dir)
+    index: dict[str, list[Path]] = {}
+    if sources.exists():
+        for f in sources.rglob("*.md"):
+            index.setdefault(f.stem, []).append(f)
+    return index
+
+
+def _unique_basename(index: dict[str, list[Path]], name: str, relative: str) -> str:
+    """Prefix the nearest meaningful ancestor while another source already uses the name.
+
+    Exact stem lookup in ``index`` (no glob: names may contain ``[`` ``*`` ``?``).
+    """
     ancestors = [p for p in Path(relative).parent.parts if p.lower() not in GENERIC_STEMS | LANGUAGE_STEMS]
     if ancestors and name.split(" (")[0] == ancestors[-1]:
         ancestors.pop()  # already the basis of the name (generic stem case)
     candidate = name
     while ancestors:
-        clash = [f for f in sources.rglob(f"{candidate}.md") if _repo_path_of(f) != relative] if sources.exists() else []
+        clash = [f for f in index.get(candidate, []) if _repo_path_of(f) != relative]
         if not clash:
             return candidate
         candidate = f"{ancestors.pop()} - {candidate}"
@@ -632,6 +656,7 @@ def import_repo_files(vault: Path, clone: RepoClone, paths: list[str]) -> list[d
     if unknown:
         raise GitHubSourceError(f"Paths are not in the repository listing: {unknown[:5]}", 422)
     vault = Path(vault).resolve()
+    index = _source_index(vault)
     imported = []
     for relative in dict.fromkeys(paths):
         text = read_repo_text(clone.root, relative)
@@ -647,7 +672,7 @@ def import_repo_files(vault: Path, clone: RepoClone, paths: list[str]) -> list[d
             tipo="fonte",
             force=True,
             subdir=subdir,
-            filename=_unique_basename(vault, source_basename(relative), relative),
+            filename=_unique_basename(index, source_basename(relative), relative),
             provenance={
                 "source_kind": "github",
                 "source_url": f"https://github.com/{clone.owner}/{clone.repo}/blob/{clone.commit}/{quote(relative)}",
@@ -657,6 +682,7 @@ def import_repo_files(vault: Path, clone: RepoClone, paths: list[str]) -> list[d
                 "origem": "GitHub",
             },
         )
+        index.setdefault(target.stem, []).append(target)
         imported.append({
             "source_path": target.relative_to(vault).as_posix(),
             "paragraph_count": count,

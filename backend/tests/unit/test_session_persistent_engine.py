@@ -1,5 +1,6 @@
 """SessionService.run with engines that keep the conversation (``session_persistent``)."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -86,3 +87,54 @@ async def test_non_persistent_engine_keeps_full_history_prompt(tmp_path, closed)
     (dir1, _), (dir2, _) = engine.runtime
     assert dir1 != dir2  # per-execution runtime dir, as before
     assert closed == []
+
+
+class MidTurnEngine(PersistentEngine):
+    """First turn: the learner answers a blocking question mid-turn (handed over via the tool)."""
+
+    def __init__(self, service):
+        super().__init__()
+        self.service = service
+
+    async def stream_turn(self, prompt, session_id, history=None, slot=None, tools=None, system_instruction=None):
+        self.calls.append(SimpleNamespace(prompt=prompt, history=list(history or []), system=system_instruction, tools=tools))
+        yield "explicação"
+        if len(self.calls) == 1:
+            session = self.service.get(session_id)
+            session.messages.append(SessionMessage(id="answer-q1", role="user", content="RESPOSTA-JA-VISTA",
+                                                   created_at="2026-10-27T00:00:00+00:00"))
+            self.service.save(session)
+        yield " continua"
+
+
+async def test_content_seen_mid_turn_is_not_resent_next_turn(tmp_path, closed):
+    state = AppState(vault_path=configure_vault(tmp_path / "Vault"), engine_factory=lambda slot: engine)
+    engine = MidTurnEngine(state.sessions)
+    session = await state.sessions.create(topic="Atenção", start=False)
+    await state.sessions.run(session.id)
+    current = state.sessions.get(session.id)
+    current.messages.append(SessionMessage(id="msg-new", role="user", content="PERGUNTA-NOVA",
+                                           created_at="2026-10-27T00:00:01+00:00"))
+    state.sessions.save(current)
+    await state.sessions.run(session.id)
+    second = engine.calls[1].prompt
+    assert "PERGUNTA-NOVA" in second and "RESPOSTA-JA-VISTA" not in second
+
+
+async def test_handoff_turn_keeps_learner_input_that_arrived_meanwhile(tmp_path, closed):
+    engine = PersistentEngine()
+    state = AppState(vault_path=configure_vault(tmp_path / "Vault"), engine_factory=lambda slot: engine)
+    session = await state.sessions.create(topic="Atenção", start=False)
+    await state.sessions.run(session.id)
+    current = state.sessions.get(session.id)
+    current.phase, current.handoff_pending = "planning", True
+    state.sessions.save(current)
+    await state.sessions.deliver_steer(session.id, "learner", "quero focar em implementação")
+    await asyncio.sleep(0)
+    for _ in range(200):
+        if not state.sessions.is_running(session.id):
+            break
+        await asyncio.sleep(0.01)
+    handoff_prompt = engine.calls[1].prompt
+    assert "quero focar em implementação" in handoff_prompt
+    await state.close()

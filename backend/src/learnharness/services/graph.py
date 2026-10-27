@@ -129,7 +129,8 @@ class GraphService:
         ids = list(dict.fromkeys(node_ids))
         if len(ids) > MAX_GRAPH_CONTEXT:
             raise ValueError(f"graph_context accepts at most {MAX_GRAPH_CONTEXT} nodes")
-        unknown = [i for i in ids if i not in self.nodes()]
+        known = self.nodes()  # One read of nodes.jsonl, not one per id.
+        unknown = [i for i in ids if i not in known]
         if unknown:
             raise ValueError(f"Unknown graph node(s): {', '.join(unknown)}")
         return ids

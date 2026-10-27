@@ -143,10 +143,13 @@ class JobManager:
     # ----------------------------------------------------------------- steers
 
     def _already_steered(self, record, session) -> bool:
+        # One steer per attempt: a retried job reports its new outcome (the teacher was told
+        # the first attempt failed, so a later success must reach it).
+        attempt = record.get("attempt", 1)
         if record.get("steer_message_id"):
             return True
         return any(m.steer_kind == "job" and (m.details or {}).get("job_id") == record["job_id"]
-                   for m in session.messages)
+                   and (m.details or {}).get("attempt", 1) == attempt for m in session.messages)
 
     async def _deliver_steer(self, record) -> None:
         """Deliver the job's outcome to its session exactly once (idempotent per ``job_id``)."""
@@ -162,6 +165,7 @@ class JobManager:
         if self._already_steered(record, session):
             return
         content, details = steer_for(record)
+        details["attempt"] = record.get("attempt", 1)
         try:
             message = await self.state.sessions.deliver_steer(session_id, "job", content, details)
         except Exception:
@@ -189,6 +193,8 @@ class JobManager:
             raise ValueError("Only failed or interrupted jobs may be retried")
         record["error"] = None
         record["status"] = "queued"
+        record["attempt"] = record.get("attempt", 1) + 1
+        record.pop("steer_message_id", None)
         self.save(record)
         self.tasks[job_id] = asyncio.create_task(self.run(record))
         return record

@@ -7,7 +7,6 @@ exists, in ``.harness/prompt-overrides.json``).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,14 +14,13 @@ from pydantic import BaseModel, Field
 
 from learnharness.api.state import get_app_state
 from learnharness.prompts.loader import (
-    OVERRIDE_FLAGS_FALLBACK,
     list_prompt_segments,
     load_override_flags,
     override_file,
     segment_paths,
 )
 from learnharness.vault.bootstrap import save_config
-from learnharness.vault.safety import atomic_write, locked_path, safe_path
+from learnharness.vault.safety import atomic_write, locked_path
 
 prompts_router = APIRouter(prefix="/api/settings/prompts", tags=["settings"])
 
@@ -41,17 +39,17 @@ def _known(path: str) -> str:
 
 
 def _save_flag(vault: Path, config, path: str, enabled: bool | None) -> None:
-    """Set (or with ``None`` remove) one enabled flag."""
-    if "prompt_overrides" in type(config).model_fields and (vault / ".harness/config.json").is_file():
-        flags = dict(getattr(config, "prompt_overrides", {}) or {})
-        _apply(flags, path, enabled)
-        config.prompt_overrides = flags
-        save_config(vault, config)
-    fallback = safe_path(vault, OVERRIDE_FLAGS_FALLBACK)
-    with locked_path(fallback):
-        flags = json.loads(fallback.read_text(encoding="utf-8")) if fallback.is_file() else {}
-        _apply(flags, path, enabled)
-        atomic_write(fallback, json.dumps(flags, indent=2, sort_keys=True))
+    """Set (or with ``None`` remove) one enabled flag in ``config.prompt_overrides``.
+
+    The legacy ``.harness/prompt-overrides.json`` is still read (config wins) but no longer
+    written: one source of truth.
+    """
+    if not (vault / ".harness/config.json").is_file():
+        raise HTTPException(status_code=409, detail="Complete setup before editing prompts")
+    flags = dict(config.prompt_overrides or {})
+    _apply(flags, path, enabled)
+    config.prompt_overrides = flags
+    save_config(vault, config)
 
 
 def _apply(flags: dict, path: str, enabled: bool | None) -> None:

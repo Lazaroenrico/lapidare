@@ -427,7 +427,7 @@ Definidas em `mcp/runtime_server.py: session_tools`. As de pergunta **bloqueiam 
   - PRACTICE → `shared` sem `50-questions.md` + `practice`.
   - Os fragmentos `NN-context-<kind>.md` só entram para o `context_kind` correspondente.
 - Os prompts são escritos em inglês e mandam responder no idioma da sessão. As regras de turno (`TURN_RULES` / `PRACTICE_TURN_RULES` em `services/sessions.py`) vão junto em cada system prompt.
-- **Overrides:** o texto fica em `<vault>/.harness/prompts/<path>` e só vale com `config.prompt_overrides[path] is True` e o arquivo existindo. `.harness/prompt-overrides.json` é um fallback legado das flags. Rotas: `GET/PUT/DELETE /api/settings/prompts[/{path}]`, com o path validado contra os segmentos existentes.
+- **Overrides:** o texto fica em `<vault>/.harness/prompts/<path>` e só vale com `config.prompt_overrides[path] is True` e o arquivo existindo. As flags vivem só em `config.prompt_overrides`; `.harness/prompt-overrides.json` é legado, ainda **lido** (o config prevalece) mas nunca mais escrito. Rotas: `GET/PUT/DELETE /api/settings/prompts[/{path}]`, com o path validado contra os segmentos existentes.
 
 ### 6.5 O ciclo de um turno (`SessionService.run`)
 
@@ -444,7 +444,7 @@ sequenceDiagram
     S->>S: execution_id novo, status=running, steers pendentes → delivered
     S->>S: system = fragmentos + contexto JSON + SOURCE + graph_context + material PRACTICE
     S->>E: stream_turn(prompt, history|persistente, slot)
-    E-->>S: deltas de texto (flush a cada 0,2 s → session:updated)
+    E-->>S: deltas de texto (session:updated a cada 0,2 s; gravação a cada 2 s)
     E->>M: quiz(...) com Bearer
     M->>S: pose() → pending_quiz, dock:opened, aguarda Future
     UI->>API: POST /answer
@@ -455,12 +455,12 @@ sequenceDiagram
     S-->>S: follow-up? (handoff ou steers) → novo run()
 ```
 
-- **Motores persistentes** (`_persistent_turn`): o processo guarda a conversa, então cada turno envia só o **conteúdo novo** (tudo depois da última mensagem do assistente, inclusive steers que chegaram atrasados) mais `CURRENT STATE` (fase e status do plano, ou o problema ativo). O system prompt vai como `system_instruction` e só é usado ao (re)criar o processo, com o histórico compacto.
+- **Motores persistentes** (`_persistent_turn`): o processo guarda a conversa, então cada turno envia só o **conteúdo novo**: tudo depois de `SessionRecord.model_cursor`, o id da última mensagem que o processo já viu, gravado no fim de cada turno bem-sucedido. Respostas e steers entregues no meio do turno pelas ferramentas de pergunta ficam antes do cursor e nunca são reenviados; steers ainda não entregues entram mesmo se estiverem antes dele. Sem cursor, vale a regra antiga (depois da última mensagem do assistente). No turno de handoff, o conteúdo novo vai junto da instrução de planejamento mais `CURRENT STATE` (fase e status do plano, ou o problema ativo). O system prompt vai como `system_instruction` e só é usado ao (re)criar o processo, com o histórico compacto.
 - **Troca de família de prompt:** quando `prompt_family` muda (`prober → teacher`), o turno abre com `UPDATED INSTRUCTIONS (they replace your previous system instructions)`. `SessionRecord.prompt_phase` registra a família enviada por último.
 - **Motores não persistentes:** a cada turno vai `system + PERSISTED HISTORY + regras`, e o primeiro turno recebe `opening_request` (o título da sessão **é** o pedido do aluno).
 - **Handoff:** `probe_done` arma `handoff_pending`. Quando o turno de diagnóstico termina, `_drive` roda logo em seguida um **turno de handoff** com `handoff.md` ("planeje o arco a partir do diagnóstico, chame `plan_init`, apresente e encerre"). É uma tentativa só; uma nova tentativa depende do aluno.
 - **Steers:** `deliver_steer(session_id, kind, content, details)` grava uma mensagem `role="user"` com `steer_kind` `learner` (enviada durante o turno, por `POST /api/chats/{id}/steer`) ou `job` (resultado de job), com `delivered=False`. Se a sessão está ociosa, agenda um turno. Se está ocupada, o turno corrente termina e `_steers_due` dispara um **turno de follow-up**. Com uma pergunta pendente, o steer espera a resposta e **segue junto dela**: `SessionService._attach_steers` acrescenta ao retorno da ferramenta de pergunta bloqueante os campos `learner_messages` (steers `learner`) e `background_results` (steers `job`) e os marca como entregues. Assim, um professor que encadeia perguntas no mesmo turno não deixa mensagens do aluno nem resultados de jobs esperando até o fim do turno.
-- **Escrita da prosa:** o texto em streaming é gravado a cada 0,2 s. Antes de ferramentas que mudam o plano ou abrem um problema, o texto até ali é gravado e a mensagem é dividida (`split_streaming` / `flush_streaming`), para a prosa ficar na seção certa da nota.
+- **Escrita da prosa:** durante o streaming, a cada 0,2 s só é emitido `session:updated`; o `GET /api/chats/{id}` sobrepõe o texto em memória (`SessionService.live_view`). A gravação no JSONL (que é append-only e guarda o snapshot inteiro) acontece a cada 2 s, sem re-renderizar a nota; a nota da aula é atualizada antes de ferramentas e no fim do turno. Antes de ferramentas que mudam o plano ou abrem um problema, o texto até ali é gravado e a mensagem é dividida (`split_streaming` / `flush_streaming`), para a prosa ficar na seção certa da nota.
 - **Fim do turno:**
   - status `waiting` (pergunta pendente), `queued` (há follow-up) ou `idle`;
   - `_trigger_extraction` (seção 8);
@@ -582,7 +582,7 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
 - **Steer de volta:** ao terminar, `JobManager._deliver_steer` chama `deliver_steer(session_id, "job", content, details)`:
   - o `content` é o texto para o modelo ("use e cite as fontes", ou na falha "siga em prosa; não invente o resultado");
   - `details = {job_id, kind: research|read_pdf|visual|demo, label, node_id, dispatched_at, finished_at, status: done|failed, result|error}`;
-  - a entrega é **idempotente por `job_id`** (`steer_message_id` no registro e verificação nas mensagens), mesmo com retry.
+  - a entrega é **idempotente por tentativa** (`job_id` + `attempt`): `retry()` incrementa `attempt` e limpa `steer_message_id`, então o professor que soube da falha recebe o resultado do retry; uma mesma tentativa nunca entrega duas vezes.
 - **Nota da aula:** o artefato entra na seção do nó que era o corrente no despacho: `![[viz/visuals/<slug>.svg]]`, o link da demo, ou um callout `> [!note]- Pesquisa: …`.
 - **UI** (`components/job-cards.tsx` + `lib/job-steer.ts`):
   - `ResearchCard`/`PdfCard` recolhidos, com resumo e fontes;
@@ -678,7 +678,7 @@ Os nomes das pastas ficam em `HarnessConfig.folders` (`VaultFolderMap`). A tabel
 | `jobs.jsonl` | append-only | Registros do `JobManager` |
 | `langgraph.sqlite` | SQLite | Checkpoints do pipeline de extração |
 | `prompts/<path>` | Markdown | Overrides de prompt (6.4) |
-| `prompt-overrides.json` | JSON (legado) | Fallback das flags de override |
+| `prompt-overrides.json` | JSON (legado) | Flags antigas de override: só lidas, nunca escritas |
 | `runtime/<session_id>/` | diretório | Work dir dos CLIs (`.agents/` do agy); motores não persistentes usam `runtime/<sid>/<execution_id>/` |
 | `repos/<owner>__<repo>@<ref>/` | clone git | Cache do import do GitHub |
 | `trash/` | diretório | JSONL de sessões excluídas (com sufixo datado em colisão) |

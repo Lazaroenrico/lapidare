@@ -236,3 +236,18 @@ def test_markdown_export(api_client: TestClient, fake_engine: FakeEngine) -> Non
     assert "**Pergunta:** Quanto vale (1,2)·(3,4)?" in text
     assert "- [x] 11" in text and "**Confiança:** 80%" in text and "**Raciocínio:** 1·3 + 2·4" in text
     assert "Exato." in text
+
+
+def test_restarted_diagnosis_can_close_with_probe_done_again(api_client: TestClient, app_state) -> None:
+    from learnharness.core.contracts.session import ProbeAssessment, ProbeStrand
+
+    session_id = _create(api_client)
+    _idle(api_client, session_id)
+    session = app_state.sessions.get(session_id)
+    session.assessment = ProbeAssessment(strands=[ProbeStrand(strand="s", assessment="a")], created_at="t")
+    session.handoff_pending, session.recovery_required, session.phase = True, True, "teaching"
+    app_state.sessions.save(session)
+    res = api_client.post(f"/api/chats/{session_id}/resume", json={"restart_diagnostic": True})
+    assert res.status_code == 200, res.text
+    restarted = app_state.sessions.get(session_id)
+    assert restarted.phase == "probing" and restarted.assessment is None and not restarted.handoff_pending

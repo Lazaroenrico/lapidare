@@ -17,6 +17,7 @@ override replaces a fragment's text only when it is enabled in
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from collections.abc import Mapping
@@ -60,8 +61,15 @@ def list_prompt_segments() -> list[dict[str, str]]:
     return [{"path": path, "source": (PROMPTS_ROOT / path).read_text(encoding="utf-8")} for path in paths]
 
 
+@functools.cache
+def _bundled_paths() -> frozenset[str]:
+    # Bundled fragments do not change while the process runs.
+    return frozenset([path for directory in FRAGMENT_DIRS for path in _fragments(directory)] + [HANDOFF_PATH])
+
+
 def segment_paths() -> set[str]:
-    return {segment["path"] for segment in list_prompt_segments()}
+    """Editable segment paths, without reading any fragment's text."""
+    return set(_bundled_paths())
 
 
 def _text(path: str, overrides: Mapping[str, str] | None) -> str:

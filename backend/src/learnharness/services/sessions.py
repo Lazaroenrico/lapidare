@@ -64,6 +64,10 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# Streaming: notify the UI often (the in-memory text is served by live_view), persist rarely.
+LIVE_NOTIFY_SECONDS = 0.2
+PERSIST_FLUSH_SECONDS = 2.0
+
 TURN_RULES = (
     "Every question goes through a question tool, never in prose, one per turn: probe/recall while "
     "diagnosing, then exactly one probe_done; after it, plan_init (mermaid), present the plan and end "
@@ -926,22 +930,31 @@ class SessionService:
                 stream = engine.stream_turn(prompt, session_id, slot=slot, tools=tools)
             message_id = f"msg-{uuid4().hex}"
             text = ""
-            last_flush = 0.0
+            last_flush = last_notify = asyncio.get_running_loop().time()
             streaming = self.streaming[session_id] = [message_id, "", 0]
             async for chunk in stream:
                 if streaming[0] != message_id:  # A PRACTICE tool split the message.
-                    message_id, text, last_flush = streaming[0], "", 0.0
+                    message_id, text = streaming[0], ""
                 text += chunk
                 streaming[1] = text
                 current_time = asyncio.get_running_loop().time()
-                if current_time - last_flush >= 0.2:
+                if current_time - last_notify >= LIVE_NOTIFY_SECONDS:
+                    # Live view: GET /api/chats/{id} overlays the in-memory text (live_view);
+                    # nothing is written for this tick.
+                    self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "streaming": True})
+                    last_notify = current_time
+                if current_time - last_flush >= PERSIST_FLUSH_SECONDS:
+                    # Each save appends a full snapshot to the append-only JSONL: keep it sparse.
                     streaming[2] = len(text)
-                    await self._flush(session_id, message_id, text)
+                    await self._flush(session_id, message_id, text, refresh_note=False)
                     last_flush = current_time
             self.streaming.pop(session_id, None)
             if text:
                 await self._flush(session_id, message_id, text)
             session = self.get(session_id)
+            if persistent and session.messages:
+                # Everything up to here reached the live process (in the prompt or via tools).
+                session.model_cursor = session.messages[-1].id
             if handoff_run:
                 session.handoff_pending = False  # One planning turn; a retry needs the learner.
             follow_up = (not handoff_run and self._handoff_due(session)) or self._steers_due(session)
@@ -1029,10 +1042,16 @@ class SessionService:
         post-diagnosis ``handoff`` instruction, when given, is the turn's request.
         """
         messages = list(session.messages)
-        last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
-        history, new = messages[: last + 1], messages[last + 1:]
-        # A steer can land before the assistant message of the turn it interrupted; it is
-        # still new content for the model.
+        ids = [m.id for m in messages]
+        if session.model_cursor in ids:
+            # What the live process has already seen ends at the cursor (see SessionRecord).
+            cut = ids.index(session.model_cursor)
+        else:
+            cut = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
+        history, new = messages[: cut + 1], messages[cut + 1:]
+        new = [m for m in new if m.role != "assistant"]
+        # A steer can land before the cursor (it arrived while the previous turn ran and was
+        # not handed over mid-turn); it is still new content for the model.
         new_ids = {m.id for m in new}
         late = [m for m in steers if m.id not in new_ids]
         history = [m for m in history if m.id not in {s.id for s in late}]
@@ -1042,7 +1061,10 @@ class SessionService:
             current = {"phase": session.phase, "active_problem_id": session.practice.active_problem_id}
         state = json.dumps(current, ensure_ascii=False)
         if handoff:
+            # The planning request leads; learner input that arrived meanwhile still goes along.
             body = handoff
+            if new:
+                body += "\n\nAlso new since the diagnosis:\n" + "\n\n".join(f"{m.role}: {m.content}" for m in new)
         elif new:
             body = "\n\n".join(f"{m.role}: {m.content}" for m in new)
         elif messages:
@@ -1059,7 +1081,7 @@ class SessionService:
         except Exception:
             logger.warning("Could not close engine processes for %s", session_id, exc_info=True)
 
-    async def _flush(self, session_id, message_id, text):
+    async def _flush(self, session_id, message_id, text, refresh_note: bool = True):
         text = strip_stray_tail(text)
         async with self.lock(session_id):
             session = self.get(session_id)
@@ -1081,7 +1103,23 @@ class SessionService:
                     node_id=node_id, node_spans=[NodeSpan(start=0, node_id=node_id)],
                 ))
             self.save(session)
-            self._refresh_lesson_note(session)
+            if refresh_note:
+                self._refresh_lesson_note(session)
+
+    def live_view(self, session: SessionRecord) -> SessionRecord:
+        """``session`` with the text still streaming in memory (not yet persisted) applied."""
+        entry = self.streaming.get(session.id)
+        if not entry or not entry[1]:
+            return session
+        text = strip_stray_tail(entry[1])
+        view = session.model_copy(deep=True)
+        message = next((m for m in view.messages if m.id == entry[0]), None)
+        if message is not None:
+            message.content = text
+        elif not is_stray_fragment(text):
+            view.messages.append(SessionMessage(id=entry[0], role="assistant", content=text, created_at=now(),
+                                                node_id=current_node_id(view.plan)))
+        return view
 
     def refresh_lesson_note(self, session: SessionRecord) -> None:
         self._refresh_lesson_note(session)

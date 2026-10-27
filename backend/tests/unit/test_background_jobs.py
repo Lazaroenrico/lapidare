@@ -211,7 +211,7 @@ async def test_research_job_delivers_one_steer_with_sources(tmp_path):
         assert steer.details == {
             "job_id": record["job_id"], "kind": "research", "status": "done",
             "label": "Quando saiu o Python 1.0?", "node_id": "softmax",
-            "dispatched_at": record["created_at"], "finished_at": record["finished_at"],
+            "dispatched_at": record["created_at"], "finished_at": record["finished_at"], "attempt": 1,
             "result": {"question": "Quando saiu o Python 1.0?", "engine": "gemini_cli",
                        "brief": "## Resumo\nPython 1.0 saiu em 1994.",
                        "sources": [{"title": "History", "url": "https://python.org/history"}]},
@@ -265,7 +265,7 @@ async def test_research_without_capable_engine_delivers_failure_steer(tmp_path):
         await state.close()
 
 
-async def test_steer_is_delivered_once_even_across_retry(tmp_path):
+async def test_retry_success_reaches_the_session_once_per_attempt(tmp_path):
     engine = ResearchEngine(EngineError("provider down"))
     state = _state(tmp_path, engine)
     try:
@@ -277,12 +277,15 @@ async def test_steer_is_delivered_once_even_across_retry(tmp_path):
         state.jobs.retry(dispatched["job_id"])
         await wait_until(lambda: state.active_jobs[dispatched["job_id"]]["status"] == "completed")
         await asyncio.sleep(0.05)
-        assert len(_job_steers(state, session.id)) == 1
-        # A crash between delivery and the record save must not deliver twice either.
+        # The teacher was told the first attempt failed: the retried result must reach it.
+        failed, done = _job_steers(state, session.id)
+        assert (failed.details["status"], failed.details["attempt"]) == ("failed", 1)
+        assert (done.details["status"], done.details["attempt"]) == ("done", 2)
+        # A crash between delivery and the record save must not deliver an attempt twice.
         record = state.active_jobs[dispatched["job_id"]]
         record.pop("steer_message_id")
         await state.jobs._deliver_steer(record)
-        assert len(_job_steers(state, session.id)) == 1
+        assert len(_job_steers(state, session.id)) == 2
     finally:
         await state.close()
 

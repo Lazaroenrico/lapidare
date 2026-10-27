@@ -134,7 +134,7 @@ async def create_chat(payload: CreateChatPayload, request: Request):
 @chats_router.get("/{chat_id}")
 async def get_chat(chat_id: str, request: Request):
     state = get_app_state(request.app)
-    return _with_slot(state, state.sessions.get(chat_id))
+    return _with_slot(state, state.sessions.live_view(state.sessions.get(chat_id)))
 
 
 class RenamePayload(BaseModel):
@@ -303,6 +303,10 @@ async def resume_chat(chat_id: str, payload: ResumePayload, request: Request):
             session.phase = "probing"
             from learnharness.core.contracts.session import PlanDag
             session.plan = PlanDag()
+            # A restarted diagnosis must be able to close again with probe_done.
+            session.assessment = None
+            session.handoff_pending = False
+            session.prompt_phase = None
         if not session.pending_quiz and session.phase != "completed":
             session.execution_status = "queued"
             state.sessions.save(session)

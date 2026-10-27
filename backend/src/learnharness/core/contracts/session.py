@@ -248,6 +248,10 @@ class SessionRecord(BaseModel):
     handoff_pending: bool = False
     # Prompt family ("prober" | "teacher" | "practice") last sent to a persistent process.
     prompt_phase: str | None = None
+    # Persistent engines keep the conversation: id of the last message the live process has
+    # already seen (set at the end of each successful turn). Answers and steers handed to the
+    # model mid-turn through blocking tools sit before it, so they are never resent.
+    model_cursor: str | None = None
     execution_status: ExecutionStatus = "idle"
     execution_id: str | None = None
     error: str | None = None
