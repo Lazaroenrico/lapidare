@@ -146,3 +146,14 @@ test('alternate modules put their label below the disc', () => {
   const layout = rl.layoutRoadmap(goalItems());
   assert.deepEqual(layout.modules.map((m) => m.labelBelow), [false, true, false, true, false]);
 });
+
+test('module labels take the first free slot, else the least overlapping one', () => {
+  const rl = require('/tmp/learnharness-frontend-tests/roadmap-layout.js');
+  const placed = [{x0: 0, y0: 0, x1: 100, y1: 20}];
+  const blocked = {x0: 50, y0: 5, x1: 150, y1: 25};
+  const free = {x0: 50, y0: 40, x1: 150, y1: 60};
+  assert.equal(rl.pickLabelSlot([blocked, free], placed), 1);
+  const slight = {x0: 95, y0: 0, x1: 195, y1: 20};
+  assert.equal(rl.pickLabelSlot([blocked, slight], placed), 1);
+  assert.equal(rl.pickLabelSlot([free], []), 0);
+});

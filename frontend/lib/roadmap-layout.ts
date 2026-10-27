@@ -499,3 +499,31 @@ export function roadmapEdges(
   }
   return out;
 }
+
+export interface LabelBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+const overlapArea = (a: LabelBox, b: LabelBox) =>
+  Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+
+/**
+ * Index of the first candidate box that overlaps nothing already placed; when every
+ * candidate collides, the one with the least total overlap (labels never vanish).
+ */
+export function pickLabelSlot(candidates: LabelBox[], placed: LabelBox[]): number {
+  let best = 0;
+  let bestOverlap = Infinity;
+  for (let i = 0; i < candidates.length; i++) {
+    const total = placed.reduce((sum, p) => sum + overlapArea(candidates[i], p), 0);
+    if (total === 0) return i;
+    if (total < bestOverlap) {
+      best = i;
+      bestOverlap = total;
+    }
+  }
+  return best;
+}

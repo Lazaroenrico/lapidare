@@ -21,6 +21,7 @@ import { palette, toneAlpha, withAlpha, type PaletteTone } from "@/lib/palette";
 import {
   layoutRoadmap,
   offsetRoadmapLayout,
+  pickLabelSlot,
   roadmapEdges,
   roadmapOffset,
   type Point,
@@ -459,20 +460,36 @@ export class RoadmapLayer {
         bottom = Math.max(bottom, p.y);
       }
       const stepTitles = z >= v.labelZoom * 0.85 ? (v.labelSize * 1.3) / z : 0;
-      // Baseline (bottom) of the first line.
-      const firstY = m.labelBelow
-        ? bottom + r * 3 + stepTitles + 6 / z + lineH
-        : top - r * 3 - 8 / z - (lines.length - 1) * lineH;
       ctx.textAlign = "left";
       ctx.textBaseline = "bottom";
-      let x0 = Infinity;
-      let x1 = -Infinity;
-      lines.forEach((line, i) => {
-        const last = i === lines.length - 1;
+      // Measure once; the block is centred on the module whatever its vertical slot.
+      const widths = lines.map((line, i) => {
         ctx.font = `600 ${size}px ${UI_FONT}`;
         const wMain = ctx.measureText(line).width;
         ctx.font = `400 ${size * 0.9}px ${UI_FONT}`;
-        const wCount = last ? ctx.measureText(count).width : 0;
+        return { wMain, wCount: i === lines.length - 1 ? ctx.measureText(count).width : 0 };
+      });
+      const blockW = Math.max(...widths.map((w) => w.wMain + w.wCount));
+      const blockH = lines.length * lineH;
+      // Baseline (bottom) of the first line for each candidate slot: preferred side, the
+      // other side, then further out on each side, so neighbouring labels never collide.
+      const belowY = bottom + r * 3 + stepTitles + 6 / z + lineH;
+      const aboveY = top - r * 3 - 8 / z - (lines.length - 1) * lineH;
+      const step = blockH + 4 / z;
+      const sides = m.labelBelow ? [belowY, aboveY] : [aboveY, belowY];
+      const slots: number[] = [];
+      for (let k = 0; k < 4; k++) {
+        slots.push(sides[0] + (sides[0] === belowY ? 1 : -1) * k * step);
+        slots.push(sides[1] + (sides[1] === belowY ? 1 : -1) * k * step);
+      }
+      const boxFor = (firstY: number) => ({
+        x0: m.x - blockW / 2 - 3 / z, y0: firstY - lineH, x1: m.x + blockW / 2 + 3 / z,
+        y1: firstY + (lines.length - 1) * lineH + 2 / z,
+      });
+      const firstY = slots[pickLabelSlot(slots.map(boxFor), placed)];
+      lines.forEach((line, i) => {
+        const last = i === lines.length - 1;
+        const { wMain, wCount } = widths[i];
         const x = m.x - (wMain + wCount) / 2;
         const y = firstY + i * lineH;
         ctx.font = `600 ${size}px ${UI_FONT}`;
@@ -483,10 +500,8 @@ export class RoadmapLayer {
           ctx.fillStyle = withAlpha("mutedForeground", 0.75);
           ctx.fillText(count, x + wMain, y);
         }
-        x0 = Math.min(x0, x);
-        x1 = Math.max(x1, x + wMain + wCount);
       });
-      const box = { x0: x0 - 3 / z, y0: firstY - lineH, x1: x1 + 3 / z, y1: firstY + (lines.length - 1) * lineH + 2 / z };
+      const box = boxFor(firstY);
       placed.push(box);
       this.labelHits.push({ kind: "module", key: m.key, ...box });
     }
