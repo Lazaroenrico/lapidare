@@ -17,6 +17,7 @@ from learnharness.core.graph_merge import (
     select_batch,
     uncovered_messages,
 )
+from learnharness.core.note_sources import is_source_id
 from learnharness.core.roadmap import roadmap_layout
 from learnharness.vault.graph_store import (
     append_records,
@@ -25,6 +26,7 @@ from learnharness.vault.graph_store import (
     load_graph_chains,
     load_nodes,
     load_positions,
+    load_sources,
     raw_chain_records,
     remove_concept_section,
     save_positions,
@@ -153,6 +155,7 @@ class GraphService:
         chains = load_graph_chains(vault, set(nodes))
         positions = load_positions(vault)
         sessions = {s.id: s for s in list_sessions(vault)}
+        sources = load_sources(vault)
         names = {i: n.name for i, n in nodes.items()}
 
         def position(node_id: str) -> dict[str, float]:
@@ -169,10 +172,15 @@ class GraphService:
         clusters: dict[str, dict[str, Any]] = {}
         for node in nodes.values():
             birth = node.provenance[0].session_id if node.provenance else "notes"
-            cluster = clusters.setdefault(birth, {
-                "id": birth, "label": sessions[birth].title if birth in sessions else birth,
-                "kind": "session" if birth in sessions else "notes", "size": 0,
-            })
+            if birth in sources:
+                # Fase 16: a note source is its own petal, labelled by the note title.
+                cluster = clusters.setdefault(birth, {"id": birth, "label": sources[birth].title,
+                                                      "kind": "notes", "size": 0, "path": sources[birth].path})
+            else:
+                cluster = clusters.setdefault(birth, {
+                    "id": birth, "label": sessions[birth].title if birth in sessions else birth,
+                    "kind": "session" if birth in sessions else "notes", "size": 0,
+                })
             cluster["size"] += 1
             out_nodes.append({
                 "id": node.id, "name": node.name, "title": node.name,
@@ -180,7 +188,12 @@ class GraphService:
                 "cluster": birth, "cluster_id": birth,
                 "sessions": [{"session_id": p.session_id,
                               "title": sessions[p.session_id].title if p.session_id in sessions else "",
-                              "message_id": p.message_id} for p in node.provenance],
+                              "message_id": p.message_id} for p in node.provenance
+                             if not is_source_id(p.session_id)],
+                "sources": [{"source_id": p.session_id, "title": sources[p.session_id].title,
+                             "path": sources[p.session_id].path, "paragraph": p.message_id,
+                             "deleted": sources[p.session_id].deleted}
+                            for p in node.provenance if p.session_id in sources],
                 "vault_rel_path": node.vault_rel_path, "file_path": node.vault_rel_path,
                 "status": "aprendendo", "depends_on": list(dict.fromkeys(premises_of.get(node.id, []))),
                 "ghost": False, "legacy": False, "created_at": node.created_at, **position(node.id),

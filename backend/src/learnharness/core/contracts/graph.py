@@ -157,3 +157,32 @@ class MergePlan(BaseModel):
         ids = [n.id for n in self.new_nodes] + [a["id"] for a in self.link_appends]
         ids += [c.conclusion for c in self.new_chains]
         return list(dict.fromkeys(ids))
+
+
+# ============================================================================
+# Fase 16: notes -> graph (.harness/graph/sources.jsonl)
+# ============================================================================
+
+
+class SourceRecord(BaseModel):
+    """A vault note registered as a graph source. ``id = "src_" + sha256(path)[:12]``.
+
+    Provenance of the nodes it produced is ``{session_id: id, message_id: <slice id>}``.
+    A ``deleted`` source keeps its title for labels; the note itself is never touched.
+    """
+    id: str
+    path: str
+    title: str
+    imported_at: str = ""
+    deleted: bool = False
+
+
+class NoteSlice(BaseModel):
+    """One extraction unit of a note: a heading section or a paragraph.
+
+    ``id`` is the block anchor (``p3``) when the slice starts at an anchored paragraph,
+    otherwise its position (``s4``); coverage is per ``(source_id, id, fingerprint)``.
+    """
+    id: str
+    content: str
+    heading: str = ""

@@ -7,7 +7,7 @@
  * Sem outline nativo: o foco aparece como mudança de borda/fundo.
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 export const cx = (...parts: Array<string | false | null | undefined>) =>
@@ -191,3 +191,33 @@ export function handleListKeys(e: React.KeyboardEvent<HTMLElement>) {
 
 export const errMsg = (err: unknown, fallback: string) =>
   err instanceof Error && err.message ? err.message : fallback;
+
+/** Checkbox de pasta com estado indeterminado (alguns filhos marcados). */
+export function FolderCheckbox({
+  id,
+  state,
+  onChange,
+  label,
+}: {
+  id: string;
+  state: "all" | "some" | "none";
+  onChange: (value: boolean) => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === "some";
+  }, [state]);
+  return (
+    <input
+      ref={ref}
+      id={id}
+      data-nav
+      type="checkbox"
+      aria-label={label}
+      checked={state === "all"}
+      onChange={(e) => onChange(e.target.checked)}
+      className="accent-foreground cursor-pointer"
+    />
+  );
+}

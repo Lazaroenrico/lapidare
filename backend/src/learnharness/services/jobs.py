@@ -86,6 +86,10 @@ class JobManager:
             summary = await self.state.graph.extract_session(payload["session_id"])
             record["result_id"] = payload["session_id"]
             record["result"] = {k: summary[k] for k in ("batches", "new_node_ids", "new_chain_ids")}
+        elif kind == "notes_import":
+            # Payload: {label, files: [{source_id, path, title}]}; record["files"] = live per-file status.
+            from learnharness.services.graph_notes import run_import_job
+            record["result"] = await run_import_job(self.state, record, lambda: self.save(record))
         elif kind == "track_gen":
             # Payload: {track_id, regenerate}; jobs from before Fase 14 carry no track_id
             # and mean the active track.

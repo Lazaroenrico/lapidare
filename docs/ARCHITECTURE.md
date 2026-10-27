@@ -143,6 +143,7 @@ learnharness/
 │   │   │   ├── calibration.py        # matriz acerto × confiança, resposta compacta, mastery
 │   │   │   ├── plan_mermaid.py       # parser/validador do plano mermaid, status derivados
 │   │   │   ├── graph_merge.py        # fold de nodes/chains, cobertura, plano de merge
+│   │   │   ├── note_sources.py       # Fase 16: source_id, fold de sources, fatias de nota, citações
 │   │   │   ├── practice.py           # graph_search, resolve_targets, fila de reteste
 │   │   │   ├── compaction.py         # quando compactar, cauda literal, render do resumo
 │   │   │   ├── session_export.py     # exportação Markdown da sessão
@@ -163,6 +164,7 @@ learnharness/
 │   │   ├── services/                 # casos de uso com estado (orquestram core + vault + engines)
 │   │   │   ├── sessions.py · practice.py · graph.py · tracks.py · jobs.py · usage.py
 │   │   │   ├── compaction.py · research.py · pdf_reader.py · visuals.py · demos.py
+│   │   │   ├── graph_notes.py        # Fase 16: fontes de notas, job notes_import, remoção
 │   │   │   └── agy_permissions.py · secrets.py
 │   │   ├── vault/                    # todo acesso a disco do Vault
 │   │   │   ├── bootstrap.py · safety.py · markdown_ast.py · lesson_layout.py
@@ -272,6 +274,7 @@ Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
 | `research` | Ferramenta `research` | `services/research.run_research_job` |
 | `pdf` | Ferramenta `read_pdf` | `services/pdf_reader.run_pdf_job` |
 | `visual` | Ferramenta `visual` | `services/visuals.run_visual_job` → `viz/visuals/<slug>.svg` |
+| `notes_import` | `POST /api/graph/import`, `POST /api/graph/import-vault` (Fase 16) | `services/graph_notes.run_import_job`: até 3 arquivos em paralelo, `record.files[]` com status por arquivo (seção 8.4) |
 
 Os jobs despachados de uma sessão (`research`, `pdf`, `visual`, `demo_builder`) **voltam para ela como steer** (seção 9).
 
@@ -525,7 +528,8 @@ Sessões inexistentes respondem `404` (`SessionNotFound`).
 |---|---|
 | `nodes.jsonl` | Criação `{id: "n_<12hex>", name, statement, aliases, created_at, provenance: [{session_id, message_id}], vault_rel_path}`; *link-appends* `{id, aliases?, provenance?}`; tombstone `{id, deleted: true}`; *unlink* `{id, unlink_session}` |
 | `chains.jsonl` | `{id: "arg_<12hex>", premises: [node_id], conclusion, provenance, created_at}`; cadeias com as mesmas `(premissas ordenadas, conclusão)` se fundem na leitura |
-| `coverage.jsonl` | `{session_id, message_id, fp: sha256, tokens, at}`: que prosa do professor já foi extraída |
+| `coverage.jsonl` | `{session_id, message_id, fp: sha256, tokens, at}`: que prosa do professor já foi extraída. Para notas, `session_id` é o `source_id` e `message_id` a fatia. Uma linha `{session_id, reset: true}` esquece as anteriores daquela origem |
+| `sources.jsonl` | *(Fase 16)* `{id: "src_<sha256(caminho)[:12]>", path, title, imported_at}`; tombstone `{id, deleted: true}` (o título continua servindo de rótulo) |
 | `positions.json` | `{node_id: {x, y}}` arrastados pelo aluno (reescrito atomicamente) |
 
 O *fold* é puro (`core/graph_merge.fold_nodes` / `fold_chains`), e o I/O fica em `vault/graph_store.py`. O antigo `.harness/chains.jsonl` (na raiz de `.harness/`) e as notas `Conceitos/*.md` sem `harness_id` continuam visíveis como nós `legacy` (`GraphService._legacy`).
@@ -567,6 +571,26 @@ flowchart LR
   - `DELETE /api/graph/nodes/{id}` grava tombstone no nó e nas cadeias que o citam e remove **só o bloco gerenciado** da nota. A nota só é apagada se ficar vazia **e** tiver sido criada pelo harness.
   - `GraphService.unlink_session` (excluir sessão com `delete-nodes`) grava *unlink*; nós e cadeias sem proveniência restante viram tombstone.
 - **Outras rotas:** `PUT /api/graph/positions` e `GET /api/graph/concepts/{id}/note` (painel **Abrir nota**, restrito a `Conceitos/`).
+
+### 8.4 Notas → grafo (Fase 16)
+
+Além das sessões TEACH, notas do Vault alimentam o rastro (`core/note_sources.py`, puro; `services/graph_notes.py`; rotas em `api/routes/graph.py`).
+
+- **Fontes aceitas:** arquivos enviados (`.md`, `.markdown`, `.txt`, `.pdf`, até 20 MB cada) e qualquer `.md` do Vault fora de pastas ocultas (`.harness/`, `.obsidian/`…) e de `Conceitos/`, incluindo `Fontes/` e `Aulas/`.
+- **Rotas:**
+  - `POST /api/graph/import` (multipart `files[]`, aceita também `files`): cada arquivo vai para `Fontes/Notas/` (`Sources/Notes/` em EN) pelo importador existente (`^pN`, somente leitura, `source_kind: notes`) e é registrado como fonte.
+  - `POST /api/graph/import-vault` `{paths}`: registra notas que já estão no Vault, **sem copiá-las nem alterá-las**.
+  - As duas respondem `202 {job, files: [{filename, status: queued|rejected, source_id, path, title, error}]}`; um arquivo recusado não derruba os outros, e sem nenhum aceito `job` é `null`.
+  - `GET /api/graph/importable-notes` → `{notes: [{path, name, folder, source_id, imported}], truncated}` (até 5000) para o seletor da UI.
+  - `GET /api/graph/sources` (fontes vivas + `node_count`), `GET /api/graph/sources/{id}/note` (markdown somente leitura, só de fontes registradas).
+  - `DELETE /api/graph/sources/{id}?mode=preserve-graph|delete-nodes`: tombstone da fonte; com `delete-nodes`, o mesmo `unlink_session` das sessões (nós sem proveniência viram tombstone) e um `reset` de cobertura, para que reimportar extraia de novo. **Nunca** apaga a nota.
+- **Identidade:** `source_id = "src_" + sha256(caminho relativo)[:12]`, registrado em `sources.jsonl`; registrar de novo com o mesmo título não grava linha.
+- **Fatias (`slice_note`):** seções por título (`#`…`######`, o título vai junto do texto); uma seção acima de `graph.extraction_chunk_tokens` é quebrada por parágrafo. Notas com âncoras `^pN` (tudo em `Fontes/`) são fatiadas por parágrafo, com o título da seção como contexto. Frontmatter e o aviso `> [!info]` do importador ficam de fora. A fatia se chama `pN` (âncora do primeiro parágrafo) ou `s<n>` (posição).
+- **Extração:** o mesmo LangGraph extrator → auditor → merger, com `origin: "notes"`: o prompt traz blocos `NOTE [<fatia>]` e o system recebe `NOTES_PREAMBLE` (notas do aluno, não uma aula; pular to-dos, perguntas e metadados; só verdades). Os lotes são fatias descobertas (`uncovered_slices` + `select_batch`) até o orçamento. A cobertura é por `(source_id, fatia, fingerprint)`: reimportar sem mudanças não chama o modelo, e editar uma seção reextrai só ela.
+- **Proveniência e notas de conceito:** `{session_id: source_id, message_id: fatia}`. O bloco gerenciado de `Conceitos/` cita `[[<nota>#^pN]]` quando a fatia tem âncora, senão `[[<nota>]]`; o frontmatter `sessions` lista só sessões reais.
+- **Concorrência:** o job processa até 3 arquivos em paralelo (`PARALLEL_FILES`), dentro do semáforo global do `JobManager`. Os extratores correm em paralelo; auditor e merger tomam o `GraphService.lock` (`merge_lock` no `configurable` do LangGraph), e o merger religa por nome exato uma proposição que outra fusão criou depois da auditoria. A extração de sessão continua segurando o lock pelo run inteiro.
+- **Job `notes_import`:** `record.files[] = {source_id, path, title, status: queued|running|completed|partial|failed, batches, new_node_ids, error}`, salvo a cada mudança (o SSE `jobs:updated` leva à UI); `activity` = `"k/N"`. `partial` = alguns lotes gravados antes da falha, ou notas de conceito não escritas. O job fica `failed` se algum arquivo não completou; `retry` reabre e só o que falta é extraído.
+- **Snapshot:** nós nascidos de uma fonte formam um cluster `{id: source_id, label: título da nota, kind: "notes", path}` (uma pétala no layout radial). Cada nó traz `sources: [{source_id, title, path, paragraph, deleted}]`, e `sessions[]` exclui as fontes.
 
 ---
 
@@ -673,7 +697,7 @@ Os nomes das pastas ficam em `HarnessConfig.folders` (`VaultFolderMap`). A tabel
 |---|---|---|
 | `config.json` | JSON (escrita atômica) | `HarnessConfig` (11.4) |
 | `sessions/<id>.jsonl` | append-only | Snapshots e eventos do `SessionRecord` |
-| `graph/{nodes,chains,coverage}.jsonl` | append-only | Rastro de conhecimento (8.1) |
+| `graph/{nodes,chains,coverage,sources}.jsonl` | append-only | Rastro de conhecimento (8.1) e fontes de notas (8.4) |
 | `graph/positions.json` | JSON | Posições arrastadas |
 | `quiz-log.jsonl` | append-only | `CalibrationResult` de cada resposta com nota |
 | `practice-log.jsonl` | append-only | Uma linha por `conclude` |
@@ -735,7 +759,7 @@ A gravação usa só o formato novo.
 
 ## 12. Import multi-fonte
 
-Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter de proveniência: `source_kind`, URL, `commit`, `imported_at`, `mcp_server`/`mcp_item_id`, e `origem` (`MCP: <servidor>`, `Import` ou `Local`). Reimportar cria uma nova versão imutável. Conteúdo remoto é **dado, não instrução**. Na UI, `import-dialog.tsx` tem as abas `import-mcp-items.tsx`, `import-github-panel.tsx` e `import-local-panel.tsx`, e `lib/import-wire.ts` contém os construtores puros das requisições.
+Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter de proveniência: `source_kind`, URL, `commit`, `imported_at`, `mcp_server`/`mcp_item_id`, e `origem` (`MCP: <servidor>`, `Import` ou `Local`). Reimportar cria uma nova versão imutável. Conteúdo remoto é **dado, não instrução**. Na UI, `import-dialog.tsx` tem as abas `import-mcp-items.tsx`, `import-github-panel.tsx`, `import-local-panel.tsx` e **Adicionar ao grafo** (`import-notes-panel.tsx`, Fase 16, seção 8.4; o diálogo aceita `initialTab="graph"`), e `lib/import-wire.ts` contém os construtores puros das requisições.
 
 - **MCP genérico** (`mcp/content_client.py`, `/api/import/mcp/servers*`):
   - aceita **qualquer** servidor por `http` (streamable), `sse` ou `stdio`, com uma conexão por chamada e timeout rígido;
@@ -770,6 +794,8 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 - **Layout radial ("flor", `lib/radial-layout.ts`, puro e determinístico):** cada cluster (sessão de nascimento) ocupa um setor angular em torno de um centro vazio, com largura ∝ tamanho^0,75, em sentido horário a partir do topo na ordem dos clusters do snapshot. Dentro do setor, cada proposição fica num anel pela profundidade de inferência: quem nunca é conclusão é profundidade 0 (anel interno, raio `ringRadius`) e cada passo de derivação vai `depthSpacing` para fora; junções ficam no meio entre a premissa mais profunda e a conclusão. A profundidade é o caminho de derivação mais longo; ciclos não travam (quando só sobram ciclos, libera-se o menor id pendente). Proposições sem nenhuma chain vão para uma faixa externa espalhada (logo além do quantil 90 das profundidades), ainda no setor do seu cluster. A ordem angular dentro do setor percorre cada árvore a partir das conclusões mais externas, então cada árvore ocupa um arco contíguo (pétalas). O motor soma às forças radiais (anel, parede do setor, atração ao ângulo planejado, atração ao centro opcional) a repulsão e as molas das arestas; todas esfriam com `alpha`, então os anéis prevalecem em repouso. Setores têm um vão escuro entre si e as sementes usam só o miolo do setor (pétalas estreitas e separadas); arestas entre sessões diferentes têm mola fraca e traço tênue, para não amarrar pétalas umas às outras. Nós já existentes mantêm a posição quando o grafo cresce (só os novos são semeados no plano), e nós arrastados/persistidos ficam fixos.
 - **Desenho:** nebulosa por cluster = nós e arestas do cluster dilatados (`regionDilation`) num buffer opaco, borrados (`regionBlur`) e tingidos uma única vez (`regionIntensity`), com tons misturados só de tokens da paleta, distintos entre setores vizinhos; rótulos dos nós sob cada ponto em unidades de mundo (micro na visão geral, legíveis no zoom; contraste total a partir de `labelZoom`; colisão evita sobreposição); nomes das sessões na ponta externa de cada pétala, em px de tela, somem ao aproximar e evitam sobreposição (do lado direito crescem para dentro quando o ⇶ Roteiro está ligado, que fica à direita da flor).
 - **Ajustes (⚙, `lib/graph-settings.ts`, chave `learnharness:graph-settings:v2`):** Exibição (tamanho do nó, espessura/opacidade da aresta, tamanho do rótulo, zoom para rótulos nítidos, nomes das sessões on/off + tamanho), Regiões (opacidade, dilatação, desfoque), Layout radial (raio do anel interno, espaço entre níveis, força dos níveis) e Física (repulsão, atração, comprimento da aresta, atração ao centro, coesão de cluster, atrito). O mesmo componente de controle serve o painel e Configurações → Grafo.
+- **Origem em nota (Fase 16):** o cartão do nó lista "nota: <título>" (com `^pN` quando houver) e abre a nota no mesmo painel somente leitura (`ConceptNotePane` com `sourceId`, via `GET /api/graph/sources/{id}/note`, frontmatter omitido) ou no Obsidian, se ligado. Um nó só de notas não mostra "Sessões de origem".
+- **`import-notes-panel.tsx` (Adicionar ao grafo):** "Notas do Vault" (árvore por pasta com busca sem acento, seleção por pasta, selo "no grafo") ou "Arquivos locais" (vários, arrastar e soltar); resultado por arquivo acompanhado por `jobs:updated` → `GET /api/jobs`; lista "Notas no grafo" com **Tirar do grafo** (manter ou remover os nós). A bandeja BACKGROUND AGENTS mostra uma linha por arquivo dos jobs `notes_import`.
 - **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
 - **`question-dock.tsx` + `lib/question-core.ts`:**
   - opções embaralhadas de forma determinística por `quiz_id`;
@@ -802,6 +828,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `model-choice.ts`, `popover-position.ts` | Seletor de modelo |
 | `keyboard.ts`, `key-capture.ts`, `command-events.ts`, `appearance.ts` | Atalhos e aparência |
 | `tracks.ts`, `tracks-i18n.ts`, `settings-i18n.ts` | Trilhas e strings |
+| `notes-import.ts` | Fase 16: requisições (`files[]`, `import-vault`, fontes), decoders, fusão do status por arquivo do job, árvore de notas com busca, `stripFrontmatter` e strings PT-BR/EN |
 | `session-trash.ts` | Decoder da lixeira (`decodeTrashList`, `decodeRestoreResult`), caminhos das rotas, filtro de SSE (`touchesTrash`) e strings PT-BR/EN |
 | `api.ts`, `tracks-api.ts`, `settings-api.ts`, `types.ts` | Clientes HTTP e tipos (não puros) |
 
@@ -844,7 +871,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | Eventos | `GET /api/events` |
 | Setup | `GET /api/setup/status` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
 | Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `GET /api/chats/trash` · `POST /api/chats/trash/{file}/restore` · `DELETE /api/chats/trash/{file}?confirm=true` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
-| Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` |
+| Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` · *(Fase 16)* `POST /api/graph/import` · `POST /api/graph/import-vault` · `GET /api/graph/importable-notes` · `GET /api/graph/sources` · `GET /api/graph/sources/{id}/note` · `DELETE /api/graph/sources/{id}?mode=preserve-graph\|delete-nodes` |
 | Trilhas | `GET\|POST /api/tracks` · `PUT\|DELETE /api/tracks/{id}` · `POST /api/tracks/{id}/activate` · `POST /api/tracks/{id}/regenerate` · *(Fase 15)* `POST /api/tracks/{id}/leveling` · `POST /api/tracks/{id}/leveling/{session_id}/undo` |
 | Jobs e artefatos | `GET /api/jobs` · `POST /api/jobs/{id}/retry` · `POST /api/jobs/extract` · `POST /api/demos` · `GET /api/demos/{slug}` · `GET /api/visuals/{slug}` |
 | Import e fontes | `GET\|POST /api/import/mcp/servers` · `DELETE /api/import/mcp/servers/{name}` · `POST …/{name}/test` · `GET …/{name}/items` · `POST …/{name}/import` · `GET /api/import/catalog` · `POST /api/import/ingest` · `POST /api/import/source` · `POST /api/import/github/preview` · `POST /api/import/github/import` · `POST /api/import/local` · `GET /api/sources/paragraph` · `GET /api/sources/{source}/paragraph/{pN}` |
@@ -907,6 +934,7 @@ As fases 1 a 7 (Ondas 1 e 2: fundação, Setup/Vault, Home, sala de aula TEACH, 
 | 12 | [`fase-12-ux-sessao.md`](specs/fase-12-ux-sessao.md) | Steer durante o turno, Esc, ⌘F, renomear, excluir (lixeira + unlink), abortar, dispensar, exportar, compactação |
 | 13 | [`fase-13-configuracoes-atalhos.md`](specs/fase-13-configuracoes-atalhos.md) | Configurações com navegação lateral, editor de prompts, aparência, teclado, atalhos globais |
 | 14 | [`fase-14-multiplas-trilhas.md`](specs/fase-14-multiplas-trilhas.md) | Várias trilhas com uma em foco, `/api/tracks`, migração do `track` legado, roteiro por trilha, MCP genérico |
+| 16 | [`fase-16-18-notas-artefatos-onboarding.md`](specs/fase-16-18-notas-artefatos-onboarding.md) | Notas → grafo: `sources.jsonl`, fatias por título/parágrafo, cobertura por fonte, job `notes_import` por arquivo, aba **Adicionar ao grafo**, origem "nota:" no cartão do nó (seção 8.4) |
 | 15 | [`fase-15-nivelamento.md`](specs/fase-15-nivelamento.md) | **Em implementação:** nivelamento de trilha por busca binária (`leveling_done`, desfazer) |
 
 Depois da Fase 14 vieram ainda a paleta roxa escura (`149ba9d`), o seletor de modelo redesenhado (`5b8580a`) e a renomeação do produto para Lapidare (`4ac8746`).

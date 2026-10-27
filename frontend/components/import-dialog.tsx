@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Modal "↑ Import" multi-fonte (Fase 3B): MCP · GitHub · Arquivo local.
+ * Modal "↑ Import" multi-fonte (Fase 3B): MCP · GitHub · Arquivo local · Adicionar ao grafo (Fase 16).
  * Aba padrão (§3.2.2): MCP quando há servidor habilitado; senão, o importador local.
  * Após gravar, o backend emite `vault:changed` e o grafo se atualiza pelo SSE único.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, GitBranch, Server, Upload, X } from "lucide-react";
+import { FileText, GitBranch, Network, Server, Upload, X } from "lucide-react";
 import { listMcpServers } from "@/lib/api";
 import type { ImportResult, McpImportServer } from "@/lib/types";
 import { useLocale } from "./locale-provider";
@@ -16,32 +16,36 @@ import { McpServerManager } from "./mcp-server-manager";
 import { McpItemsBrowser } from "./import-mcp-items";
 import { GithubImportPanel } from "./import-github-panel";
 import { LocalImportPanel } from "./import-local-panel";
+import { NotesGraphPanel } from "./import-notes-panel";
+import { notesText } from "@/lib/notes-import";
 import { Banner, cx, errMsg } from "./import-ui";
 
 interface ImportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onImportComplete?: (sourcePath: string, sessionId?: string) => void;
+  /** Aba inicial (ex.: "graph" para "Importar notas para o grafo"); sem ela, MCP ou local. */
+  initialTab?: ImportTab;
 }
 
-type ImportTab = "mcp" | "github" | "local";
-const TABS: ImportTab[] = ["mcp", "github", "local"];
+export type ImportTab = "mcp" | "github" | "local" | "graph";
+const TABS: ImportTab[] = ["mcp", "github", "local", "graph"];
 
-export function ImportDialog({ isOpen, onClose, onImportComplete }: ImportDialogProps) {
+export function ImportDialog({ isOpen, onClose, onImportComplete, initialTab }: ImportDialogProps) {
   if (!isOpen) return null;
-  return <ImportDialogBody onClose={onClose} onImportComplete={onImportComplete} />;
+  return <ImportDialogBody onClose={onClose} onImportComplete={onImportComplete} initialTab={initialTab} />;
 }
 
-function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps, "isOpen">) {
+function ImportDialogBody({ onClose, onImportComplete, initialTab }: Omit<ImportDialogProps, "isOpen">) {
   const router = useRouter();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [servers, setServers] = useState<McpImportServer[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<ImportTab | null>(null);
   const [visited, setVisited] = useState<Set<ImportTab>>(new Set());
   const [selectedServer, setSelectedServer] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const tabRefs = useRef<Record<ImportTab, HTMLButtonElement | null>>({ mcp: null, github: null, local: null });
+  const tabRefs = useRef<Record<ImportTab, HTMLButtonElement | null>>({ mcp: null, github: null, local: null, graph: null });
 
   const openTab = useCallback((next: ImportTab) => {
     setTab(next);
@@ -54,13 +58,13 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
       .then((list) => {
         if (!alive) return;
         setServers(list ?? []);
-        openTab((list ?? []).some((s) => s.enabled) ? "mcp" : "local");
+        openTab(initialTab ?? ((list ?? []).some((s) => s.enabled) ? "mcp" : "local"));
       })
       .catch((err) => {
         if (!alive) return;
         setServers([]);
         setLoadError(errMsg(err, t.mcpEmpty));
-        openTab("local");
+        openTab(initialTab ?? "local");
       });
     return () => {
       alive = false;
@@ -110,6 +114,7 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
     mcp: { label: t.impTabMcp, Icon: Server },
     github: { label: t.impTabGithub, Icon: GitBranch },
     local: { label: t.impTabLocal, Icon: FileText },
+    graph: { label: notesText(locale).tab, Icon: Network },
   };
   const enabledCount = servers?.filter((s) => s.enabled).length ?? 0;
 
@@ -240,6 +245,18 @@ function ImportDialogBody({ onClose, onImportComplete }: Omit<ImportDialogProps,
               className="flex-1 min-h-0 overflow-y-auto p-4"
             >
               <LocalImportPanel onImported={handleImported} />
+            </div>
+          )}
+
+          {visited.has("graph") && (
+            <div
+              id="import-panel-graph"
+              role="tabpanel"
+              aria-labelledby="import-tab-graph"
+              hidden={tab !== "graph"}
+              className="flex-1 min-h-0 overflow-y-auto p-4"
+            >
+              <NotesGraphPanel />
             </div>
           )}
         </div>

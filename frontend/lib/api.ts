@@ -53,6 +53,23 @@ import {
 } from "./import-wire";
 import { decodeAnswer, decodeQuiz, decodeSession } from "./session-wire";
 import { decodeGraph } from "./graph-wire";
+import {
+  buildDeleteSource,
+  buildImportableNotes,
+  buildImportVaultNotes,
+  buildListSources,
+  buildNotesUpload,
+  decodeImportableNotes,
+  decodeNotesImport,
+  decodeSourceNote,
+  decodeSources,
+  sourceNotePath,
+  type DeleteSourceMode,
+  type GraphSource,
+  type ImportableNotes,
+  type NotesImportResponse,
+  type SourceNote,
+} from "./notes-import";
 import { decodeUsageReport } from "./usage";
 import type { ModelChoicePayload } from "./model-choice";
 import type { UsageReport } from "./types";
@@ -344,6 +361,24 @@ export interface ConceptNote {
  */
 export async function getConceptNote(id: string, signal?: AbortSignal): Promise<ConceptNote> {
   return fetchJson(`/api/graph/concepts/${encodeURIComponent(id)}/note`, { signal }, { silent: true });
+}
+
+// --- Fase 16: notes -> graph ---
+
+export const uploadNotesToGraph = async (files: File[]): Promise<NotesImportResponse> =>
+  decodeNotesImport(await send<unknown>(buildNotesUpload(files.map((f) => ({ blob: f, name: f.name })))));
+export const importVaultNotesToGraph = async (paths: string[]): Promise<NotesImportResponse> =>
+  decodeNotesImport(await send<unknown>(buildImportVaultNotes(paths)));
+export const listImportableNotes = async (signal?: AbortSignal): Promise<ImportableNotes> =>
+  decodeImportableNotes(await send<unknown>(buildImportableNotes(), signal));
+export const listGraphSources = async (signal?: AbortSignal): Promise<GraphSource[]> =>
+  decodeSources(await send<unknown>(buildListSources(), signal));
+export const deleteGraphSource = (id: string, mode: DeleteSourceMode) => send<unknown>(buildDeleteSource(id, mode));
+
+export async function getSourceNote(id: string, signal?: AbortSignal): Promise<SourceNote> {
+  const note = decodeSourceNote(await fetchJson<unknown>(sourceNotePath(id), { signal }, { silent: true }));
+  if (!note) throw new ApiError("Note not found", 404, null);
+  return note;
 }
 
 // --- Sources & Citations ---

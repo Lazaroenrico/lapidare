@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { FileText, Loader2, Lock, NotebookText, X } from "lucide-react";
-import { ApiError, getConceptNote, isAbortError, type ConceptNote } from "@/lib/api";
+import { ApiError, getConceptNote, getSourceNote, isAbortError, type ConceptNote } from "@/lib/api";
 import { LessonProse } from "./lesson-prose";
 import { useLocale } from "./locale-provider";
 
@@ -11,13 +11,17 @@ interface ConceptNotePaneProps {
   conceptName: string;
   fallbackPath: string;
   onClose: () => void;
+  /** Fase 16: show a source note (`GET /api/graph/sources/{id}/note`) instead of a concept note. */
+  sourceId?: string | null;
 }
 
 /**
  * Read-only slide-over showing a concept note (Conceitos/*.md) rendered with LessonProse.
  * Mirrors SourceCitationPane styling. Never writes to the Vault.
  */
-export function ConceptNotePane({ conceptId, conceptName, fallbackPath, onClose }: ConceptNotePaneProps) {
+export function ConceptNotePane({ conceptId: concept, conceptName, fallbackPath, onClose, sourceId = null }: ConceptNotePaneProps) {
+  // One pane, two read-only origins: a concept note or a vault note the graph was fed with.
+  const conceptId = sourceId ?? concept;
   const { t } = useLocale();
   const [note, setNote] = useState<ConceptNote | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,7 +45,7 @@ export function ConceptNotePane({ conceptId, conceptName, fallbackPath, onClose 
     setLoading(true);
     setError(null);
     setNote(null);
-    getConceptNote(conceptId, controller.signal)
+    (sourceId ? getSourceNote(sourceId, controller.signal) : getConceptNote(conceptId, controller.signal))
       .then(setNote)
       .catch((err: unknown) => {
         if (isAbortError(err)) return;
@@ -52,7 +56,7 @@ export function ConceptNotePane({ conceptId, conceptName, fallbackPath, onClose 
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [conceptId]);
+  }, [conceptId, sourceId]);
 
   if (!conceptId) return null;
 
@@ -113,7 +117,7 @@ export function ConceptNotePane({ conceptId, conceptName, fallbackPath, onClose 
 
         <div className="p-3 bg-background border-t border-border flex items-center justify-between text-[11px] text-muted-foreground">
           <span>
-            Obsidian: <code>[[{conceptName}]]</code>
+            Obsidian: <code>[[{sourceId ? path.replace(/\.md$/, "") : conceptName}]]</code>
           </span>
           <button
             type="button"
