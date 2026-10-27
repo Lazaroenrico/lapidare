@@ -18,6 +18,7 @@ import type {
   SessionExecutionStatus,
   SessionMessage,
 } from "./types";
+import { decodeJobSteer, type JobSteer } from "./job-steer";
 
 type Raw = Record<string, unknown>;
 
@@ -133,6 +134,7 @@ const normText = (s: string) => s.replace(/\s+/g, " ").trim();
 
 export type PracticeTranscriptItem =
   | { type: "message"; key: string; message: SessionMessage }
+  | { type: "job"; key: string; message: SessionMessage; job: JobSteer }
   | { type: "attempt"; key: string; text: string; at: string; problemId: string | null; messageId: string | null }
   | { type: "problem"; key: string; problem: PracticeProblem }
   | { type: "conclusion"; key: string; problem: PracticeProblem }
@@ -156,6 +158,7 @@ const toMillis = (ts: string): number | null => {
 const RANK: Record<PracticeTranscriptItem["type"], number> = {
   problem: 0,
   message: 1,
+  job: 1,
   answer: 1,
   attempt: 1,
   conclusion: 2,
@@ -191,6 +194,10 @@ export function buildPracticeTranscript(input: PracticeTranscriptInput): Practic
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "assistant") continue;
     const ts = message.created_at || message.timestamp;
+    if (message.steer_kind === "job") {
+      push({ type: "job", key: message.id, message, job: decodeJobSteer(message.details, ts) }, ts);
+      continue;
+    }
     const answer = message.quiz_id ? answers[message.quiz_id] : undefined;
     if (answer) {
       push({ type: "answer", key: message.id, answer }, ts);

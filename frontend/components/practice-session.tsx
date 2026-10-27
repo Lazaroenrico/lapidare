@@ -7,6 +7,7 @@ import { useLocale } from "@/components/locale-provider";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { AnsweredQuestionCard } from "@/components/transcript-cards";
+import { JobCard } from "@/components/job-cards";
 import { appendDictation, useDictation } from "@/components/use-dictation";
 import {
   dockKeyAction,
@@ -184,6 +185,8 @@ export function PracticeTranscript({
             return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
           case "pending":
             return <QuestionDock key={item.key} quiz={item.quiz} sessionId={sessionId} onAnswerSubmitted={onAnswerSubmitted} />;
+          case "job":
+            return <JobCard key={item.key} job={item.job} message={item.message} />;
           case "message":
             return renderMessage(item.message, item.key);
         }
