@@ -28,6 +28,7 @@ import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { palette } from "@/lib/palette";
 import { useLocale } from "@/components/locale-provider";
+import { NavDrawerButton } from "@/components/nav-drawer";
 
 interface DrawPageProps {
   params: Promise<{ slug: string }>;
@@ -130,6 +131,7 @@ export default function DrawSlugPage({ params }: DrawPageProps) {
           ========================================================================= */}
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-2.5 z-20 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
+          <NavDrawerButton />
           <Link
             href="/"
             className="flex items-center justify-center h-8 w-8 rounded border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"

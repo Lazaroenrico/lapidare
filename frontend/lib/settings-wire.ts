@@ -93,6 +93,20 @@ export function groupPrompts(segments: PromptSegment[]): Array<{ id: PromptGroup
 export const promptUrl = (path: string) =>
   `/api/settings/prompts/${path.split("/").map(encodeURIComponent).join("/")}`;
 
+/** What the editor starts from: the saved override, else the original text. */
+export function promptBaseline(segment: PromptSegment): { text: string; enabled: boolean } {
+  return segment.override !== null ? { text: segment.override, enabled: segment.enabled } : { text: segment.source, enabled: true };
+}
+
+/**
+ * Whether the editor holds something worth saving. Without an override, only a text that
+ * differs from the original counts (saving the untouched original would just pin a copy).
+ */
+export function promptDirty(segment: PromptSegment, draft: string, enabled: boolean): boolean {
+  if (segment.override === null) return draft !== segment.source;
+  return draft !== segment.override || enabled !== segment.enabled;
+}
+
 /** Short label for a segment: file name without the numeric prefix and extension. */
 export function promptLabel(path: string): string {
   const file = path.split("/").pop() ?? path;

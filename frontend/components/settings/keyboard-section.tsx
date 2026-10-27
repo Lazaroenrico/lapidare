@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { AlertTriangle, Keyboard, RotateCcw } from "lucide-react";
 import {
   comboFor,
   conflicts,
@@ -103,10 +103,10 @@ export function KeyboardSection() {
         <table className="w-full font-ui text-[12px] text-left">
           <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
             <tr className="border-b border-border">
-              <th className="px-3 py-2 font-normal">{s.colAction}</th>
-              <th className="px-3 py-2 font-normal">{s.colScope}</th>
-              <th className="px-3 py-2 font-normal">{s.colShortcut}</th>
-              <th className="px-3 py-2" />
+              <th className="px-3 max-sm:px-2 py-2 font-normal">{s.colAction}</th>
+              <th className="px-3 max-sm:px-2 py-2 font-normal max-sm:hidden">{s.colScope}</th>
+              <th className="px-3 max-sm:px-2 py-2 font-normal">{s.colShortcut}</th>
+              <th className="px-3 max-sm:px-2 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -115,9 +115,9 @@ export function KeyboardSection() {
               const active = capturing === def.id;
               return (
                 <tr key={def.id} className="border-b border-border last:border-b-0">
-                  <td className="px-3 py-2 text-foreground">{s.shortcuts[def.id]}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{s.scopes[def.scope]}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 max-sm:px-2 py-2 text-foreground">{s.shortcuts[def.id]}</td>
+                  <td className="px-3 max-sm:px-2 py-2 text-muted-foreground max-sm:hidden">{s.scopes[def.scope]}</td>
+                  <td className="px-3 max-sm:px-2 py-2">
                     {active ? (
                       <span aria-live="polite" className={invalid ? "text-danger" : "text-foreground"}>
                         {invalid ? s.captureInvalid : s.capturing}
@@ -125,7 +125,7 @@ export function KeyboardSection() {
                     ) : (
                       <span className="flex items-center gap-2">
                         <kbd
-                          className={`px-1.5 py-0.5 rounded border bg-background text-[11px] ${
+                          className={`px-1.5 py-0.5 rounded border bg-background text-[11px] whitespace-nowrap ${
                             clashing.has(def.id) ? "border-warning text-warning" : "border-border text-foreground"
                           }`}
                         >
@@ -135,7 +135,7 @@ export function KeyboardSection() {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 max-sm:px-2 py-2">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         type="button"
@@ -146,7 +146,8 @@ export function KeyboardSection() {
                         aria-pressed={active}
                         className={buttonClass}
                       >
-                        {s.rebind}
+                        <Keyboard className="w-3 h-3 sm:hidden" aria-hidden />
+                        <span className="max-sm:sr-only">{s.rebind}</span>
                       </button>
                       <button
                         type="button"

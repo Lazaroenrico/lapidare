@@ -218,7 +218,8 @@ export function PracticeDock({
 }) {
   const { locale, t } = useLocale();
   const [draft, setDraft] = useState("");
-  const dictation = useDictation(locale);
+  const dockRef = useRef<HTMLElement | null>(null);
+  const dictation = useDictation(locale, { field: dockRef, enabled: !pendingQuiz });
   dictation.setSink((text) => setDraft((prev) => appendDictation(prev, text)));
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attempt = state.mode === "attempt";
@@ -260,7 +261,7 @@ export function PracticeDock({
   const canSend = steerable ? steerText.length > 0 : !state.busy && (attempt ? draft.trim().length > 0 : true);
 
   return (
-    <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
+    <footer ref={dockRef} className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
       <div className="max-w-4xl mx-auto flex flex-col gap-2">
         {attempt && (
           <label htmlFor="practice-dock-input" className="font-ui text-[11px] uppercase tracking-wider text-muted-foreground">

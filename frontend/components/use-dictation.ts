@@ -8,15 +8,31 @@ import { registerCommandTarget, TOGGLE_DICTATION_EVENT } from "@/lib/command-eve
  * (`setSink`), so the dock can redirect dictation to whichever field is active
  * without restarting recognition.
  */
-export function useDictation(locale: string, options: { field?: RefObject<HTMLElement | null> } = {}) {
+export interface DictationOptions {
+  /** Element whose focus claims ⌘D for this instance (focus inside wins over other docks). */
+  field?: RefObject<HTMLElement | null>;
+  /** False while the owner's field is not on screen (answered quiz, other mode): ⌘D skips it. */
+  enabled?: boolean;
+}
+
+export function useDictation(locale: string, options: DictationOptions = {}) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const sinkRef = useRef<(text: string) => void>(() => undefined);
-  const stateRef = useRef({ supported, listening });
-  stateRef.current = { supported, listening };
+  const enabled = options.enabled ?? true;
+  const stateRef = useRef({ supported, listening, enabled });
+  stateRef.current = { supported, listening, enabled };
   const toggleRef = useRef<() => void>(() => undefined);
   const fieldRef = options.field;
+
+  // The field went away while listening (quiz answered, mode switched): stop the mic.
+  useEffect(() => {
+    if (!enabled && listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+    }
+  }, [enabled, listening]);
 
   useEffect(() => {
     setSupported(typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window));
@@ -29,7 +45,7 @@ export function useDictation(locale: string, options: { field?: RefObject<HTMLEl
     () =>
       registerCommandTarget(TOGGLE_DICTATION_EVENT, {
         run: () => toggleRef.current(),
-        eligible: () => stateRef.current.supported,
+        eligible: () => stateRef.current.supported && (stateRef.current.enabled || stateRef.current.listening),
         claims: () =>
           stateRef.current.listening || !!fieldRef?.current?.contains(document.activeElement),
       }),
