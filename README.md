@@ -108,4 +108,3 @@ npm run build
 - **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** — **Especificação Comportamental Completa**: como cada tela (`Setup`, `Home`, `TEACH`, `QuestionDock`, `Import MCP`, `Excalidraw`, `PRACTICE`) e cada arquivo do Vault deve se comportar passo a passo.
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — **Arquitetura Técnica atual**: camadas hexagonais, modelo de processo (FastAPI + MCP interno + SSE), motores `agy`/`gemini --acp`/`google-genai`, núcleo pedagógico, PRACTICE, rastro de conhecimento, jobs com steer, trilhas, layout do Vault, frontend, rotas e histórico de fases.
 - **[`docs/specs/`](docs/specs/)** — Contrato de cada fase (Fase 8 em diante).
-# lapidare
