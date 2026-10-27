@@ -197,9 +197,11 @@ export interface SessionMessage {
   quiz_id?: string | null;
   node_spans?: NodeSpan[];
   source_citations?: SourceCitation[];
-  /** Fase 10/12: message injected while a turn ran ("learner" typed it, "job" is a job result). */
+  /** Fase 10: input that arrived outside the turn cycle (learner mid-turn message, job result). */
   steer_kind?: "learner" | "job" | null;
-  /** Steers only: false while queued for the agent ("na fila"). */
+  /** Job steers: `{job_id, kind, status, result | error, started_at?, finished_at?}`. */
+  details?: Record<string, unknown> | null;
+  /** False while a steer waits for the model's next turn. */
   delivered?: boolean;
 }
 
