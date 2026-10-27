@@ -38,14 +38,6 @@
             {
                 "code": "reportIncompatibleMethodOverride",
                 "range": {
-                    "startColumn": 8,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportIncompatibleMethodOverride",
-                "range": {
                     "startColumn": 14,
                     "endColumn": 26,
                     "lineCount": 1

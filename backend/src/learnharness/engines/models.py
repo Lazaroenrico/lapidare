@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+from learnharness.child_env import child_env
 from learnharness.core.contracts.config import EngineKind
 from learnharness.engines.detector import KNOWN_AGY_PATHS, _find_executable
 
@@ -35,6 +36,7 @@ async def _agy_models() -> dict:
         return {"models": [], "source": "agy", "error": "agy não encontrado no PATH"}
     process = await asyncio.create_subprocess_exec(
         binary, "models", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=child_env(),
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), 30)

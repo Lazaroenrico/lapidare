@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,8 @@ from learnharness.api.routes.tracks import tracks_router
 from learnharness.api.routes.usage import usage_router
 from learnharness.api.sse import sse_router
 from learnharness.api.state import AppState
+from learnharness.api.static_site import StaticSite
+from learnharness.child_env import DESKTOP_SECRET_ENV
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.mcp.runtime_server import create_runtime_mcp
 from learnharness.services.sessions import SessionConflict
@@ -33,6 +36,8 @@ DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
 # "testserver" is Starlette's TestClient host; it never resolves on a real network.
 DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,::1,testserver"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# The desktop shell injects this on every /api request of its own window.
+DESKTOP_HEADER = "x-lapidare-desktop"
 
 
 def _csv_env(name: str, default: str) -> list[str]:
@@ -45,12 +50,23 @@ class LocalRequestGuard:
     Some routes can register stdio MCP servers (i.e. run local commands) or write to the
     Vault, so a hostile web page must not reach them: the Host must be loopback, and a
     state-changing request carrying an Origin must come from the configured frontend.
+
+    Under the desktop build ``desktop_secret`` is set: every ``/api`` request must then carry
+    it in ``DESKTOP_HEADER``, which only the Electron main process adds, so other local
+    processes cannot use the API even when they find the port.
     """
 
-    def __init__(self, app: ASGIApp, allowed_hosts: list[str], allowed_origins: list[str]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        allowed_hosts: list[str],
+        allowed_origins: list[str],
+        desktop_secret: str | None = None,
+    ) -> None:
         self.app = app
         self.allowed_hosts = {h.lower() for h in allowed_hosts}
         self.allowed_origins = {o.rstrip("/").lower() for o in allowed_origins}
+        self.desktop_secret = desktop_secret.encode("latin-1") if desktop_secret else None
 
     @staticmethod
     def _hostname(host: str) -> str:
@@ -72,6 +88,18 @@ class LocalRequestGuard:
                 and origin.rstrip("/").lower() not in self.allowed_origins
             ):
                 await JSONResponse({"detail": "Origin not allowed"}, status_code=403)(scope, receive, send)
+                return
+            path = scope.get("path", "")
+            if (
+                self.desktop_secret is not None
+                and (path == "/api" or path.startswith("/api/"))
+                and not hmac.compare_digest(
+                    headers.get(DESKTOP_HEADER, "").encode("latin-1"), self.desktop_secret
+                )
+            ):
+                await JSONResponse({"detail": "Desktop session required"}, status_code=403)(
+                    scope, receive, send
+                )
                 return
         await self.app(scope, receive, send)
 
@@ -156,8 +184,14 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
         LocalRequestGuard,
         allowed_hosts=_csv_env("LEARNHARNESS_ALLOWED_HOSTS", DEFAULT_ALLOWED_HOSTS),
         allowed_origins=origins,
+        desktop_secret=os.environ.get(DESKTOP_SECRET_ENV) or None,
     )
     _register_error_handlers(app, state)
+
+    @app.get("/api/health")
+    async def health() -> dict[str, str]:
+        # Readiness probe for the desktop shell; never touches the Vault.
+        return {"status": "ok"}
 
     app.include_router(sse_router)
     app.include_router(setup_router)
@@ -172,6 +206,10 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     app.include_router(settings_agent_router)
     app.include_router(usage_router)
     app.mount(MCP_MOUNT, ExecutionTokenGate(mcp_app, state))
+    static_dir = os.environ.get("LEARNHARNESS_STATIC_DIR")
+    if static_dir:
+        # Desktop build: the Next.js static export, same origin as /api. Mounted last.
+        app.mount("/", StaticSite(Path(static_dir)))
 
     return app
 

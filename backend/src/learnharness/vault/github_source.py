@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 
+from learnharness.child_env import child_env
 from learnharness.core.frontmatter import frontmatter_data, strip_frontmatter
 from learnharness.core.repo_paths import GENERIC_STEMS, LANGUAGE_STEMS
 from learnharness.vault.safety import folder_map, safe_component, safe_path
@@ -204,6 +205,7 @@ async def github_token() -> str | None:
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=child_env(),
             )
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
             token = out.decode().strip() if proc.returncode == 0 else None
@@ -251,7 +253,7 @@ def _dir_size(root: Path) -> int:
 
 
 def _base_env() -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "SSH_ASKPASS"))}
+    env = {k: v for k, v in child_env().items() if not k.startswith(("GIT_", "SSH_ASKPASS"))}
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1", "LC_ALL": "C"})
     return env
 

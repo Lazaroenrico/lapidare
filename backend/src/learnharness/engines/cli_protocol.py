@@ -9,6 +9,8 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from learnharness.child_env import child_env
+
 # While suspended (learner answering a QuestionDock) the idle clock is re-checked at this
 # cadence instead of firing.
 SUSPEND_POLL_SECONDS = 1.0
@@ -118,7 +120,7 @@ async def json_events(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
-        env=env,
+        env=child_env() if env is None else env,
         start_new_session=True,
         limit=4 * 1024 * 1024,
     )

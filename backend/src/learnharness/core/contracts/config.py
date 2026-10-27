@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from learnharness.core.schema_gate import SUPPORTED_SCHEMA_VERSION
+
 
 def wire_dict(value: object) -> dict[str, Any] | None:
     """A shallow copy of ``value`` when it is a JSON object, else None.
@@ -323,7 +325,7 @@ class HarnessConfig(BaseModel):
     """Root configuration for LearnHarness persisted in .harness/config.json."""
     configured: bool = False
     language: Literal["pt-BR", "en"] = "pt-BR"
-    schema_version: int = 2
+    schema_version: int = SUPPORTED_SCHEMA_VERSION
     vault_path: str = "~/Documents/StudyVault"
     folders: VaultFolderMap = Field(default_factory=VaultFolderMap)
     slots: ModelSlots = Field(default_factory=ModelSlots)

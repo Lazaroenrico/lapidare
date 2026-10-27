@@ -12,6 +12,7 @@ from contextlib import aclosing
 from pathlib import Path
 from uuid import uuid4
 
+from learnharness.child_env import child_env
 from learnharness.engines.cli_protocol import EngineError, json_events, transcript
 from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
 from learnharness.engines.usage import gemini_cli_usage, report_usage
@@ -163,8 +164,8 @@ class GeminiHeadlessEngine:
         return bool(self.is_waiting_on_learner(self._session_id))
 
     def _env(self):
-        """Child environment; ``None`` inherits the backend's (subclasses add their own)."""
-        return None
+        """Child environment (``child_env``); subclasses add their own variables."""
+        return child_env()
 
     async def _events(self, prompt, slot=None, schema=None):
         command, stdin = self._command(prompt, slot, schema)

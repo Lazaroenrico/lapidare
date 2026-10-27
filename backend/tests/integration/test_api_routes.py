@@ -275,3 +275,23 @@ def test_first_setup_without_slots_uses_recommended_connector(tmp_path, monkeypa
     res = client.post("/api/setup/complete", json={"language": "pt-BR", "track": {"mode": "free"}})
     assert res.status_code == 200
     assert res.json()["config"]["slots"]["strong"]["engine"] == "agy"
+
+
+def test_health_is_cheap_and_open(tmp_path):
+    from starlette.testclient import TestClient
+
+    from learnharness.api.app import create_app
+
+    assert TestClient(create_app(vault_path=tmp_path)).get("/api/health").json() == {"status": "ok"}
+
+
+def test_setup_status_reports_vault_warning(tmp_path):
+    from starlette.testclient import TestClient
+
+    from learnharness.api.app import create_app
+
+    synced = tmp_path / "Dropbox" / "vault"
+    body = TestClient(create_app(vault_path=synced)).get("/api/setup/status").json()
+    assert "synced folder" in body["vault_warning"]
+    plain = TestClient(create_app(vault_path=tmp_path / "plain")).get("/api/setup/status").json()
+    assert plain["vault_warning"] is None

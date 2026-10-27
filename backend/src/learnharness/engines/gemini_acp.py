@@ -33,6 +33,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from learnharness.child_env import child_env
 from learnharness.engines.cli_protocol import (
     EngineError,
     drain_stderr,
@@ -537,7 +538,7 @@ class GeminiCliAcpEngine:
         return command
 
     def _env(self):
-        env = dict(os.environ)
+        env = child_env()
         # Our runtime dir is never in the user's trusted folders; without this the workspace
         # settings (tool exclusions) are ignored.
         env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"

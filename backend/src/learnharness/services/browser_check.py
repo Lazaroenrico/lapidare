@@ -32,6 +32,7 @@ import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from learnharness.child_env import child_env
 from learnharness.core.demo_validation import harden_demo_html
 
 CHROMIUM_NAMES = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
@@ -196,7 +197,7 @@ async def _run(binary: str, args: list[str], timeout: float) -> tuple[int | None
     """Run Chromium in its own process group; kill the whole group on timeout."""
     process = await asyncio.create_subprocess_exec(
         binary, *args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, start_new_session=True)
+        stderr=asyncio.subprocess.PIPE, start_new_session=True, env=child_env())
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
     except (TimeoutError, asyncio.CancelledError):

@@ -29,6 +29,7 @@ from learnharness.engines.detector import detect_connectors, get_default_engine
 from learnharness.services.sessions import now
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import atomic_write, safe_path, validate_folders
+from learnharness.vault.sync_warning import vault_location_warning
 
 CONNECTOR_TEST_TIMEOUT = 90.0
 
@@ -123,7 +124,8 @@ async def get_setup_status(request: Request):
             "config": _serialize_config_for_frontend(config, state) if config.configured else None,
             "tracks": state.tracks.list_tracks(config) if config.configured else [],
             "active_track_id": config.active_track_id if config.configured else None,
-            "connectors": connectors}
+            "connectors": connectors,
+            "vault_warning": vault_location_warning(state.vault_path)}
 
 
 @setup_router.get("/models")
