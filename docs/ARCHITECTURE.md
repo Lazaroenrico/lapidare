@@ -1,4 +1,4 @@
-# Arquitetura Técnica e Plano de Construção (`ARCHITECTURE.md`)
+# Lapidare — Arquitetura Técnica e Plano de Construção (`ARCHITECTURE.md`)
 
 Este documento especifica a arquitetura de software, a estrutura de pastas, os protocolos de comunicação (`stream-json`, `ACP`, `FastMCP`, `SSE`), a persistência dupla no Vault e o plano de implementação em duas ondas.
 

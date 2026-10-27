@@ -29,5 +29,5 @@ trap cleanup EXIT INT TERM
 (cd "$ROOT/frontend" && BACKEND_URL="http://127.0.0.1:$BACKEND_PORT" \
   npx next dev --port "$FRONTEND_PORT") &
 
-echo "LearnHarness: http://localhost:$FRONTEND_PORT  (API em :$BACKEND_PORT)"
+echo "Lapidare: http://localhost:$FRONTEND_PORT  (API em :$BACKEND_PORT)"
 wait

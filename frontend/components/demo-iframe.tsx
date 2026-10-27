@@ -32,7 +32,7 @@ export interface DemoIframeProps {
 }
 
 /**
- * Interactive Demo Iframe component for LearnHarness.
+ * Interactive Demo Iframe component for Lapidare.
  *
  * Renders self-contained visual simulators (`viz/demos/<slug>.html`) inside
  * a sandboxed iframe styled in the purple design system (`bg-background` tokens).

@@ -1,1 +1,1 @@
-"""Integration test suite for LearnHarness API routes."""
+"""Integration test suite for Lapidare API routes."""

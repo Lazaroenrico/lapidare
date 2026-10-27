@@ -1,1 +1,1 @@
-"""LearnHarness test suite."""
+"""Lapidare test suite."""

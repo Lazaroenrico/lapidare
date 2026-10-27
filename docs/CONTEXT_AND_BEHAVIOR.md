@@ -1,4 +1,4 @@
-# Contexto do Projeto e Especificação de Comportamento (`CONTEXT_AND_BEHAVIOR.md`)
+# Lapidare — Contexto do Projeto e Especificação de Comportamento (`CONTEXT_AND_BEHAVIOR.md`)
 
 > [!IMPORTANT]
 > Este documento define o **contexto de produto** e o **comportamento exato esperado** de todas as superfícies da plataforma (Onboarding/Setup, Home, Sessão `TEACH` Unificada, `QuestionDock`, `Excalidraw` Embutido, `PRACTICE` e Sincronização com o Vault).
@@ -16,7 +16,7 @@ No entanto, cada sistema evoluiu metade da solução ideal:
 - O seu sistema **`ai-engineer`** desenvolveu uma metodologia poderosa para engenharia de IA: **Trilha integrada `2:1`** (combinando mentoria e base teórica), ingestão de aulas densas via **MCP** (mapeando *Dito / Pressuposto / Pulado / Simplificações* com citações `#^pN`), prática de código e consolidação desenhando de memória no **Excalidraw** sobre um Vault real no Obsidian. Porém, a interface ficava espalhada entre terminal, popups `curses` (`quiz.py`) e janelas soltas.
 - O **`learnharness`** criou uma interface web/desktop exemplar (prosa editorial em `CMU Serif` + `Source Sans 3` + `KaTeX` sobre grafite `#141414`, grafo global em Canvas 2D, `QuestionDock` inline com slider de confiança `0–100%` e campo *Your Thinking*, ditado por voz e pipelines de extração e `Practice`). Porém, trancou todos os dados em JSONs internos (`data/`), removeu o Vault/Excalidraw/Trilha `2:1`, e não possui suporte às assinaturas do ecossistema Google.
 
-### 1.2 A Proposta da Nossa Plataforma
+### 1.2 A Proposta da Nossa Plataforma (Lapidare)
 Construir uma plataforma **local-first, bilíngue (`PT-BR` / `EN`) e pensada para a comunidade de usuários do ecossistema Google**, onde:
 1. **O UX/UI segue o Design System do `learnharness`** (`#1a1430` / `#231b3e` / `#54458a`, `CMU Serif Bold`, `Source Sans 3` + KaTeX, `JetBrains Mono`), mas **sem proliferação de modos** (`TEACH` e `PRACTICE` apenas).
 2. **Tudo roda utilizando a assinatura Google do próprio usuário** (`@google/gemini-cli` via ACP ou Google Antigravity `agy` via `stream-json`, com fallback opcional para API Key do Google AI Studio / Vertex AI).

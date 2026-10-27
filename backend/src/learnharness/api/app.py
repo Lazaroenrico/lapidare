@@ -135,9 +135,9 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
                 await state.close()
 
     app = FastAPI(
-        title="LearnHarness API",
+        title="Lapidare API",
         version="0.1.0",
-        description="Local-first AI Engineering Learning Harness",
+        description="Lapidare — local-first study environment",
         lifespan=lifespan,
     )
     app.state.learnharness_state = state

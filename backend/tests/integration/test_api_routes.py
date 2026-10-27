@@ -1,4 +1,4 @@
-"""Integration tests for the LearnHarness FastAPI server.
+"""Integration tests for the Lapidare FastAPI server.
 
 Runs against isolated tmp_path Vaults (never the user's Obsidian Vault) with a scripted
 FakeEngine injected through ``AppState(engine_factory=...)``. The server never invents

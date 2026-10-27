@@ -90,7 +90,7 @@ tags: [mapa]
 ---
 # Mapa — AI Engineering
 
-Índice do vault. O LearnHarness atualiza esta nota ao consolidar cada aula.
+Índice do vault. O Lapidare atualiza esta nota ao consolidar cada aula.
 
 ## Como o vault funciona
 - **[[Conceitos/]]** — os *nós* do grafo de conhecimento. Uma nota por conceito; `Depende de::` são as *arestas*.
@@ -178,7 +178,7 @@ tags: [map]
 ---
 # Map — AI Engineering
 
-Index of the vault. LearnHarness updates this note after consolidating lessons.
+Index of the vault. Lapidare updates this note after consolidating lessons.
 
 ## Vault Structure
 - **[[Concepts/]]** — Knowledge graph nodes.

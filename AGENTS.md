@@ -1,9 +1,11 @@
-# AGENTS.md — Diretrizes e Contexto do Repositório `learnharness`
+# AGENTS.md — Diretrizes e Contexto do Repositório **Lapidare**
+
+> O produto se chama **Lapidare** (decisão do usuário, 2026-10-27). Identificadores técnicos continuam com o nome antigo por compatibilidade: pacote Python `learnharness`, variáveis `LEARNHARNESS_*`, pasta `.harness/` no vault, `~/.config/learnharness/`, servidor MCP `harness` e a regra do agy `mcp(harness/*)`. Em texto visível ao usuário, use sempre **Lapidare**.
 
 Leia **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** e **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** antes de alterar contratos, prompts, componentes de UI ou rotas do servidor.
 
 ## 1. Visão em Uma Frase
-Este projeto é um *Learning Harness* local-first, bilíngue (`PT-BR` / `EN`), com **frontend em Next.js** (seguindo o Design System `#1a1430` + `CMU Serif` + `Source Sans 3` + `JetBrains Mono`) e **backend em Python (`FastAPI` + `FastMCP` + `LangGraph`)**, que roda sobre a **assinatura Google** do usuário (`gemini` CLI / `agy` CLI / `google-genai`) e mantém **persistência bidirecional (`UI ⇄ Vault Markdown/Obsidian`)**.
+O **Lapidare** é um *learning harness* local-first, bilíngue (`PT-BR` / `EN`), com **frontend em Next.js** (seguindo o Design System `#1a1430` + `CMU Serif` + `Source Sans 3` + `JetBrains Mono`) e **backend em Python (`FastAPI` + `FastMCP` + `LangGraph`)**, que roda sobre a **assinatura Google** do usuário (`gemini` CLI / `agy` CLI / `google-genai`) e mantém **persistência bidirecional (`UI ⇄ Vault Markdown/Obsidian`)**.
 
 ## 2. Invariantes de Produto e Comportamento (NUNCA VIOLE)
 

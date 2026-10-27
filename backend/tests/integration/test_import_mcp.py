@@ -1,7 +1,7 @@
 """Generic content-MCP import against REAL FastMCP servers (HTTP, SSE and stdio).
 
 Each HTTP server runs under uvicorn on an ephemeral loopback port in its own thread, so the
-synchronous TestClient driving the LearnHarness API never shares an event loop with it.
+synchronous TestClient driving the Lapidare API never shares an event loop with it.
 """
 
 from __future__ import annotations

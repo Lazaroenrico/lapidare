@@ -9,9 +9,9 @@ import { AppearanceApplier } from "@/components/appearance-applier";
 import { GlobalShortcuts } from "@/components/global-shortcuts";
 
 export const metadata: Metadata = {
-  title: "learnharness — Local-First Learning Harness",
+  title: "Lapidare",
   description:
-    "AI Engineering Learning Harness with Google ecosystem integration and Obsidian Vault persistence",
+    "Lapidare — estudo ativo local-first com o ecossistema Google e persistência no Vault Obsidian",
   icons: {
     icon: "/favicon.ico",
   },

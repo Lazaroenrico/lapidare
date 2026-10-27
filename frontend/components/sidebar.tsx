@@ -522,7 +522,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             className="flex items-center gap-2 group cursor-pointer"
           >
             <span className="font-title text-base font-bold text-foreground tracking-tight group-hover:text-foreground transition-colors">
-              learnharness
+              Lapidare
             </span>
           </Link>
           <button
