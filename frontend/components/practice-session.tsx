@@ -202,9 +202,12 @@ export function PracticeDock({
   pendingQuiz,
   onSubmit,
   onRequestDismiss,
+  steerable = false,
 }: {
   state: DockState;
   pendingQuiz: boolean;
+  /** Fase 12: the agent is running; non-empty text goes to /steer as `{kind: "text"}`. */
+  steerable?: boolean;
   /** Resolves true when sent (the draft is cleared), false to keep the draft. */
   onSubmit: (submission: DockSubmission) => Promise<boolean>;
   onRequestDismiss: () => void;
@@ -221,8 +224,11 @@ export function PracticeDock({
     if (!state.busy) textareaRef.current?.focus();
   }, [state.mode, state.busy]);
 
+  const steerText = draft.trim();
   const submit = async () => {
-    const submission = dockSubmission(state, draft);
+    const submission: DockSubmission | null = steerable
+      ? steerText ? { kind: "text", content: steerText } : null
+      : dockSubmission(state, draft);
     if (!submission) return;
     if (await onSubmit(submission)) setDraft("");
   };
@@ -240,12 +246,14 @@ export function PracticeDock({
 
   const placeholder = pendingQuiz
     ? t.dockQuizPending
+    : steerable
+      ? t.uxSteerPlaceholder
     : state.busy && !attempt
       ? t.dockBusyPlaceholder
       : attempt
         ? t.dockAttemptPlaceholder
         : t.dockFreePlaceholder;
-  const canSend = !state.busy && (attempt ? draft.trim().length > 0 : true);
+  const canSend = steerable ? steerText.length > 0 : !state.busy && (attempt ? draft.trim().length > 0 : true);
 
   return (
     <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
@@ -305,7 +313,7 @@ export function PracticeDock({
               }`}
               aria-label={t.dockSend}
             >
-              {state.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {state.busy && !steerable ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               <span>{t.dockSend}</span>
             </button>
           )}

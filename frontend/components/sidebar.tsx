@@ -9,7 +9,10 @@ import {
   ChevronRight,
   ChevronUp,
   Cpu,
+  Download,
   Edit3,
+  Pencil,
+  Trash2,
   GitBranch,
   Loader2,
   MoreHorizontal,
@@ -20,11 +23,42 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
-import { createChat, extractSessionToGraph, listChats, retryJob } from "@/lib/api";
+import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
+import {
+  filterByMode,
+  fuzzyFilter,
+  moveCursor,
+  normalizeTitle,
+  relativeTime,
+  rowStatus,
+  TITLE_MAX,
+  type RowStatus,
+  type SessionFilter,
+} from "@/lib/session-ux";
+import { comboFor, formatCombo } from "@/lib/keyboard";
 import { useEventSubscription, useServerEvents } from "./server-events";
 import { useLocale } from "./locale-provider";
+import { useShortcut } from "./use-shortcut";
+import { ConfirmDialog } from "./session-ux";
+import { requestComposerFocus } from "./composer-focus";
 
-type FilterMode = "TEACHING" | "PRACTICE" | "ALL";
+const COLLAPSED_STORAGE_KEY = "learnharness:sidebar-collapsed";
+
+function loadCollapsed(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(COLLAPSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveCollapsed(value: boolean) {
+  try {
+    globalThis.localStorage?.setItem(COLLAPSED_STORAGE_KEY, value ? "1" : "0");
+  } catch {
+    // Storage unavailable: the toggle still works for this page view.
+  }
+}
 
 const EXTRACT_NOTICE_MS = 6000;
 
@@ -35,11 +69,23 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
 }
 
-export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
+export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onToggleProp }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { activeJobs } = useServerEvents();
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
+
+  // Uncontrolled by default (the root layout passes nothing): remembered per browser.
+  const [collapsedState, setCollapsedState] = useState(false);
+  useEffect(() => setCollapsedState(loadCollapsed()), []);
+  const collapsed = collapsedProp ?? collapsedState;
+  const onToggleCollapse = () => {
+    if (onToggleProp) return onToggleProp();
+    setCollapsedState((prev) => {
+      saveCollapsed(!prev);
+      return !prev;
+    });
+  };
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<Record<string, string>>({});
   // `activeJobs` holds every known job record; only queued/running ones are "busy".
@@ -67,8 +113,21 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
 
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [filter, setFilter] = useState<FilterMode>("ALL");
+  const [filter, setFilter] = useState<SessionFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [cursor, setCursor] = useState(-1);
+  const [searchCombo, setSearchCombo] = useState("");
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [pendingSearchFocus, setPendingSearchFocus] = useState(false);
+
+  // Row rename (inline) and delete dialog.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SessionRecord | null>(null);
+  const [deleteNodes, setDeleteNodes] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showAgentsTray, setShowAgentsTray] = useState<boolean>(false);
   const [creatingMode, setCreatingMode] = useState<SessionMode | null>(null);
 
@@ -85,7 +144,11 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuSessionId(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuSessionId(null);
+      if (e.key === "Escape") {
+        // Prevented: the session's Esc chain (useShortcut "abort") skips this keypress.
+        e.preventDefault();
+        setMenuSessionId(null);
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -147,22 +210,126 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
     }
   );
 
-  const filteredSessions = useMemo(() => {
-    return sessions.filter((s) => {
-      // Filter by TEACHING vs PRACTICE vs ALL
-      if (filter === "TEACHING" && s.mode !== "TEACH") return false;
-      if (filter === "PRACTICE" && s.mode !== "PRACTICE") return false;
+  const filteredSessions = useMemo(
+    () => fuzzyFilter(filterByMode(sessions, filter), searchQuery, (s) => [s.title, s.topic]),
+    [sessions, filter, searchQuery],
+  );
 
-      // Filter by search query
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        const titleMatch = s.title?.toLowerCase().includes(query);
-        const topicMatch = s.topic?.toLowerCase().includes(query);
-        return titleMatch || topicMatch;
-      }
-      return true;
-    });
-  }, [sessions, filter, searchQuery]);
+  useEffect(() => setCursor(-1), [searchQuery, filter]);
+
+  // Global shortcuts (registry ids; rebindable in Settings → Teclado).
+  useEffect(() => {
+    setSearchCombo(formatCombo(comboFor("sessionSearch"), /Mac|iPhone|iPad/.test(navigator.platform)));
+  }, []);
+  useShortcut("toggleSidebar", () => onToggleCollapse());
+  useShortcut("sessionSearch", () => {
+    if (collapsed) {
+      onToggleCollapse();
+      setPendingSearchFocus(true);
+    } else {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    }
+  });
+  useEffect(() => {
+    if (!pendingSearchFocus || collapsed) return;
+    searchRef.current?.focus();
+    setPendingSearchFocus(false);
+  }, [pendingSearchFocus, collapsed]);
+  useShortcut("newSession", () => {
+    router.push("/");
+    requestComposerFocus();
+  });
+  useShortcut("goGraph", () => router.push("/"));
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setCursor((cur) => moveCursor(cur, filteredSessions.length, e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      const target = filteredSessions[cursor >= 0 ? cursor : 0];
+      if (!target) return;
+      e.preventDefault();
+      router.push(`/chat/${target.id}`);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (searchQuery) setSearchQuery("");
+      else searchRef.current?.blur();
+    }
+  };
+
+  const startRename = (session: SessionRecord) => {
+    setMenuSessionId(null);
+    setRenamingId(session.id);
+    setRenameDraft(session.title || session.topic || "");
+    setRenameError(null);
+  };
+
+  const commitRename = async (session: SessionRecord) => {
+    const next = normalizeTitle(renameDraft, session.title || session.topic || "");
+    if (!next) {
+      setRenamingId(null);
+      return;
+    }
+    try {
+      await renameChat(session.id, next);
+      setRenamingId(null);
+      void fetchSessionList();
+    } catch (err) {
+      setRenameError(`${t.uxRenameFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    }
+  };
+
+  const handleExport = (sessionId: string) => {
+    setMenuSessionId(null);
+    const a = document.createElement("a");
+    a.href = chatMarkdownUrl(sessionId);
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const openDelete = (session: SessionRecord) => {
+    setMenuSessionId(null);
+    setDeleteTarget(session);
+    setDeleteNodes(false);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteChat(deleteTarget.id, deleteNodes ? "delete-nodes" : "preserve-graph");
+      if (pathname === `/chat/${deleteTarget.id}`) router.push("/");
+      setDeleteTarget(null);
+      void fetchSessionList();
+    } catch (err) {
+      setDeleteError(`${t.uxDeleteFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const statusText = (status: RowStatus, now: number): string => {
+    switch (status.kind) {
+      case "failed":
+        return t.uxRowFailed;
+      case "waiting":
+        return t.uxRowWaiting;
+      case "problem":
+        return t.uxRowProblem;
+      case "compacting":
+        return t.uxRowCompacting;
+      case "working":
+        return t.uxRowWorking;
+      case "idle":
+        return relativeTime(status.updatedAt, now, locale);
+    }
+  };
 
   const handleStartSession = async (mode: SessionMode) => {
     try {
@@ -201,7 +368,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         />
       );
     }
-    if (exec === "queued" || exec === "running") {
+    if (exec === "queued" || exec === "running" || exec === "compacting") {
       return (
         <span
           className="inline-block w-2 h-2 rounded-full bg-muted-foreground animate-ping shrink-0"
@@ -358,50 +525,37 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         <div className="relative mt-1">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
+            ref={searchRef}
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={onSearchKeyDown}
             placeholder={t.searchSessions}
             aria-label={t.searchSessions}
+            title={searchCombo ? t.uxSearchSessions(searchCombo) : undefined}
             className="w-full bg-card border border-border rounded pl-8 pr-2 py-1.5 text-[11px] text-foreground placeholder-muted-foreground focus:border-foreground transition-colors"
           />
         </div>
 
-        {/* Segmented Filter: STRICTLY TEACHING | PRACTICE | ALL */}
-        <div className="grid grid-cols-3 bg-card p-0.5 border border-border rounded mt-0.5 text-[10.5px]">
-          <button
-            type="button"
-            onClick={() => setFilter("TEACHING")}
-            className={`py-1 text-center rounded cursor-pointer transition-colors font-medium ${
-              filter === "TEACHING"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            TEACHING
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter("PRACTICE")}
-            className={`py-1 text-center rounded cursor-pointer transition-colors font-medium ${
-              filter === "PRACTICE"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            PRACTICE
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter("ALL")}
-            className={`py-1 text-center rounded cursor-pointer transition-colors font-medium ${
-              filter === "ALL"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.filterAll}
-          </button>
+        {/* Segmented filter: Ensino | Todas | Prática */}
+        <div className="grid grid-cols-3 bg-card p-0.5 border border-border rounded mt-0.5 text-[10.5px]" role="group">
+          {([
+            ["TEACH", t.uxFilterTeach],
+            ["ALL", t.uxFilterAll],
+            ["PRACTICE", t.uxFilterPractice],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setFilter(value)}
+              aria-pressed={filter === value}
+              className={`py-1 text-center rounded cursor-pointer transition-colors font-medium ${
+                filter === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -417,14 +571,44 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
             {searchQuery
               ? t.noSessionsMatch
               : filter !== "ALL"
-              ? t.noSessionsOfMode(filter)
+              ? t.noSessionsOfMode(filter === "TEACH" ? "TEACHING" : filter)
               : t.noSessions}
           </div>
         ) : (
-          filteredSessions.map((session) => {
+          filteredSessions.map((session, index) => {
             const isActive = pathname === `/chat/${session.id}`;
-            // Only TEACH sessions feed the trail (spec Fase 9 §3), so only they get the menu.
-            const hasMenu = session.mode === "TEACH";
+            const hasMenu = true;
+            // Only TEACH sessions feed the trail (spec Fase 9 §3), so only they can be extracted.
+            const canExtract = session.mode === "TEACH";
+            const isCursor = index === cursor;
+            const now = Date.now();
+            const status = rowStatus(session);
+            if (renamingId === session.id) {
+              return (
+                <div key={session.id} className="p-2 rounded border border-border bg-card flex flex-col gap-1">
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    maxLength={TITLE_MAX}
+                    aria-label={t.uxRenameLabel}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onBlur={() => void commitRename(session)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        void commitRename(session);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRenamingId(null);
+                      }
+                    }}
+                    className="w-full bg-background border border-border rounded px-2 py-1 text-[11.5px] font-prose text-foreground focus:border-foreground"
+                  />
+                  {renameError && <p role="alert" className="text-[10px] text-danger break-words">{renameError}</p>}
+                </div>
+              );
+            }
             const menuOpen = menuSessionId === session.id;
             const notice = extractNotice?.sessionId === session.id ? extractNotice : null;
             return (
@@ -436,11 +620,14 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
                     e.preventDefault();
                     setMenuSessionId(session.id);
                   }}
+                  aria-current={isActive ? "page" : undefined}
                   className={`group flex items-start gap-2 p-2 rounded border border-transparent transition-all cursor-pointer ${
                     hasMenu ? "pr-7" : ""
                   } ${
                     isActive
                       ? "bg-accent border-border text-foreground"
+                      : isCursor
+                      ? "bg-card border-border text-foreground"
                       : "hover:bg-card hover:border-accent text-foreground"
                   }`}
                 >
@@ -459,6 +646,13 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
                         {session.topic}
                       </p>
                     )}
+                    <p
+                      className={`text-[10px] truncate mt-0.5 ${
+                        status.kind === "failed" ? "text-danger" : status.kind === "idle" ? "text-muted-foreground" : "text-warning"
+                      }`}
+                    >
+                      {statusText(status, now)}
+                    </p>
                   </div>
                 </Link>
 
@@ -491,17 +685,47 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
                     aria-label={t.sessionMenu}
                     className="absolute right-1 top-8 z-40 min-w-[180px] bg-card border border-border rounded shadow-lg p-1"
                   >
+                    {canExtract && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        autoFocus
+                        disabled={extractingId !== null}
+                        onClick={() => void handleExtract(session.id)}
+                        title={t.extractGraphTitle}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer disabled:cursor-not-allowed disabled:text-muted-foreground"
+                      >
+                        <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>{t.extractGraph}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       role="menuitem"
-                      autoFocus
-                      disabled={extractingId !== null}
-                      onClick={() => void handleExtract(session.id)}
-                      title={t.extractGraphTitle}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer disabled:cursor-not-allowed disabled:text-muted-foreground"
+                      autoFocus={!canExtract}
+                      onClick={() => startRename(session)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer"
                     >
-                      <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span>{t.extractGraph}</span>
+                      <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span>{t.uxMenuRename}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => handleExport(session.id)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span>{t.uxMenuExport}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openDelete(session)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-danger hover:bg-accent focus:bg-accent cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{t.uxMenuDelete}</span>
                     </button>
                   </div>
                 )}
@@ -620,6 +844,29 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
           <span className="tracking-wider text-[10.5px]">{t.settingsLabel}</span>
         </Link>
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        fixed
+        danger
+        title={t.uxDeleteTitle}
+        body={t.uxDeleteBody(deleteTarget?.title || deleteTarget?.topic || t.untitledSession)}
+        confirmLabel={t.uxDeleteConfirm}
+        busyLabel={t.uxDeleteBusy}
+        busy={deleteBusy}
+        error={deleteError}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => void confirmDelete()}
+      >
+        <label className="flex items-start gap-2 mb-4 font-ui text-[11.5px] text-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={deleteNodes}
+            onChange={(e) => setDeleteNodes(e.target.checked)}
+            className="mt-0.5 accent-foreground"
+          />
+          <span>{t.uxDeleteNodes}</span>
+        </label>
+      </ConfirmDialog>
     </aside>
   );
 }

@@ -2,10 +2,8 @@
 
 export const sessionUxMessages = {
   "pt-BR": {
-    uxSteerQueued: "na fila",
     uxSteerSending: "enviando…",
     uxSteerFailed: "não enviada",
-    uxSteerQueuedTitle: "O agente recebe esta mensagem no próximo ponto de parada do turno.",
     uxSteerRetry: "Reenviar",
     uxSteerDiscard: "Descartar",
     uxSteerPlaceholder: "O agente está trabalhando — sua mensagem entra na fila",
@@ -52,10 +50,8 @@ export const sessionUxMessages = {
     uxAnswerDismissed: "dispensada",
   },
   en: {
-    uxSteerQueued: "queued",
     uxSteerSending: "sending…",
     uxSteerFailed: "not sent",
-    uxSteerQueuedTitle: "The agent receives this message at the next stopping point of the turn.",
     uxSteerRetry: "Resend",
     uxSteerDiscard: "Discard",
     uxSteerPlaceholder: "The agent is working — your message will be queued",

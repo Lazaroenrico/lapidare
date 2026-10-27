@@ -12,16 +12,6 @@ const chip = "px-1.5 py-0.5 rounded border font-ui text-[10px] uppercase trackin
 
 // --- Steer badges ------------------------------------------------------------------------
 
-/** "na fila" badge on a learner steer the agent has not received yet. */
-export function SteerQueuedBadge() {
-  const { t } = useLocale();
-  return (
-    <span className={`${chip} border-warning/60 text-warning`} title={t.uxSteerQueuedTitle}>
-      {t.uxSteerQueued}
-    </span>
-  );
-}
-
 /** Optimistic bubble for a steer still in flight (or that failed to send). */
 export function LocalSteerBubble({
   steer,

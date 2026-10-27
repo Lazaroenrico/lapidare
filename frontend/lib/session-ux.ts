@@ -27,7 +27,8 @@ export function fuzzyScore(query: string, text: string): number | null {
   const literal = t.indexOf(q);
   if (literal >= 0) {
     const wordStart = literal === 0 || /[\s\-_/.:([]/.test(t[literal - 1]);
-    return 1000 + q.length * 10 + (wordStart ? 50 : 0) - literal;
+    // Tighter fits (the query covers more of the text) rank higher.
+    return 1000 + q.length * 10 + (wordStart ? 50 : 0) - literal + Math.round((20 * q.length) / t.length);
   }
   let score = 0;
   let ti = 0;
@@ -181,10 +182,6 @@ export type SteerKind = "learner" | "job";
 
 export const steerKindOf = (m: Pick<SessionMessage, "steer_kind">): SteerKind | null =>
   m.steer_kind === "learner" || m.steer_kind === "job" ? m.steer_kind : null;
-
-/** A learner steer the backend accepted but has not handed to the agent yet ("na fila"). */
-export const isQueuedSteer = (m: Pick<SessionMessage, "steer_kind" | "delivered">) =>
-  steerKindOf(m) === "learner" && m.delivered === false;
 
 export type LocalSteerStatus = "sending" | "failed";
 

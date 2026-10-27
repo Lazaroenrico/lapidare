@@ -10,6 +10,7 @@ import { differsFromSlot, modelChoicePayload, type ModelChoice } from "@/lib/mod
 import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
 import { appendDictation, useDictation } from "./use-dictation";
 import { ModelPicker } from "./model-picker";
+import { useComposerFocusRequest } from "./composer-focus";
 
 export interface SelectedNodeRef {
   id: string;
@@ -55,6 +56,7 @@ export function Composer({
   const [text, setText] = useState<string>(initialTopic);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useComposerFocusRequest(textareaRef);
   const dictation = useDictation(locale);
   dictation.setSink((spoken) => setText((prev) => appendDictation(prev, spoken)));
 
