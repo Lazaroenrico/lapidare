@@ -23,10 +23,8 @@ import type {
   McpImportServer,
   McpServerTestResult,
   McpServerUpsert,
+  ChatMessageKind,
   HarnessConfig,
-  HintStep,
-  PracticeAttemptGrade,
-  PracticeSet,
   QuizSubmission,
   SessionMode,
   SessionRecord,
@@ -262,18 +260,32 @@ export async function updateChatSettings(id: string, payload: ModelChoicePayload
   return sessionRaw ? decodeSession(sessionRaw) : null;
 }
 
+/** The backend may answer with the session, {session}, or nothing. */
+function sessionFromResponse(raw: unknown): SessionRecord | null {
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  const sessionRaw = r && r.session && typeof r.session === "object" ? r.session : r && typeof r.id === "string" ? r : null;
+  return sessionRaw ? decodeSession(sessionRaw) : null;
+}
+
+/**
+ * POST /api/chats/{id}/messages. `kind` (Fase 9, PRACTICE): `attempt` attaches
+ * the text to the active problem, `next` asks for the next problem.
+ */
 export async function sendChatMessage(
   id: string,
-  content: string
-): Promise<{ session: SessionRecord }> {
-  const res = await fetchJson<{ session?: unknown }>(
+  content: string,
+  kind?: ChatMessageKind,
+  options: FetchJsonOptions = {},
+): Promise<{ session: SessionRecord | null }> {
+  const raw = await fetchJson<unknown>(
     `/api/chats/${encodeURIComponent(id)}/messages`,
     {
       method: "POST",
-      body: JSON.stringify({ content }),
-    }
+      body: JSON.stringify(kind ? { content, kind } : { content }),
+    },
+    options,
   );
-  return { session: decodeSession(res?.session) };
+  return { session: sessionFromResponse(raw) };
 }
 
 export async function submitQuizAnswer(
@@ -420,37 +432,33 @@ export async function reviewDrawing(
   return { ...raw, pending_quiz: decodeQuiz(raw.pending_quiz) };
 }
 
-// --- Practice Sets & Hint Ladder ---
+// --- Practice session (Fase 9) ---
 
-export async function getPracticeSets(): Promise<PracticeSet[]> {
-  return fetchJson<PracticeSet[]>("/api/practice/sets");
-}
-
-export async function generatePracticeSet(
-  topics?: string[]
-): Promise<PracticeSet | {job_id: string; status: string}> {
-  return fetchJson<PracticeSet | {job_id: string; status: string}>("/api/practice/generate", {
-    method: "POST",
-    body: JSON.stringify({ topics: topics || [] }),
-  });
-}
-
-export async function submitPracticeAttempt(
-  setId: string,
-  problemId: string,
-  answer: string,
-  requestHint = false
-): Promise<{
-  grade?: PracticeAttemptGrade;
-  next_hint?: HintStep;
-}> {
-  return fetchJson(
-    `/api/practice/sets/${encodeURIComponent(setId)}/problems/${encodeURIComponent(problemId)}/attempt`,
-    {
-      method: "POST",
-      body: JSON.stringify({ answer, request_hint: requestHint }),
-    }
+/** POST /api/chats/{id}/practice/dismiss: discards the active problem (no run is triggered). */
+export async function dismissPracticeProblem(id: string): Promise<SessionRecord | null> {
+  const raw = await fetchJson<unknown>(
+    `/api/chats/${encodeURIComponent(id)}/practice/dismiss`,
+    { method: "POST" },
+    { silent: true },
   );
+  return sessionFromResponse(raw);
+}
+
+// --- Graph extraction ---
+
+/**
+ * POST /api/graph/extract/{session_id} (202): queues the extraction of a TEACH
+ * session into the trail. The job shows in BACKGROUND AGENTS via `jobs:updated`.
+ */
+export async function extractSessionToGraph(sessionId: string): Promise<{ job_id: string | null }> {
+  const raw = await fetchJson<unknown>(
+    `/api/graph/extract/${encodeURIComponent(sessionId)}`,
+    { method: "POST" },
+    { silent: true },
+  );
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const jobId = typeof r.job_id === "string" ? r.job_id : typeof r.id === "string" ? r.id : null;
+  return { job_id: jobId };
 }
 
 // --- Background Jobs ---

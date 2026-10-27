@@ -25,6 +25,7 @@ import type {
 } from "./types";
 import { decodeSlotOverride } from "./model-choice";
 import { decodeUsageCounters } from "./usage";
+import { decodePractice } from "./practice";
 
 type Raw = Record<string, unknown>;
 
@@ -204,6 +205,7 @@ export function decodeSession(raw: unknown): SessionRecord {
     effective_slot: decodeSlotOverride(r.effective_slot),
     usage: decodeUsageCounters(r.usage),
     graph_context: strList(r.graph_context),
+    practice: decodePractice(r.practice),
   };
 }
 

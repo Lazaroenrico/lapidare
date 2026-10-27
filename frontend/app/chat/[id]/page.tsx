@@ -10,8 +10,8 @@ import {
   ChevronRight,
   Compass,
   Edit3,
-  ExternalLink,
   FileText,
+  GitBranch,
   Layers,
   Loader2,
   Mic,
@@ -25,14 +25,24 @@ import { buildTranscript, normalizePhase } from "@/lib/session-wire";
 import {
   createDemo,
   createDrawing,
+  dismissPracticeProblem,
+  extractSessionToGraph,
   getBackgroundJobs,
   getChat,
+  getGraphSnapshot,
   getSetupStatus,
   resumeChat,
   sendChatMessage,
   updateChatSettings,
 } from "@/lib/api";
 import { modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
+import {
+  activeProblem,
+  buildPracticeTranscript,
+  dockState,
+  practiceCounts,
+  type DockSubmission,
+} from "@/lib/practice";
 import { formatTokens } from "@/lib/usage";
 import { ModelPicker } from "@/components/model-picker";
 import { useEventSubscription } from "@/components/server-events";
@@ -41,7 +51,7 @@ import { QuestionDock } from "@/components/question-dock";
 import { PlanWindow } from "@/components/plan-window";
 import { AnsweredQuestionCard, PhaseChip, PhaseDivider, ProbeDoneCard } from "@/components/transcript-cards";
 import { SourceCitationPane } from "@/components/source-citation-pane";
-import { PracticeView } from "@/components/practice-view";
+import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
 
 interface ChatPageProps {
@@ -50,6 +60,7 @@ interface ChatPageProps {
 
 const SESSION_EVENTS: SseEventType[] = ["session:updated", "dock:opened", "dock:resolved", "plan:updated", "usage:updated"];
 const FLASH_MS = 1800;
+const EXTRACT_NOTICE_MS = 6000;
 
 /** "#message-<id>" → "<id>" (null for any other hash). */
 function messageIdFromHash(hash: string): string | null {
@@ -94,6 +105,20 @@ export default function ChatPage({ params }: ChatPageProps) {
   // `demo_builder` job queued by the ⚡ button; resolved via SSE `jobs:updated` (notify -> fetch).
   const [demoJobId, setDemoJobId] = useState<string | null>(null);
   const isSpawningDemo = demoJobId !== null;
+
+  // PRACTICE: graph node names for the target chips (notify -> fetch on graph:updated).
+  const [nodeNames, setNodeNames] = useState<Map<string, string>>(new Map());
+  const [dismissOpen, setDismissOpen] = useState(false);
+  const [dismissBusy, setDismissBusy] = useState(false);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+
+  // TEACH: "Extrair para o grafo" (POST /api/graph/extract/{id}); the job shows in BACKGROUND AGENTS.
+  const [extracting, setExtracting] = useState(false);
+  const [extractNotice, setExtractNotice] = useState<string | null>(null);
+  const extractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
+  }, []);
 
   const settleDemoJob = (job: { status: string; result_id?: string | null; error?: string | null }) => {
     if (job.status === "completed" && job.result_id) {
@@ -171,6 +196,19 @@ export default function ChatPage({ params }: ChatPageProps) {
     void fetchSessionData();
   });
 
+  const isPracticeSession = session?.mode === "PRACTICE";
+  const loadNodeNames = React.useCallback(() => {
+    getGraphSnapshot()
+      .then((g) => setNodeNames(new Map(g.nodes.map((n) => [n.id, n.name]))))
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (isPracticeSession) loadNodeNames();
+  }, [isPracticeSession, loadNodeNames]);
+  useEventSubscription("graph:updated", () => {
+    if (isPracticeSession) loadNodeNames();
+  });
+
   // Deep link #message-<id>: scroll to the message and flash it (on load and on hashchange).
   // While a deep link is pending, the auto-scroll-to-bottom stays out of the way.
   const pendingAnchorRef = useRef<string | null>(null);
@@ -211,7 +249,13 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [session?.messages.length, session?.pending_quiz?.quiz_id, scrollToAnchor]);
+  }, [
+    session?.messages.length,
+    session?.pending_quiz?.quiz_id,
+    session?.practice.problems.length,
+    session?.practice.active_problem_id,
+    scrollToAnchor,
+  ]);
 
   // Model chip: effective slot of the session (override or the strong slot).
   const [strongSlot, setStrongSlot] = useState<ModelSlotConfig | null>(null);
@@ -310,7 +354,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
     try {
       const res = await sendChatMessage(id, textToSend);
-      if (res?.session) {
+      if (res.session) {
         setSession(res.session);
       } else {
         await fetchSessionData();
@@ -322,6 +366,56 @@ export default function ChatPage({ params }: ChatPageProps) {
       setActionError(`${t.sendFailed} ${err?.message ?? ""}`.trim());
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // PRACTICE dock: attempt / next / free text (POST /messages with `kind`).
+  const handlePracticeSubmit = async (submission: DockSubmission): Promise<boolean> => {
+    if (!id || isSending) return false;
+    setIsSending(true);
+    setActionError(null);
+    try {
+      const res = await sendChatMessage(id, submission.content, submission.kind, { silent: true });
+      if (res.session) setSession(res.session);
+      else await fetchSessionData();
+      return true;
+    } catch (err) {
+      setActionError(`${t.sendFailed} ${err instanceof Error ? err.message : ""}`.trim());
+      return false;
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleConfirmDismiss = async () => {
+    if (!id || dismissBusy) return;
+    setDismissBusy(true);
+    setDismissError(null);
+    try {
+      const updated = await dismissPracticeProblem(id);
+      if (updated) setSession(updated);
+      else await fetchSessionData();
+      setDismissOpen(false);
+    } catch (err) {
+      setDismissError(`${t.dismissProblemFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setDismissBusy(false);
+    }
+  };
+
+  const handleExtract = async () => {
+    if (!id || extracting) return;
+    setExtracting(true);
+    setActionError(null);
+    try {
+      await extractSessionToGraph(id);
+      setExtractNotice(t.extractQueued);
+      if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
+      extractTimerRef.current = setTimeout(() => setExtractNotice(null), EXTRACT_NOTICE_MS);
+    } catch (err) {
+      setActionError(`${t.extractFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -369,10 +463,19 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (!session) return null;
 
     if (session.mode === "PRACTICE") {
+      const counts = practiceCounts(session.practice);
       return (
-        <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-foreground tracking-wide uppercase font-semibold">
-          {t.badgePractice}
-        </span>
+        <>
+          <span className="px-2 py-0.5 rounded bg-accent border border-border font-ui text-[10.5px] text-foreground tracking-wide uppercase font-semibold">
+            {t.practiceChip}
+          </span>
+          <span
+            className="px-2 py-0.5 rounded border border-border font-ui text-[10.5px] text-muted-foreground tabular-nums"
+            title={t.practiceCounterTitle}
+          >
+            {t.practiceCounter(counts.solved, counts.total)}
+          </span>
+        </>
       );
     }
 
@@ -446,6 +549,54 @@ export default function ChatPage({ params }: ChatPageProps) {
   const needsRecovery =
     session.recovery_required || execStatus === "failed" || execStatus === "interrupted";
   const isTeaching = execStatus === "queued" || execStatus === "running";
+  const isPractice = session.mode === "PRACTICE";
+  const practiceItems = isPractice
+    ? buildPracticeTranscript({
+        messages: session.messages,
+        practice: session.practice,
+        answers: session.answers,
+        pending_quiz: session.pending_quiz,
+      })
+    : [];
+  const practiceActive = isPractice ? activeProblem(session.practice) : null;
+  const practiceDock = dockState({
+    activeProblemId: practiceActive?.id ?? null,
+    executionStatus: execStatus,
+    sending: isSending,
+    pendingQuiz: isWaitingQuiz,
+  });
+
+  const renderMessage = (message: SessionRecord["messages"][number], key: string) => {
+    if (message.role === "user") {
+      return (
+        <div key={key} id={`message-${message.id}`} className="flex justify-end my-2 scroll-mt-24">
+          <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm whitespace-pre-wrap">
+            <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
+              {t.you}
+            </span>
+            {message.content}
+          </div>
+        </div>
+      );
+    }
+
+    // Assistant message: Render editorial whiteboard prose with KaTeX and Citations
+    return (
+      <div key={key} id={`message-${message.id}`} className="my-3 flex flex-col gap-2 scroll-mt-24">
+        <div className="flex items-center justify-between text-[11px] font-ui text-muted-foreground border-b border-accent pb-1 select-none">
+          <span className="tracking-wider uppercase font-semibold">
+            {t.teacherHarness}
+          </span>
+        </div>
+
+        <LessonProse
+          content={message.content}
+          sourceName={session.source_file || session.title}
+          onSelectCitation={handleOpenCitation}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-background relative">
@@ -505,6 +656,23 @@ export default function ChatPage({ params }: ChatPageProps) {
               {t.sessionUsage(formatTokens(session.usage.total_tokens, locale), session.usage.turns)}
             </span>
           )}
+          {!isPractice && (
+          <>
+          <button
+            type="button"
+            onClick={() => void handleExtract()}
+            disabled={extracting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95 disabled:cursor-not-allowed"
+            title={t.extractGraphTitle}
+          >
+            {extracting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+            )}
+            <span>{t.extractGraph}</span>
+          </button>
+
           <button
             type="button"
             onClick={handleSpawnDemo}
@@ -534,16 +702,29 @@ export default function ChatPage({ params }: ChatPageProps) {
             )}
             <span>{t.drawFromMemory}</span>
           </button>
+          </>
+          )}
         </div>
+        {extractNotice && (
+          <p role="status" aria-live="polite" className="basis-full font-ui text-[11px] text-success">
+            {extractNotice}
+          </p>
+        )}
       </header>
 
-      {/* 2. Main Lesson Prose Stream or Practice View */}
-      {session.mode === "PRACTICE" ? (
-        <div className="flex-1 overflow-y-auto">
-          <PracticeView onSelectCitation={handleOpenCitation} />
-        </div>
-      ) : (
+      {/* 2. Main Lesson Prose Stream (TEACH and PRACTICE share the prose rendering) */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
+        {isPractice ? (
+          <PracticeTranscript
+            items={practiceItems}
+            sessionId={session.id}
+            activeProblemId={practiceActive?.id ?? null}
+            nodeNames={nodeNames}
+            onAnswerSubmitted={() => void fetchSessionData()}
+            renderMessage={renderMessage}
+          />
+        ) : (
+        <>
         {showDemo && demoSlug && (
           <DemoIframe
             key={demoSlug}
@@ -574,42 +755,14 @@ export default function ChatPage({ params }: ChatPageProps) {
                 />
               );
             }
-            const message = item.message;
-            if (message.role === "user") {
-              return (
-                <div key={item.key} id={`message-${message.id}`} className="flex justify-end my-2 scroll-mt-24">
-                  <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm whitespace-pre-wrap">
-                    <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
-                      {t.you}
-                    </span>
-                    {message.content}
-                  </div>
-                </div>
-              );
-            }
-
-            // Assistant message: Render editorial whiteboard prose with KaTeX and Citations
-            return (
-              <div key={item.key} id={`message-${message.id}`} className="my-3 flex flex-col gap-2 scroll-mt-24">
-                <div className="flex items-center justify-between text-[11px] font-ui text-muted-foreground border-b border-accent pb-1 select-none">
-                  <span className="tracking-wider uppercase font-semibold">
-                    {t.teacherHarness}
-                  </span>
-                </div>
-
-                <LessonProse
-                  content={message.content}
-                  sourceName={session.source_file || session.title}
-                  onSelectCitation={handleOpenCitation}
-                />
-              </div>
-            );
+            return renderMessage(item.message, item.key);
           })
+        )}
+        </>
         )}
 
         <div ref={messagesEndRef} />
       </div>
-      )}
 
       {/* 4a. Run-state strip: recovery banner / teaching indicator / inline errors */}
       {(needsRecovery || isTeaching || actionError) && (
@@ -682,7 +835,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                 className="flex items-center gap-2 font-ui text-[11px] text-muted-foreground"
               >
                 <Loader2 className="w-3 h-3 animate-spin" />
-                <span>{execStatus === "queued" ? t.queued : t.teaching}</span>
+                <span>{execStatus === "queued" ? t.queued : isPractice ? t.practiceRunning : t.teaching}</span>
               </div>
             )}
 
@@ -706,7 +859,18 @@ export default function ChatPage({ params }: ChatPageProps) {
         </div>
       )}
 
-      {/* 4b. Bottom Follow-up Input Bar */}
+      {/* 4b. Bottom input: PracticeDock (PRACTICE) or the follow-up bar (TEACH) */}
+      {isPractice ? (
+        <PracticeDock
+          state={practiceDock}
+          pendingQuiz={isWaitingQuiz}
+          onSubmit={handlePracticeSubmit}
+          onRequestDismiss={() => {
+            setDismissError(null);
+            setDismissOpen(true);
+          }}
+        />
+      ) : (
       <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
         <form
           onSubmit={handleSendMessage}
@@ -766,6 +930,15 @@ export default function ChatPage({ params }: ChatPageProps) {
           </button>
         </form>
       </footer>
+      )}
+
+      <DismissProblemDialog
+        open={dismissOpen && Boolean(practiceActive)}
+        busy={dismissBusy}
+        error={dismissError}
+        onCancel={() => setDismissOpen(false)}
+        onConfirm={() => void handleConfirmDismiss()}
+      />
 
       {/* 5. Floating PlanWindow Mini-DAG */}
       {session.plan && (

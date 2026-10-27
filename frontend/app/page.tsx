@@ -2,7 +2,8 @@
 
 import { useEventSubscription } from "@/components/server-events";
 import { useLocale } from "@/components/locale-provider";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { GraphView } from "@/components/graph-view";
 import { Composer, type SelectedNodeRef } from "@/components/composer";
 import { ImportDialog } from "@/components/import-dialog";
@@ -12,6 +13,13 @@ import { pruneSelection, type Selection } from "@/lib/graph-selection";
 import type { GraphSnapshot, SetupStatusResponse, SseEventType } from "@/lib/types";
 
 const SETUP_EVENTS: SseEventType[] = ["config:updated", "vault:changed"];
+
+/** Reports `?focus=<node_id>` (links from PRACTICE target chips). Isolated so only it needs Suspense. */
+function FocusParam({ onChange }: { onChange: (id: string | null) => void }) {
+  const focus = useSearchParams().get("focus");
+  useEffect(() => onChange(focus || null), [focus, onChange]);
+  return null;
+}
 
 /**
  * Home híbrida (Fase 8B): full-bleed graph with floating chrome on top and the
@@ -26,6 +34,7 @@ export default function HomePage() {
   const [pendingTopic, setPendingTopic] = useState("");
   const [selection, setSelection] = useState<Selection>([]);
   const [nodeNames, setNodeNames] = useState<Map<string, string>>(new Map());
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   const refreshSetup = useCallback(() => {
     getSetupStatus()
@@ -67,6 +76,10 @@ export default function HomePage() {
         </p>
       )}
 
+      <Suspense fallback={null}>
+        <FocusParam onChange={setFocusId} />
+      </Suspense>
+
       {/* Full-bleed graph (single unified view, no Macro/Micro toggle) */}
       <div className="absolute inset-0">
         <GraphView
@@ -74,6 +87,7 @@ export default function HomePage() {
           onSelectionChange={setSelection}
           onSnapshot={handleSnapshot}
           onOpenImport={() => setIsImportOpen(true)}
+          focusId={focusId}
         />
       </div>
 

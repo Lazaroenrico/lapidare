@@ -238,6 +238,8 @@ export interface SessionRecord {
   slot_override?: ModelSlotConfig | null;
   /** Slot actually used by the session (override or strong slot). */
   effective_slot?: ModelSlotConfig | null;
+  /** PRACTICE sessions only (Fase 9); empty state otherwise. */
+  practice: PracticeState;
   /** Accumulated token usage, when the provider reports it. */
   usage?: UsageCounters | null;
   /** Graph node ids handed to the session as context. */
@@ -424,49 +426,46 @@ export interface UsageReport {
   by_session: SessionUsageEntry[];
 }
 
-// --- 5. Practice & Hint Ladder (R0-R5) ---
+// --- 5. Practice session (Fase 9: one problem at a time, hint ladder R0–R5) ---
 
 export type HintLevel = "R0" | "R1" | "R2" | "R3" | "R4" | "R5";
 
-export interface HintStep {
-  level: HintLevel;
-  title: string;
-  content: string;
-}
+export type PracticeProblemMode = "recall" | "discrimination" | "composition";
 
-export interface RubricCriterion {
-  name: string;
-  weight: number;
-  description: string;
+export type PracticeOutcome = "solved" | "solvedWithHints" | "movedOn" | "surrendered" | "dismissed";
+
+export type PracticeMissClass = "cue" | "discrimination" | "execution" | "careless" | "structural";
+
+export interface PracticeAttempt {
+  at: string;
+  text: string;
 }
 
 export interface PracticeProblem {
   id: string;
-  title: string;
-  topic?: string;
-  prompt: string;
-  target_concepts: string[];
-  kind: "recall" | "discrimination" | "composition";
-  hints: HintStep[];
-  rubric: RubricCriterion[];
-  max_score: number;
-}
-
-export interface PracticeAttemptGrade {
-  score: number;
-  max_score: number;
-  feedback: string;
-  rubric_scores: Record<string, number>;
-}
-
-export interface PracticeSet {
-  id: string;
-  title: string;
+  statement: string;
+  mode: PracticeProblemMode;
+  /** Graph node ids (`n_…`). */
+  target: string[];
+  /** Hidden by the API while the problem is active; revealed after `conclude`. */
+  model_solution: string | null;
   created_at: string;
-  problems: PracticeProblem[];
-  session_id?: string;
-  completed: boolean;
+  attempts: PracticeAttempt[];
+  outcome: PracticeOutcome | null;
+  verdict: string;
+  rung: HintLevel | null;
+  miss_class: PracticeMissClass | null;
+  retest: boolean;
+  concluded_at: string | null;
 }
+
+export interface PracticeState {
+  active_problem_id: string | null;
+  problems: PracticeProblem[];
+}
+
+/** `kind` of POST /api/chats/{id}/messages. */
+export type ChatMessageKind = "text" | "attempt" | "next";
 
 // --- 6. Excalidraw Multimodal Review ---
 
@@ -496,7 +495,7 @@ export type SseEventType =
   | "config:updated"
   | "usage:updated";
 
-export type BackgroundJobKind = "practice_gen" | "extraction" | "track_gen" | "demo_builder" | (string & {});
+export type BackgroundJobKind = "extraction" | "track_gen" | "demo_builder" | (string & {});
 
 /** Raw job record as persisted in `.harness/jobs.jsonl` and served by GET /api/jobs. */
 export interface BackgroundJobStatus {

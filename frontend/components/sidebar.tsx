@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -10,7 +10,9 @@ import {
   ChevronUp,
   Cpu,
   Edit3,
+  GitBranch,
   Loader2,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
@@ -18,11 +20,15 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
-import { createChat, listChats, retryJob } from "@/lib/api";
+import { createChat, extractSessionToGraph, listChats, retryJob } from "@/lib/api";
 import { useEventSubscription, useServerEvents } from "./server-events";
 import { useLocale } from "./locale-provider";
 
 type FilterMode = "TEACHING" | "PRACTICE" | "ALL";
+
+const EXTRACT_NOTICE_MS = 6000;
+
+type ExtractNotice = { sessionId: string; ok: boolean; text: string };
 
 interface SidebarProps {
   collapsed?: boolean;
@@ -65,6 +71,58 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showAgentsTray, setShowAgentsTray] = useState<boolean>(false);
   const [creatingMode, setCreatingMode] = useState<SessionMode | null>(null);
+
+  // Per-session context menu ("⋯" button or right click) with "Extrair para o grafo".
+  const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const [extractingId, setExtractingId] = useState<string | null>(null);
+  const [extractNotice, setExtractNotice] = useState<ExtractNotice | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuSessionId) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuSessionId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuSessionId(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuSessionId]);
+
+  useEffect(() => () => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+  }, []);
+
+  const showNotice = (notice: ExtractNotice) => {
+    setExtractNotice(notice);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setExtractNotice(null), EXTRACT_NOTICE_MS);
+  };
+
+  // POST /api/graph/extract/{id}; the job appears in BACKGROUND AGENTS via `jobs:updated`.
+  const handleExtract = async (sessionId: string) => {
+    setMenuSessionId(null);
+    setExtractingId(sessionId);
+    try {
+      await extractSessionToGraph(sessionId);
+      showNotice({ sessionId, ok: true, text: t.extractQueued });
+      setShowAgentsTray(true);
+    } catch (err) {
+      showNotice({
+        sessionId,
+        ok: false,
+        text: `${t.extractFailed} ${err instanceof Error ? err.message : ""}`.trim(),
+      });
+    } finally {
+      setExtractingId(null);
+    }
+  };
 
   const fetchSessionList = async () => {
     try {
@@ -365,33 +423,99 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         ) : (
           filteredSessions.map((session) => {
             const isActive = pathname === `/chat/${session.id}`;
+            // Only TEACH sessions feed the trail (spec Fase 9 §3), so only they get the menu.
+            const hasMenu = session.mode === "TEACH";
+            const menuOpen = menuSessionId === session.id;
+            const notice = extractNotice?.sessionId === session.id ? extractNotice : null;
             return (
-              <Link
-                key={session.id}
-                href={`/chat/${session.id}`}
-                className={`group flex items-start gap-2 p-2 rounded border border-transparent transition-all cursor-pointer ${
-                  isActive
-                    ? "bg-accent border-border text-foreground"
-                    : "hover:bg-card hover:border-accent text-foreground"
-                }`}
-              >
-                <div className="mt-1">{getStatusIndicator(session)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-medium text-[11.5px] truncate font-prose text-foreground group-hover:text-foreground">
-                      {session.title || session.topic || t.untitledSession}
-                    </span>
-                    <span className="text-[9px] uppercase px-1 py-0.2 bg-background border border-border text-muted-foreground rounded shrink-0">
-                      {session.mode}
-                    </span>
+              <div key={session.id} className="relative group/row">
+                <Link
+                  href={`/chat/${session.id}`}
+                  onContextMenu={(e) => {
+                    if (!hasMenu) return;
+                    e.preventDefault();
+                    setMenuSessionId(session.id);
+                  }}
+                  className={`group flex items-start gap-2 p-2 rounded border border-transparent transition-all cursor-pointer ${
+                    hasMenu ? "pr-7" : ""
+                  } ${
+                    isActive
+                      ? "bg-accent border-border text-foreground"
+                      : "hover:bg-card hover:border-accent text-foreground"
+                  }`}
+                >
+                  <div className="mt-1">{getStatusIndicator(session)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-medium text-[11.5px] truncate font-prose text-foreground group-hover:text-foreground">
+                        {session.title || session.topic || t.untitledSession}
+                      </span>
+                      <span className="text-[9px] uppercase px-1 py-0.2 bg-background border border-border text-muted-foreground rounded shrink-0">
+                        {session.mode}
+                      </span>
+                    </div>
+                    {session.topic && session.topic !== session.title && (
+                      <p className="text-[10px] text-muted-foreground truncate mt-0.5 font-prose">
+                        {session.topic}
+                      </p>
+                    )}
                   </div>
-                  {session.topic && session.topic !== session.title && (
-                    <p className="text-[10px] text-muted-foreground truncate mt-0.5 font-prose">
-                      {session.topic}
-                    </p>
-                  )}
-                </div>
-              </Link>
+                </Link>
+
+                {hasMenu && (
+                  <button
+                    type="button"
+                    onClick={() => setMenuSessionId(menuOpen ? null : session.id)}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    aria-label={t.sessionMenu}
+                    title={t.sessionMenu}
+                    className={`absolute right-1 top-1.5 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer transition-opacity ${
+                      menuOpen || extractingId === session.id
+                        ? "opacity-100"
+                        : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"
+                    }`}
+                  >
+                    {extractingId === session.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                )}
+
+                {menuOpen && (
+                  <div
+                    ref={menuRef}
+                    role="menu"
+                    aria-label={t.sessionMenu}
+                    className="absolute right-1 top-8 z-40 min-w-[180px] bg-card border border-border rounded shadow-lg p-1"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      autoFocus
+                      disabled={extractingId !== null}
+                      onClick={() => void handleExtract(session.id)}
+                      title={t.extractGraphTitle}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer disabled:cursor-not-allowed disabled:text-muted-foreground"
+                    >
+                      <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span>{t.extractGraph}</span>
+                    </button>
+                  </div>
+                )}
+
+                {notice && (
+                  <p
+                    role={notice.ok ? "status" : "alert"}
+                    aria-live="polite"
+                    className={`px-2 pb-1 text-[10px] break-words ${notice.ok ? "text-success" : "text-danger"}`}
+                  >
+                    {notice.text}
+                  </p>
+                )}
+              </div>
             );
           })
         )}
