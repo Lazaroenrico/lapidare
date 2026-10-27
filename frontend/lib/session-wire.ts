@@ -23,6 +23,8 @@ import type {
   SessionRecord,
   TeachPhase,
 } from "./types";
+import { decodeSlotOverride } from "./model-choice";
+import { decodeUsageCounters } from "./usage";
 
 type Raw = Record<string, unknown>;
 
@@ -198,6 +200,10 @@ export function decodeSession(raw: unknown): SessionRecord {
     answers,
     assessment: decodeAssessment(r.assessment),
     plan: r.plan === undefined || r.plan === null ? undefined : decodePlan(r.plan),
+    slot_override: decodeSlotOverride(r.slot_override),
+    effective_slot: decodeSlotOverride(r.effective_slot),
+    usage: decodeUsageCounters(r.usage),
+    graph_context: strList(r.graph_context),
   };
 }
 

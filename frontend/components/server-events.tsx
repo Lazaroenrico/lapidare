@@ -41,6 +41,7 @@ const KNOWN_EVENT_TYPES: SseEventType[] = [
   "graph:updated",
   "jobs:updated",
   "config:updated",
+  "usage:updated",
 ];
 
 export function ServerEventsProvider({

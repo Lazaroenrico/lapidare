@@ -45,6 +45,10 @@ import {
   type RequestSpec,
 } from "./import-wire";
 import { decodeAnswer, decodeQuiz, decodeSession } from "./session-wire";
+import { decodeGraph } from "./graph-wire";
+import { decodeUsageReport } from "./usage";
+import type { ModelChoicePayload } from "./model-choice";
+import type { UsageReport } from "./types";
 
 const BASE_URL = "";
 
@@ -195,7 +199,27 @@ export const grantAgyPermission = () =>
 // --- Knowledge Graph & Chains ---
 
 export async function getGraphSnapshot(): Promise<GraphSnapshot> {
-  return fetchJson<GraphSnapshot>("/api/graph");
+  return decodeGraph(await fetchJson<unknown>("/api/graph"));
+}
+
+/** DELETE /api/graph/nodes/{id}: tombstones the node and its chains (the note's free text stays). */
+export const deleteGraphNode = (id: string) =>
+  fetchJson<unknown>(`/api/graph/nodes/${encodeURIComponent(id)}`, { method: "DELETE" }, { silent: true });
+
+/** PUT /api/graph/positions with {node_id: {x, y}} (dragged positions). */
+export const putGraphPositions = (positions: Record<string, { x: number; y: number }>) =>
+  fetchJson<unknown>("/api/graph/positions", { method: "PUT", body: JSON.stringify(positions) }, { silent: true });
+
+// --- Usage ---
+
+/** GET /api/usage; null when the endpoint does not exist yet (404/405). */
+export async function getUsage(signal?: AbortSignal): Promise<UsageReport | null> {
+  try {
+    return decodeUsageReport(await fetchJson<unknown>("/api/usage", { signal }, { silent: true }));
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) return null;
+    throw err;
+  }
 }
 
 // --- Chat & Classroom Sessions ---
@@ -214,11 +238,28 @@ export async function createChat(payload: {
   topic?: string;
   source_file?: string;
   track_item_id?: string;
+  /** Per-session model override (omitted = strong slot). */
+  model_id?: string;
+  effort?: ModelChoicePayload["effort"];
+  /** Selected graph node ids handed to the session as context (max 64). */
+  graph_context?: string[];
 }): Promise<SessionRecord> {
   return decodeSession(await fetchJson<unknown>("/api/chats", {
     method: "POST",
     body: JSON.stringify(payload),
   }));
+}
+
+/** PUT /api/chats/{id}/settings {model_id, effort}; the backend may answer with the session, {session}, or nothing. */
+export async function updateChatSettings(id: string, payload: ModelChoicePayload): Promise<SessionRecord | null> {
+  const raw = await fetchJson<unknown>(
+    `/api/chats/${encodeURIComponent(id)}/settings`,
+    { method: "PUT", body: JSON.stringify(payload) },
+    { silent: true },
+  );
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  const sessionRaw = r && r.session && typeof r.session === "object" ? r.session : r && typeof r.id === "string" ? r : null;
+  return sessionRaw ? decodeSession(sessionRaw) : null;
 }
 
 export async function sendChatMessage(

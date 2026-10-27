@@ -144,3 +144,14 @@ body {
   background-color: var(--border);
   color: var(--foreground);
 }
+
+/* Deep link /chat/<id>#message-<msgId>: brief highlight of the target message */
+@keyframes message-flash {
+  0%, 35% { background-color: var(--accent); box-shadow: 0 0 0 4px var(--accent); }
+  100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; }
+}
+
+.message-flash {
+  border-radius: 8px;
+  animation: message-flash 1.8s ease-out;
+}

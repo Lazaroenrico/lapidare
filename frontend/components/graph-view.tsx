@@ -1,44 +1,70 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
+  CheckSquare,
   Edit3,
   ExternalLink,
   Link2,
+  Loader2,
   Minus,
   NotebookText,
   Plus,
   RefreshCw,
+  Route,
   Search,
-  Sparkles,
-  Target,
+  Settings2,
+  Square,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
-import type { ConceptNode, GraphSnapshot } from "@/lib/types";
-import { createChat, createDrawing, getGraphSnapshot, getSetupStatus } from "@/lib/api";
+import type { ConceptNode, GraphSnapshot, RoadmapItem, SseEventType } from "@/lib/types";
+import {
+  createChat,
+  createDrawing,
+  deleteGraphNode,
+  getGraphSnapshot,
+  getSetupStatus,
+  putGraphPositions,
+} from "@/lib/api";
+import { EMPTY_GRAPH, sessionMessageHref, trackItemIdOf } from "@/lib/graph-wire";
+import { isSelected, toggleChain, toggleId, type Selection } from "@/lib/graph-selection";
+import {
+  DEFAULT_GRAPH_SETTINGS,
+  GRAPH_SETTINGS_KEY,
+  parseGraphSettings,
+  serializeGraphSettings,
+  type GraphSettings,
+} from "@/lib/graph-settings";
 import { useEventSubscription } from "./server-events";
 import { GraphCanvasEngine } from "./graph-canvas";
 import { ConceptNotePane } from "./concept-note-pane";
+import { ChainTable } from "./chain-table";
+import { GraphSettingsPanel } from "./graph-settings-panel";
+import { UsagePill } from "./usage-pill";
 import { useLocale } from "./locale-provider";
 
 const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
+const GRAPH_EVENTS: SseEventType[] = ["graph:updated", "vault:changed"];
+const POSITIONS_DEBOUNCE_MS = 600;
 
-function readObsidianPref(): boolean {
+function readStorage(key: string): string | null {
   try {
-    return window.localStorage.getItem(OBSIDIAN_PREF_KEY) === "1";
+    return window.localStorage.getItem(key);
   } catch {
-    return false;
+    return null;
   }
 }
 
-function writeObsidianPref(value: boolean): void {
+function writeStorage(key: string, value: string): void {
   try {
-    window.localStorage.setItem(OBSIDIAN_PREF_KEY, value ? "1" : "0");
+    window.localStorage.setItem(key, value);
   } catch {
-    // Storage unavailable (private mode / blocked): keep the in-memory choice only.
+    // Storage unavailable (private mode / blocked): keep the in-memory value only.
   }
 }
 
@@ -53,38 +79,61 @@ function buildObsidianUri(vaultName: string, notePath: string): string {
   return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file)}`;
 }
 
+const chromeButton =
+  "flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer";
+
 interface GraphViewProps {
+  selection: Selection;
+  onSelectionChange: (next: Selection) => void;
+  /** Latest decoded snapshot (the Home uses it to name the selected nodes). */
+  onSnapshot?: (snapshot: GraphSnapshot) => void;
   onOpenImport?: () => void;
   className?: string;
 }
 
-export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
+export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImport, className = "" }: GraphViewProps) {
   const router = useRouter();
   const { t } = useLocale();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GraphCanvasEngine | null>(null);
+  const fittedRef = useRef(false);
 
-  // Graph Data State
-  const [snapshot, setSnapshot] = useState<GraphSnapshot>({
-    nodes: [],
-    edges: [],
-    chains: [],
-  });
-  const [selectedNode, setSelectedNode] = useState<ConceptNode | null>(null);
-
-  // Chains Drawer State
-  const [isChainsOpen, setIsChainsOpen] = useState<boolean>(false);
-  const [chainsSearch, setChainsSearch] = useState<string>("");
-
-  // Search in Canvas
-  const [nodeSearch, setNodeSearch] = useState<string>("");
+  const [snapshot, setSnapshot] = useState<GraphSnapshot>(EMPTY_GRAPH);
+  const [focused, setFocused] = useState<ConceptNode | null>(null);
+  const [ghost, setGhost] = useState<RoadmapItem | null>(null);
+  const [isChainsOpen, setIsChainsOpen] = useState(false);
+  const [nodeSearch, setNodeSearch] = useState("");
+  const [settings, setSettings] = useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [roadmapOn, setRoadmapOn] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ConceptNode | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // "Abrir Nota": Obsidian deep link vs. in-app read-only pane
-  const [openInObsidian, setOpenInObsidian] = useState<boolean>(false);
-  const [vaultName, setVaultName] = useState<string>("");
+  // "Abrir nota": Obsidian deep link vs. in-app read-only pane
+  const [openInObsidian, setOpenInObsidian] = useState(false);
+  const [vaultName, setVaultName] = useState("");
   const [noteNode, setNoteNode] = useState<ConceptNode | null>(null);
+
+  // Latest selection for engine callbacks (bound once).
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+  const onSnapshotRef = useRef(onSnapshot);
+  onSnapshotRef.current = onSnapshot;
+
+  // Dragged positions are batched and sent after the last drag ends.
+  const pendingPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const positionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushPositions = useCallback(() => {
+    positionsTimerRef.current = null;
+    const batch = pendingPositionsRef.current;
+    pendingPositionsRef.current = {};
+    if (Object.keys(batch).length === 0) return;
+    putGraphPositions(batch).catch((err) => console.error("[GraphView] Failed to save positions:", err));
+  }, []);
 
   const loadVaultName = useCallback(() => {
     getSetupStatus()
@@ -93,7 +142,8 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
   }, []);
 
   useEffect(() => {
-    setOpenInObsidian(readObsidianPref());
+    setOpenInObsidian(readStorage(OBSIDIAN_PREF_KEY) === "1");
+    setSettings(parseGraphSettings(readStorage(GRAPH_SETTINGS_KEY)));
     loadVaultName();
   }, [loadVaultName]);
 
@@ -101,9 +151,14 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
     loadVaultName();
   });
 
+  const updateSettings = (next: GraphSettings) => {
+    setSettings(next);
+    writeStorage(GRAPH_SETTINGS_KEY, serializeGraphSettings(next));
+  };
+
   const toggleOpenInObsidian = () => {
     setOpenInObsidian((prev) => {
-      writeObsidianPref(!prev);
+      writeStorage(OBSIDIAN_PREF_KEY, prev ? "0" : "1");
       return !prev;
     });
   };
@@ -118,190 +173,197 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
     setNoteNode(node);
   };
 
-  // Fetch Snapshot from Backend
   const loadGraph = useCallback(async () => {
     try {
       const data = await getGraphSnapshot();
-      if (data && Array.isArray(data.nodes)) {
-        setSnapshot(data);
-        if (engineRef.current) {
-          engineRef.current.setData(data.nodes, data.edges || []);
-        }
-      }
+      setSnapshot(data);
+      onSnapshotRef.current?.(data);
+      setFocused((prev) => (prev ? data.nodes.find((n) => n.id === prev.id) ?? null : null));
     } catch (err) {
       console.error("[GraphView] Failed to fetch graph snapshot:", err);
     }
   }, []);
 
-  // Listen for realtime SSE updates (notify -> fetch)
-  useEventSubscription(["graph:updated", "vault:changed"], () => {
+  // notify -> fetch
+  useEventSubscription(GRAPH_EVENTS, () => {
     void loadGraph();
   });
 
-  // Initialize Canvas Engine
+  // Canvas engine lifecycle
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const engine = new GraphCanvasEngine(canvas, {
-      onSelectNode: (node) => {
-        setSelectedNode(node);
+      onNodeClick: (node, additive) => {
+        if (additive) {
+          onSelectionChangeRef.current(toggleId(selectionRef.current, node.id));
+          return;
+        }
+        setGhost(null);
+        setFocused(node);
+      },
+      onGhostClick: (item) => {
+        setFocused(null);
+        setGhost(item);
       },
       onCanvasClick: () => {
-        setSelectedNode(null);
+        setFocused(null);
+        setGhost(null);
+      },
+      onNodeMoved: (id, pos) => {
+        pendingPositionsRef.current[id] = { x: Math.round(pos.x * 10) / 10, y: Math.round(pos.y * 10) / 10 };
+        if (positionsTimerRef.current) clearTimeout(positionsTimerRef.current);
+        positionsTimerRef.current = setTimeout(flushPositions, POSITIONS_DEBOUNCE_MS);
       },
     });
     engineRef.current = engine;
-
     void loadGraph();
 
-    // ResizeObserver
     const container = containerRef.current;
-    let resizeObserver: ResizeObserver | null = null;
-    if (container) {
-      resizeObserver = new ResizeObserver(() => {
-        engine.resize();
-      });
-      resizeObserver.observe(container);
-    }
+    const observer = container ? new ResizeObserver(() => engine.resize()) : null;
+    if (container && observer) observer.observe(container);
 
     return () => {
-      if (resizeObserver) resizeObserver.disconnect();
+      observer?.disconnect();
+      if (positionsTimerRef.current) {
+        clearTimeout(positionsTimerRef.current);
+        flushPositions();
+      }
       engine.destroy();
       engineRef.current = null;
     };
-  }, [loadGraph]);
+  }, [loadGraph, flushPositions]);
 
-  // When snapshot changes after engine was initialized
   useEffect(() => {
-    if (engineRef.current && snapshot.nodes.length > 0) {
-      engineRef.current.setData(snapshot.nodes, snapshot.edges || []);
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setData(snapshot.nodes, snapshot.edges, snapshot.clusters);
+    if (!fittedRef.current && snapshot.nodes.length > 0) {
+      fittedRef.current = true;
+      // One-shot fit once the first layout has spread out (not polling).
+      setTimeout(() => engineRef.current?.resetView(), 700);
     }
   }, [snapshot]);
 
-  // Filtered Chains
-  const filteredChains = React.useMemo(() => {
-    if (!chainsSearch.trim()) return snapshot.chains;
-    const q = chainsSearch.toLowerCase();
-    return snapshot.chains.filter((c) => {
-      const pMatch = c.premises.some((p) => p.toLowerCase().includes(q));
-      const cMatch = c.conclusion.toLowerCase().includes(q);
-      const fMatch = c.formula?.toLowerCase().includes(q);
-      return pMatch || cMatch || fMatch;
-    });
-  }, [snapshot.chains, chainsSearch]);
+  const hasRoadmap = snapshot.roadmap.length > 0;
+  useEffect(() => {
+    engineRef.current?.setGhosts(roadmapOn && hasRoadmap ? snapshot.roadmap : null);
+    if (!roadmapOn) setGhost(null);
+  }, [roadmapOn, hasRoadmap, snapshot.roadmap]);
 
-  // Node Search Results
-  const searchResults = React.useMemo(() => {
-    if (!nodeSearch.trim()) return [];
-    const q = nodeSearch.toLowerCase();
+  useEffect(() => {
+    engineRef.current?.setSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    engineRef.current?.setSelection(selection);
+  }, [selection]);
+
+  useEffect(() => {
+    engineRef.current?.setFocused(focused?.id ?? null);
+  }, [focused]);
+
+  const validIds = useMemo(() => new Set(snapshot.nodes.map((n) => n.id)), [snapshot.nodes]);
+  const sessionTitles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of snapshot.clusters) if (c.kind === "session") m.set(c.id, c.label);
+    for (const n of snapshot.nodes) for (const s of n.sessions) if (!m.has(s.session_id)) m.set(s.session_id, s.title);
+    return m;
+  }, [snapshot]);
+
+  const searchResults = useMemo(() => {
+    const q = nodeSearch.trim().toLowerCase();
+    if (!q) return [];
     return snapshot.nodes
       .filter(
         (n) =>
           n.name.toLowerCase().includes(q) ||
-          n.summary?.toLowerCase().includes(q)
+          n.statement.toLowerCase().includes(q) ||
+          n.aliases.some((a) => a.toLowerCase().includes(q)),
       )
-      .slice(0, 6);
+      .slice(0, 8);
   }, [snapshot.nodes, nodeSearch]);
 
-  // Quick Action: Open Lesson / TEACH
-  const handleOpenTeach = async (node: ConceptNode) => {
-    try {
-      setActionLoading("teach");
-      const session = await createChat({
-        mode: "TEACH",
-        topic: node.name,
-      });
-      router.push(`/chat/${session.id}`);
-    } catch (err) {
-      console.error("Failed to start TEACH session:", err);
-    } finally {
-      setActionLoading(null);
-    }
+  const focusNode = (id: string) => {
+    const node = snapshot.nodes.find((n) => n.id === id);
+    if (!node) return;
+    setGhost(null);
+    setFocused(node);
+    engineRef.current?.focusNode(id);
   };
 
-  // Quick Action: Practice Concept
-  const handleOpenPractice = async (node: ConceptNode) => {
-    try {
-      setActionLoading("practice");
-      const session = await createChat({
-        mode: "PRACTICE",
-        topic: node.name,
-      });
-      router.push(`/chat/${session.id}`);
-    } catch (err) {
-      console.error("Failed to start PRACTICE session:", err);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Quick Action: Memory Retrieval Drawing in Excalidraw
-  const handleOpenDraw = async (node: ConceptNode) => {
+  const handleDraw = async (node: ConceptNode) => {
     try {
       setActionLoading("draw");
-      const res = await createDrawing({
-        title: node.name,
-        concept_ids: [node.id],
-        prompt: t.drawPrompt(node.name),
-      });
+      const res = await createDrawing({ title: node.name, concept_ids: [node.id], prompt: t.drawPrompt(node.name) });
       router.push(`/draw/${res.slug}`);
     } catch (err) {
       console.error("Failed to create drawing:", err);
-
     } finally {
       setActionLoading(null);
     }
   };
 
-  // Focus a specific dependency or search result
-  const handleSelectDependency = (depName: string) => {
-    const found = snapshot.nodes.find(
-      (n) => n.name.toLowerCase() === depName.toLowerCase() || n.id === depName
-    );
-    if (found) {
-      setSelectedNode(found);
-      engineRef.current?.focusNode(found.id);
+  const handleStartGhost = async (item: RoadmapItem) => {
+    try {
+      setActionLoading("ghost");
+      const session = await createChat({ mode: "TEACH", topic: item.title, track_item_id: trackItemIdOf(item.id) });
+      router.push(`/chat/${session.id}`);
+    } catch (err) {
+      console.error("Failed to start track item:", err);
+    } finally {
+      setActionLoading(null);
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setActionLoading("delete");
+    setDeleteError(null);
+    try {
+      await deleteGraphNode(deleteTarget.id);
+      const id = deleteTarget.id;
+      setDeleteTarget(null);
+      setFocused(null);
+      if (isSelected(selection, id)) onSelectionChange(selection.filter((s) => s !== id));
+      void loadGraph();
+    } catch (err) {
+      setDeleteError(`${t.deleteFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const focusedSelected = focused ? isSelected(selection, focused.id) : false;
+
   return (
-    <div
-      ref={containerRef}
-      className={`relative w-full h-full overflow-hidden bg-background select-none ${className}`}
-    >
-      {/* 2D Canvas Target */}
+    <div ref={containerRef} className={`relative w-full h-full overflow-hidden bg-background select-none ${className}`}>
       <canvas ref={canvasRef} className="w-full h-full block cursor-default" />
 
-      {/* Top Floating Action Pills Bar */}
-      <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
-        {/* Left Status Pill */}
-        <div className="flex items-center gap-3 bg-card/90 backdrop-blur border border-border rounded-lg px-3.5 py-1.5 shadow-lg pointer-events-auto">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-success" />
-            <span className="font-ui font-semibold text-xs text-foreground">
-              {t.graphTitle}
+      {/* Floating top chrome */}
+      <div className="absolute top-4 left-4 right-4 flex flex-wrap items-start justify-between gap-2 pointer-events-none z-10">
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="flex items-center gap-3 bg-card/90 backdrop-blur border border-border rounded-lg px-3.5 py-1.5 shadow-lg">
+            <span className="font-ui font-semibold text-xs text-foreground">{t.graphTitle}</span>
+            <span className="text-border text-xs">|</span>
+            <span className="font-ui text-[11px] text-muted-foreground">
+              {t.graphStats(snapshot.nodes.length, snapshot.edges.length, snapshot.chains.length)}
             </span>
           </div>
-          <span className="text-border text-xs">|</span>
-          <span className="font-ui text-[11px] text-muted-foreground">
-            {t.graphStats(snapshot.nodes.length, snapshot.edges.length, snapshot.chains.length)}
-          </span>
+          <UsagePill />
         </div>
 
-        {/* Center / Right Pills: Search, Chains, Import, Excalidraw, Zoom */}
-        <div className="flex items-center gap-2 pointer-events-auto">
-          {/* Node Search Bar */}
+        <div className="flex flex-wrap items-center justify-end gap-2 pointer-events-auto">
           <div className="relative">
             <div className="flex items-center bg-card/90 backdrop-blur border border-border focus-within:border-muted-foreground rounded-lg px-2.5 py-1 shadow-lg transition-colors">
               <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
               <input
                 type="text"
-                placeholder={t.graphSearch}
-                aria-label={t.graphSearch}
+                placeholder={t.graphNodeSearch}
+                aria-label={t.graphNodeSearch}
                 value={nodeSearch}
                 onChange={(e) => setNodeSearch(e.target.value)}
-                className="bg-transparent text-foreground placeholder-muted-foreground text-xs font-ui w-36 sm:w-48 outline-none border-none focus:outline-none focus:ring-0"
+                className="bg-transparent text-foreground placeholder-muted-foreground text-xs font-ui w-36 sm:w-48 border-none"
               />
               {nodeSearch && (
                 <button
@@ -315,226 +377,194 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
                 </button>
               )}
             </div>
-
-            {/* Search Dropdown Results */}
             {searchResults.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-2xl py-1 z-30">
                 {searchResults.map((item) => (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => {
-                      setSelectedNode(item);
-                      engineRef.current?.focusNode(item.id);
+                    onClick={(e) => {
+                      if (e.shiftKey || e.metaKey || e.ctrlKey) onSelectionChange(toggleId(selection, item.id));
+                      else focusNode(item.id);
                       setNodeSearch("");
                     }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center justify-between text-xs font-ui text-foreground transition-colors"
+                    className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center justify-between gap-2 text-xs font-ui text-foreground transition-colors"
                   >
-                    <span>{item.name}</span>
-                    <span className="text-[10px] text-muted-foreground capitalize">
-                      {t.conceptStatus(item.status)}
-                    </span>
+                    <span className="truncate">{item.name}</span>
+                    {isSelected(selection, item.id) && <CheckSquare className="w-3 h-3 text-success shrink-0" />}
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* ☍ Chains Button */}
-          <button
-            type="button"
-            onClick={() => setIsChainsOpen(true)}
-            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title={t.chainsTitle}
-          >
+          <button type="button" onClick={() => setIsChainsOpen((o) => !o)} className={chromeButton} title={t.chainsTitle} aria-pressed={isChainsOpen}>
             <Link2 className="w-3.5 h-3.5 text-muted-foreground" />
             <span>☍ Chains</span>
             {snapshot.chains.length > 0 && (
-              <span className="bg-accent text-muted-foreground text-[10px] px-1.5 py-0.2 rounded-full border border-border">
+              <span className="bg-accent text-muted-foreground text-[10px] px-1.5 rounded-full border border-border">
                 {snapshot.chains.length}
               </span>
             )}
           </button>
 
-          {/* ↑ Import Button */}
-          <button
-            type="button"
-            onClick={onOpenImport}
-            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title={t.importTitle}
-          >
+          <button type="button" onClick={onOpenImport} className={chromeButton} title={t.importTitle}>
             <Upload className="w-3.5 h-3.5 text-muted-foreground" />
             <span>↑ Import</span>
           </button>
 
-          {/* ✎ Excalidraw Button */}
-          <button
-            type="button"
-            onClick={() => router.push("/draw/new")}
-            className="flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer"
-            title={t.excalidrawTitle}
-          >
-            <Edit3 className="w-3.5 h-3.5 text-muted-foreground" />
-            <span>✎ Excalidraw</span>
-          </button>
-
-          {/* Zoom Controls */}
-          <div className="flex items-center bg-card/90 backdrop-blur border border-border rounded-lg p-0.5 shadow-lg">
+          {hasRoadmap && (
             <button
               type="button"
-              onClick={() => engineRef.current?.zoomIn()}
-              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-              title={t.zoomIn}
+              onClick={() => setRoadmapOn((o) => !o)}
+              aria-pressed={roadmapOn}
+              title={t.roadmapTitle}
+              className={`${chromeButton} ${roadmapOn ? "bg-accent border-muted-foreground" : ""}`}
             >
+              <Route className={`w-3.5 h-3.5 ${roadmapOn ? "text-success" : "text-muted-foreground"}`} />
+              <span>{t.roadmapToggle}</span>
+            </button>
+          )}
+
+          <div className="flex items-center bg-card/90 backdrop-blur border border-border rounded-lg p-0.5 shadow-lg">
+            <button type="button" onClick={() => engineRef.current?.zoomIn()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.zoomIn} aria-label={t.zoomIn}>
               <Plus className="w-3.5 h-3.5" />
             </button>
-            <button
-              type="button"
-              onClick={() => engineRef.current?.zoomOut()}
-              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-              title={t.zoomOut}
-            >
+            <button type="button" onClick={() => engineRef.current?.zoomOut()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.zoomOut} aria-label={t.zoomOut}>
               <Minus className="w-3.5 h-3.5" />
             </button>
-            <button
-              type="button"
-              onClick={() => engineRef.current?.resetView()}
-              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-              title={t.resetView}
-            >
+            <button type="button" onClick={() => engineRef.current?.resetView()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.resetView} aria-label={t.resetView}>
               <RefreshCw className="w-3 h-3" />
             </button>
+          </div>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((o) => !o)}
+              aria-expanded={settingsOpen}
+              title={t.graphSettingsTitle}
+              aria-label={t.graphSettingsTitle}
+              className={`${chromeButton} px-2`}
+            >
+              <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+            {settingsOpen && (
+              <GraphSettingsPanel settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
+            )}
           </div>
         </div>
       </div>
 
-      {/* Contextual Node Card */}
-      {selectedNode && (
-        <div className="absolute top-20 right-4 w-84 bg-card border border-border rounded-xl p-4 shadow-2xl z-20 transition-all select-text font-ui animate-in fade-in slide-in-from-right-4 duration-150">
-          {/* Card Header */}
+      {/* Node card */}
+      {focused && !isChainsOpen && (
+        <div className="absolute top-20 right-4 w-80 max-h-[calc(100%-14rem)] overflow-y-auto bg-card border border-border rounded-xl p-4 shadow-2xl z-20 select-text font-ui">
           <div className="flex items-start justify-between gap-2 border-b border-accent pb-3 mb-3">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    selectedNode.status === "sólido"
-                      ? "bg-success"
-                      : selectedNode.status === "aprendendo"
-                      ? "bg-warning"
-                      : "bg-danger"
-                  }`}
-                />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                  {t.conceptStatus(selectedNode.status)}
-                </span>
-                {selectedNode.cluster && (
-                  <span className="text-[10px] text-muted-foreground bg-accent px-1.5 py-0.2 rounded border border-border">
-                    {selectedNode.cluster}
-                  </span>
-                )}
-              </div>
-              <h3 className="font-title text-lg text-foreground font-bold leading-tight">
-                {selectedNode.name}
-              </h3>
+            <div className="min-w-0">
+              {(focused.status || focused.cluster) && (
+                <div className="flex items-center gap-2 mb-1 text-[10px] text-muted-foreground">
+                  {focused.status && <span className="uppercase tracking-wider">{t.conceptStatus(focused.status)}</span>}
+                  {focused.cluster && (
+                    <span className="bg-accent px-1.5 rounded border border-border truncate max-w-48">
+                      {sessionTitles.get(focused.cluster) ?? focused.cluster}
+                    </span>
+                  )}
+                </div>
+              )}
+              <h3 className="font-title text-lg text-foreground font-bold leading-tight break-words">{focused.name}</h3>
+              {focused.aliases.length > 0 && (
+                <p className="text-[10.5px] text-muted-foreground mt-1">
+                  {t.nodeAliases} {focused.aliases.join(", ")}
+                </p>
+              )}
             </div>
             <button
               type="button"
-              onClick={() => setSelectedNode(null)}
+              onClick={() => setFocused(null)}
               className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent transition-colors"
               title={t.close}
+              aria-label={t.close}
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Summary / Truth */}
+          <p className="font-prose text-[13px] text-foreground leading-relaxed mb-3">{focused.statement || t.noSummary}</p>
+
           <div className="mb-3">
-            <p className="font-prose text-[13px] text-foreground leading-relaxed">
-              {selectedNode.summary || t.noSummary}
-            </p>
-          </div>
-
-          {/* Dependencies */}
-          {selectedNode.depends_on && selectedNode.depends_on.length > 0 && (
-            <div className="mb-3">
-              <span className="text-[10px] text-muted-foreground block uppercase tracking-wider mb-1.5">
-                {t.dependsOn}
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {selectedNode.depends_on.map((dep) => (
-                  <button
-                    key={dep}
-                    type="button"
-                    onClick={() => handleSelectDependency(dep)}
-                    className="text-[11px] bg-accent hover:bg-border text-foreground px-2 py-0.5 rounded border border-border transition-colors cursor-pointer"
-                  >
-                    [[{dep}]]
-                  </button>
+            <span className="text-[10px] text-muted-foreground block uppercase tracking-wider mb-1.5">{t.nodeSessions}</span>
+            {focused.sessions.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">{t.nodeNoSessions}</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {focused.sessions.map((s) => (
+                  <li key={`${s.session_id}-${s.message_id ?? ""}`}>
+                    <Link
+                      href={sessionMessageHref(s)}
+                      title={t.nodeOpenSession(s.title)}
+                      className="flex items-center gap-1.5 text-[11px] text-foreground hover:bg-accent rounded px-1.5 py-1 border border-accent hover:border-border transition-colors"
+                    >
+                      <BookOpen className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <span className="truncate">{s.title}</span>
+                      {s.message_id && <span className="ml-auto text-muted-foreground shrink-0">#</span>}
+                    </Link>
+                  </li>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* Vault Path */}
-          <div className="mb-4 text-[11px] text-muted-foreground flex items-center gap-1.5 bg-background px-2 py-1 rounded border border-accent truncate">
-            <span className="text-muted-foreground">{t.vaultLabel}</span>
-            <span className="truncate">
-              {notePathFor(selectedNode)}
-            </span>
+              </ul>
+            )}
           </div>
 
-          {/* Quick Actions */}
-          <div className="grid grid-cols-2 gap-2 pt-3 border-t border-accent">
-            <button
-              type="button"
-              disabled={actionLoading !== null}
-              onClick={() => handleOpenTeach(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
-              title={t.nodeTeachTitle}
-            >
-              <BookOpen className="w-3.5 h-3.5 mb-1 text-success" />
-              <span>{t.nodeTeach}</span>
-            </button>
+          <div className="mb-3 text-[11px] text-muted-foreground flex items-center gap-1.5 bg-background px-2 py-1 rounded border border-accent">
+            <span>{t.vaultLabel}</span>
+            <span className="truncate">{notePathFor(focused)}</span>
+          </div>
 
+          <div className="grid grid-cols-3 gap-2 pt-3 border-t border-accent">
             <button
               type="button"
-              disabled={actionLoading !== null}
-              onClick={() => handleOpenPractice(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
-              title={t.nodePracticeTitle}
-            >
-              <Target className="w-3.5 h-3.5 mb-1 text-warning" />
-              <span>{t.nodePractice}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={actionLoading !== null}
-              onClick={() => handleOpenDraw(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
-              title={t.nodeDrawTitle}
-            >
-              <Edit3 className="w-3.5 h-3.5 mb-1 text-foreground" />
-              <span>{t.nodeDraw}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleOpenNote(selectedNode)}
-              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border hover:border-muted-foreground transition-colors text-[10.5px] cursor-pointer text-center"
+              onClick={() => handleOpenNote(focused)}
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-foreground border border-border transition-colors text-[10.5px] cursor-pointer"
               title={openInObsidian && vaultName ? t.nodeNoteObsidianTitle : t.nodeNoteTitle}
             >
-              {openInObsidian && vaultName ? (
-                <ExternalLink className="w-3.5 h-3.5 mb-1 text-foreground" />
-              ) : (
-                <NotebookText className="w-3.5 h-3.5 mb-1 text-foreground" />
-              )}
+              {openInObsidian && vaultName ? <ExternalLink className="w-3.5 h-3.5 mb-1" /> : <NotebookText className="w-3.5 h-3.5 mb-1" />}
               <span>{t.nodeNote}</span>
             </button>
+            <button
+              type="button"
+              onClick={() => onSelectionChange(toggleId(selection, focused.id))}
+              aria-pressed={focusedSelected}
+              title={t.nodeSelectHint}
+              className={`flex flex-col items-center justify-center p-2 rounded border transition-colors text-[10.5px] cursor-pointer ${
+                focusedSelected ? "bg-border border-success/60 text-foreground" : "bg-accent hover:bg-border border-border text-foreground"
+              }`}
+            >
+              {focusedSelected ? <CheckSquare className="w-3.5 h-3.5 mb-1 text-success" /> : <Square className="w-3.5 h-3.5 mb-1" />}
+              <span>{focusedSelected ? t.nodeDeselect : t.nodeSelect}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteTarget(focused);
+              }}
+              className="flex flex-col items-center justify-center p-2 rounded bg-accent hover:bg-border text-danger border border-border hover:border-danger/60 transition-colors text-[10.5px] cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 mb-1" />
+              <span>{t.nodeDelete}</span>
+            </button>
           </div>
+          <button
+            type="button"
+            disabled={actionLoading !== null}
+            onClick={() => void handleDraw(focused)}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 p-1.5 rounded text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+            title={t.nodeDrawTitle}
+          >
+            <Edit3 className="w-3 h-3" />
+            {t.nodeDraw}
+          </button>
 
-          {/* Open-in-Obsidian preference (persisted per browser) */}
-          <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-muted-foreground select-none">
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground select-none">
             <span id="open-in-obsidian-label">{t.openInObsidian}</span>
             <button
               type="button"
@@ -553,129 +583,78 @@ export function GraphView({ onOpenImport, className = "" }: GraphViewProps) {
               />
             </button>
           </div>
-          {openInObsidian && !vaultName && (
-            <p className="mt-1 text-[10.5px] text-warning">{t.obsidianNoVault}</p>
-          )}
+          {openInObsidian && !vaultName && <p className="mt-1 text-[10.5px] text-warning">{t.obsidianNoVault}</p>}
         </div>
       )}
 
-      {/* Slide-over Drawer for Chains (☍ Chains) */}
-      {isChainsOpen && (
-        <div className="absolute top-0 right-0 bottom-0 w-96 bg-card border-l border-border shadow-2xl z-30 flex flex-col font-ui animate-in fade-in slide-in-from-right duration-200">
-          {/* Drawer Header */}
-          <div className="p-4 border-b border-accent flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <Link2 className="w-4 h-4 text-muted-foreground" />
-                <h2 className="font-ui font-semibold text-sm text-foreground">
-                  {t.chainsHeading}
-                </h2>
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-1 font-prose">
-                {t.chainsSubtitle}
-              </p>
+      {/* Ghost (pending track item) card */}
+      {ghost && !isChainsOpen && (
+        <div className="absolute top-20 right-4 w-72 bg-card border border-dashed border-muted-foreground rounded-xl p-4 shadow-2xl z-20 font-ui">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="min-w-0">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.ghostLabel}</span>
+              <h3 className="font-title text-base text-foreground font-bold leading-tight break-words">{ghost.title}</h3>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsChainsOpen(false)}
-              className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent transition-colors"
-              title={t.close}
-              aria-label={t.close}
-            >
+            <button type="button" onClick={() => setGhost(null)} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent" title={t.close} aria-label={t.close}>
               <X className="w-4 h-4" />
             </button>
           </div>
+          <p className="text-[11px] text-muted-foreground mb-3">{t.ghostLinked(ghost.linked_node_ids.filter((id) => validIds.has(id)).length)}</p>
+          <button
+            type="button"
+            disabled={actionLoading !== null}
+            onClick={() => void handleStartGhost(ghost)}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-foreground text-background text-xs font-semibold hover:bg-foreground/90 cursor-pointer disabled:opacity-60"
+          >
+            {actionLoading === "ghost" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookOpen className="w-3.5 h-3.5" />}
+            {t.ghostStart}
+          </button>
+        </div>
+      )}
 
-          {/* Drawer Search */}
-          <div className="p-3 border-b border-accent">
-            <div className="flex items-center bg-background border border-border rounded px-2.5 py-1.5">
-              <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
-              <input
-                type="text"
-                placeholder={t.chainsFilter}
-                aria-label={t.chainsFilter}
-                value={chainsSearch}
-                onChange={(e) => setChainsSearch(e.target.value)}
-                className="bg-transparent text-xs text-foreground placeholder-muted-foreground outline-none w-full border-none focus:outline-none focus:ring-0"
-              />
+      {isChainsOpen && (
+        <ChainTable
+          chains={snapshot.chains}
+          selection={selection}
+          validIds={validIds}
+          sessionTitles={sessionTitles}
+          onToggleChain={(c) => onSelectionChange(toggleChain(selection, c, validIds))}
+          onFocusNode={(id) => {
+            setIsChainsOpen(false);
+            focusNode(id);
+          }}
+          onClose={() => setIsChainsOpen(false)}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4" role="presentation">
+          <div role="alertdialog" aria-modal="true" aria-labelledby="delete-node-title" className="w-full max-w-sm bg-card border border-border rounded-xl p-5 shadow-2xl font-ui">
+            <h3 id="delete-node-title" className="font-title text-base font-bold text-foreground mb-2">
+              {t.deleteNodeTitle}
+            </h3>
+            <p className="font-prose text-[13px] text-muted-foreground mb-4">{t.deleteNodeBody(deleteTarget.name)}</p>
+            {deleteError && <p role="alert" className="text-[11px] text-danger mb-3">{deleteError}</p>}
+            <div className="flex justify-end gap-2 text-xs">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setDeleteTarget(null)}
+                className="px-3 py-1.5 rounded border border-border bg-background hover:bg-accent text-foreground cursor-pointer"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading === "delete"}
+                onClick={() => void confirmDelete()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-danger/60 bg-accent hover:bg-border text-danger font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {actionLoading === "delete" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {actionLoading === "delete" ? t.deleting : t.deleteConfirm}
+              </button>
             </div>
-          </div>
-
-          {/* Drawer Chains List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {filteredChains.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                <p className="text-xs">
-                  {chainsSearch
-                    ? t.chainsNoMatch
-                    : t.chainsEmpty}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  {t.chainsEmptyHint}
-                </p>
-              </div>
-            ) : (
-              filteredChains.map((chain) => (
-                <div
-                  key={chain.id}
-                  className="bg-background border border-accent hover:border-border rounded-lg p-3 transition-colors"
-                >
-                  <div className="flex items-center gap-1.5 flex-wrap text-xs mb-2">
-                    {/* Premises */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {chain.premises.map((p, idx) => (
-                        <span
-                          key={idx}
-                          className="bg-accent text-foreground px-1.5 py-0.5 rounded text-[11px] border border-border"
-                        >
-                          {p}
-                        </span>
-                      ))}
-                    </div>
-
-                    <span className="text-muted-foreground font-bold px-1">⟹</span>
-
-                    {/* Conclusion */}
-                    <span className="bg-card text-success font-medium px-1.5 py-0.5 rounded text-[11px] border border-success/40">
-                      {chain.conclusion}
-                    </span>
-                  </div>
-
-                  {chain.formula && (
-                    <div className="bg-card p-1.5 rounded text-[11px] text-muted-foreground font-mono mb-2 truncate">
-                      {chain.formula}
-                    </div>
-                  )}
-
-                  {chain.notes && (
-                    <p className="text-[11px] text-muted-foreground font-prose mb-2">
-                      {chain.notes}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-between pt-1 border-t border-accent text-[10.5px]">
-                    <span className="text-muted-foreground">
-                      {chain.source_session_id ? t.chainFromSession : t.chainConceptual}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const session = await createChat({
-                          mode: "PRACTICE",
-                          topic: t.chainPracticeTopic(chain.premises.join(" + "), chain.conclusion),
-                        });
-                        router.push(`/chat/${session.id}`);
-                      }}
-                      className="text-foreground hover:text-success flex items-center gap-1 transition-colors"
-                    >
-                      <Target className="w-3 h-3" />
-                      <span>{t.practiceAction}</span>
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
           </div>
         </div>
       )}
