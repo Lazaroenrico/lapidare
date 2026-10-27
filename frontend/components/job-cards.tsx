@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/lib/api";
 import {
   AlertCircle,
   ChevronDown,
@@ -179,7 +180,33 @@ function writeInvert(jobId: string, on: boolean) {
   }
 }
 
-export function VisualCard({ job, result }: { job: JobSteer; result: Extract<JobResult, { kind: "visual" }> }) {
+type VisualResult = Extract<JobResult, { kind: "visual" }>;
+
+/** Visuals live in the vault: the SVG text is fetched by slug (re-validated server-side). */
+export function VisualCard({ job, result }: { job: JobSteer; result: VisualResult }) {
+  const [svg, setSvg] = useState(result.svg);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (result.svg.trim() || !result.slug) return;
+    let cancelled = false;
+    fetchJson<{ svg?: string }>(`/api/visuals/${encodeURIComponent(result.slug)}`)
+      .then((body) => {
+        if (!cancelled) {
+          if (body?.svg) setSvg(body.svg);
+          else setFailed(true);
+        }
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [result.svg, result.slug]);
+  if (failed) return <FailedJobChip job={{ ...job, status: "failed", error: job.error ?? "" }} />;
+  if (!svg.trim()) return null;
+  return <VisualFigure job={job} result={{ ...result, svg }} />;
+}
+
+function VisualFigure({ job, result }: { job: JobSteer; result: VisualResult }) {
   const { locale } = useLocale();
   const l = jobLabels(locale);
   // The SVG is only ever an <img> source: scripts and links inside it never run.

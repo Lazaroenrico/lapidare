@@ -25,7 +25,8 @@ export interface JobSource {
 export type JobResult =
   | { kind: "research"; brief: string; sources: JobSource[] }
   | { kind: "pdf"; path: string; question: string; brief: string; pages: number[] }
-  | { kind: "visual"; svg: string; path: string; notes: string | null }
+  // The backend stores visuals as vault files (`slug`); `svg` is filled only when inlined.
+  | { kind: "visual"; svg: string; slug: string | null; path: string; notes: string | null }
   | { kind: "demo"; slug: string | null; title: string; url: string | null }
   /** Unknown kind, or a known kind whose result lacks what its card needs. */
   | { kind: "unknown"; summary: string };
@@ -114,13 +115,14 @@ function decodeResult(kind: JobKind | null, raw: unknown, details: Raw): JobResu
     case "pdf": {
       const brief = str(r.brief ?? r.answer ?? r.summary);
       if (brief) {
-        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages(r.pages) };
+        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages(r.pages ?? r.pages_cited ?? r.pages_read) };
       }
       break;
     }
     case "visual": {
       const svg = str(r.svg);
-      if (svg.trim()) return { kind, svg, path: str(r.path), notes: strOrNull(r.notes) };
+      const slug = strOrNull(r.slug);
+      if (svg.trim() || slug) return { kind, svg, slug, path: str(r.path), notes: strOrNull(r.notes ?? r.alt) };
       break;
     }
     case "demo": {

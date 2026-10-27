@@ -137,3 +137,15 @@ test('practice transcript renders job steers as job items in time order', () => 
   assert.deepEqual(items.map((i) => i.type), ['message', 'attempt', 'job']);
   assert.equal(items[2].job.kind, 'pdf');
 });
+
+test('backend Fase 10 shapes: visual by slug, PDF answer with pages_cited', () => {
+  const visual = js.decodeJobSteer({job_id: 'j1', kind: 'visual', status: 'done',
+    result: {slug: 'fluxo', path: 'viz/visuals/fluxo.svg', title: 'Fluxo', alt: 'logits'}}, '');
+  assert.equal(visual.result.kind, 'visual');
+  assert.equal(visual.result.slug, 'fluxo');
+  assert.equal(visual.result.svg, '');
+  const pdf = js.decodeJobSteer({job_id: 'j2', kind: 'read_pdf', status: 'done',
+    result: {path: 'Fontes/paper.pdf', question: 'q', answer: 'diz isso (p. 2).', pages_cited: [2], pages_read: [2, 5]}}, '');
+  assert.equal(pdf.result.kind, 'pdf');
+  assert.deepEqual(pdf.result.pages, [2]);
+});
