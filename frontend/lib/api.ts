@@ -444,6 +444,53 @@ export async function dismissPracticeProblem(id: string): Promise<SessionRecord 
   return sessionFromResponse(raw);
 }
 
+// --- Session UX (Fase 12) ---
+// All silent: callers show errors inline.
+
+const chatPath = (id: string, suffix = "") => `/api/chats/${encodeURIComponent(id)}${suffix}`;
+
+/** POST /api/chats/{id}/steer {content}: a learner message typed while the agent runs. */
+export async function steerChat(id: string, content: string): Promise<SessionRecord | null> {
+  const raw = await fetchJson<unknown>(
+    chatPath(id, "/steer"),
+    { method: "POST", body: JSON.stringify({ content }) },
+    { silent: true },
+  );
+  return sessionFromResponse(raw);
+}
+
+/** PUT /api/chats/{id} {title}. */
+export async function renameChat(id: string, title: string): Promise<SessionRecord | null> {
+  const raw = await fetchJson<unknown>(
+    chatPath(id),
+    { method: "PUT", body: JSON.stringify({ title }) },
+    { silent: true },
+  );
+  return sessionFromResponse(raw);
+}
+
+export type DeleteChatMode = "preserve-graph" | "delete-nodes";
+
+/** DELETE /api/chats/{id}?mode=…: the session goes to `.harness/trash/`; the Aulas/ note stays. */
+export async function deleteChat(id: string, mode: DeleteChatMode): Promise<void> {
+  await fetchJson<unknown>(chatPath(id, `?mode=${mode}`), { method: "DELETE" }, { silent: true });
+}
+
+/** POST /api/chats/{id}/abort: cancels the running turn (a pending question becomes dismissed). */
+export async function abortChat(id: string): Promise<SessionRecord | null> {
+  return sessionFromResponse(await fetchJson<unknown>(chatPath(id, "/abort"), { method: "POST" }, { silent: true }));
+}
+
+/** POST /api/chats/{id}/questions/dismiss: resolves the pending question as dismissed. */
+export async function dismissQuestion(id: string): Promise<SessionRecord | null> {
+  return sessionFromResponse(
+    await fetchJson<unknown>(chatPath(id, "/questions/dismiss"), { method: "POST" }, { silent: true }),
+  );
+}
+
+/** GET /api/chats/{id}/markdown (text/markdown with Content-Disposition: attachment). */
+export const chatMarkdownUrl = (id: string) => `${BASE_URL}${chatPath(id, "/markdown")}`;
+
 // --- Graph extraction ---
 
 /**

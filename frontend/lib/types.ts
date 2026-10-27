@@ -197,6 +197,10 @@ export interface SessionMessage {
   quiz_id?: string | null;
   node_spans?: NodeSpan[];
   source_citations?: SourceCitation[];
+  /** Fase 10/12: message injected while a turn ran ("learner" typed it, "job" is a job result). */
+  steer_kind?: "learner" | "job" | null;
+  /** Steers only: false while queued for the agent ("na fila"). */
+  delivered?: boolean;
 }
 
 export type SessionExecutionStatus =
@@ -206,7 +210,17 @@ export type SessionExecutionStatus =
   | "waiting"
   | "interrupted"
   | "failed"
-  | "completed";
+  | "completed"
+  /** Fase 12: the context is being summarized; the next turn waits. */
+  | "compacting";
+
+/** Fase 12 §1.7: context compaction (summary + literal tail from `first_kept_message_id`). */
+export interface SessionCompaction {
+  summary: string;
+  first_kept_message_id: string | null;
+  tokens_before: number | null;
+  at: string;
+}
 
 export interface SessionRecord {
   id: string;
@@ -244,6 +258,10 @@ export interface SessionRecord {
   usage?: UsageCounters | null;
   /** Graph node ids handed to the session as context. */
   graph_context?: string[];
+  /** Latest context compaction, if any (Fase 12). */
+  compaction?: SessionCompaction | null;
+  /** GET /api/chats rows: something awaits the learner (question or open problem). */
+  pending?: boolean;
 }
 
 // --- 3. Questions & Calibration ---
@@ -324,6 +342,8 @@ export interface CalibrationResult {
   grade_feedback: string;
   explanation: string;
   timestamp: string;
+  /** Fase 12: the learner dismissed the question (Esc); no grade, no quiz-log. */
+  dismissed?: boolean;
 }
 
 // --- 4. Knowledge Graph & Chains ---

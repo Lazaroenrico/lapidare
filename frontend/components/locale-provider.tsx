@@ -2,9 +2,11 @@
 import {createContext, useContext, useEffect, useState} from 'react';
 import {getSetupStatus} from '@/lib/api';
 import {useEventSubscription} from './server-events';
+import {sessionUxMessages} from './session-ux-messages';
 
 const messages = {
   'pt-BR': {
+    ...sessionUxMessages['pt-BR'],
     teachPrompt: 'O que você quer aprender ou explorar hoje?', practicePrompt: 'O que você quer praticar hoje?',
     dontKnow: 'Não sei — me ensina', confidence: 'CONFIANÇA · Grau de certeza', thinking: 'SEU RACIOCÍNIO · Por que escolheu essa opção?',
     thinkingPrompt: 'Explique sua intuição ou raciocínio em uma linha...', submit: 'Enviar resposta',
@@ -393,6 +395,7 @@ const messages = {
     connectorInstalled: 'Instalado · não verificado', connectorVerified: 'Verificado',
   },
   en: {
+    ...sessionUxMessages.en,
     teachPrompt: 'What would you like to learn or explore today?', practicePrompt: 'What would you like to practice today?',
     dontKnow: "I don't know — teach me", confidence: 'CONFIDENCE · How certain are you?', thinking: 'YOUR THINKING · Why did you choose this option?',
     thinkingPrompt: 'Explain your intuition or reasoning in one line...', submit: 'Submit answer',
