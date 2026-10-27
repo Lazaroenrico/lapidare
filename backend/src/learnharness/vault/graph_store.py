@@ -26,6 +26,7 @@ from learnharness.core.contracts.graph import (
 )
 from learnharness.core.graph_merge import fold_chains, fold_nodes
 from learnharness.core.note_sources import fold_sources
+from learnharness.vault.jsonl_io import read_objects
 from learnharness.vault.lesson_layout import sanitize_note_title
 from learnharness.vault.markdown_ast import (
     body_without_frontmatter,
@@ -63,20 +64,8 @@ def _file(vault_path: Path, name: str) -> Path:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    records = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not raw.strip():
-            continue
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.warning("Skipping malformed graph line %d in %s: %s", lineno, path, exc)
-            continue
-        if isinstance(entry, dict):
-            records.append(entry)
-    return records
+    """Cached, append-only read (``jsonl_io``); the dicts are shared and read-only."""
+    return read_objects(path)
 
 
 def append_records(vault_path: Path, name: str, records: list[dict[str, Any]]) -> None:

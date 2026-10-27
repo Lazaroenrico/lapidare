@@ -21,6 +21,7 @@ from learnharness.core.contracts.graph import GraphEdge, GraphSnapshot, LogicalC
 from learnharness.core.contracts.practice import PracticeLogEntry
 from learnharness.core.contracts.quiz import CalibrationResult
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
+from learnharness.vault.jsonl_io import cached_fold, lines_backward, parse_object, read_objects
 from learnharness.vault.markdown_ast import scan_all_concepts
 from learnharness.vault.safety import append_line, safe_component, safe_path
 
@@ -67,82 +68,102 @@ def append_session_event(
     append_line(file_path, line)
 
 
+def _sessions_dir(vault_path: Path) -> Path:
+    """``.harness/sessions`` without creating it (reads must not touch the disk)."""
+    return safe_path(Path(vault_path).resolve(), ".harness/sessions")
+
+
 def load_session(vault_path: Path, session_id: str) -> SessionRecord | None:
     """Reconstruct a SessionRecord from its append-only event stream."""
-    _, sessions_dir = _ensure_harness_dir(vault_path)
-    file_path = safe_path(sessions_dir, f"{safe_component(session_id)}.jsonl")
-    return load_session_file(file_path)
+    return load_session_file(_sessions_dir(vault_path) / f"{safe_component(session_id)}.jsonl")
+
+
+def _is_snapshot(entry: dict[str, Any]) -> bool:
+    return "mode" in entry and ("id" in entry or "session_id" in entry)
+
+
+def _snapshot(entry: dict[str, Any], where: str, path: Path) -> SessionRecord | None:
+    if "session_id" in entry and "id" not in entry:
+        entry["id"] = entry["session_id"]
+    try:
+        return SessionRecord.model_validate(entry)
+    except ValidationError as exc:
+        logger.warning("Skipping invalid session snapshot at %s in %s: %s", where, path, exc)
+        return None
+
+
+def _apply_event(record: SessionRecord, entry: dict[str, Any], where: str, path: Path) -> None:
+    """Incremental events of older files (nothing writes them any more)."""
+    event_type = entry.get("event")
+    if event_type == "message" and "message" in entry:
+        try:
+            msg = SessionMessage.model_validate(entry["message"])
+        except ValidationError as exc:
+            logger.warning("Skipping invalid session message at %s in %s: %s", where, path, exc)
+        else:
+            record.messages.append(msg)
+    elif event_type == "quiz_pending":
+        record.pending_quiz_id = entry.get("quiz_id")
+    elif event_type == "plan_update" and "plan" in entry:
+        record.plan = entry["plan"]
+
+
+def _cold_session(path: Path, end: int) -> tuple[SessionRecord | None, int]:
+    """Only the last valid snapshot matters: scan back to it, then replay the events after it.
+
+    The earlier lines are never read, so later log line numbers count from this point.
+    """
+    events: list[dict[str, Any]] = []
+    record: SessionRecord | None = None
+    for back, line in enumerate(lines_backward(path, end), start=1):
+        entry = parse_object(line, -back, path)
+        if entry is None:
+            continue
+        if not _is_snapshot(entry):
+            events.append(entry)
+        elif (record := _snapshot(entry, f"line -{back}", path)) is not None:
+            break
+    if record is not None:
+        for entry in reversed(events):
+            _apply_event(record, entry, "tail", path)
+    return record, 0
+
+
+def _fold_session(record: SessionRecord | None, line: bytes, lineno: int, path: Path) -> SessionRecord | None:
+    entry = parse_object(line, lineno, path)
+    if entry is None:
+        return record
+    if _is_snapshot(entry):
+        return _snapshot(entry, f"line {lineno}", path) or record
+    if record is not None:
+        _apply_event(record, entry, f"line {lineno}", path)
+    return record
+
+
+def _finish_session(record: SessionRecord | None, fragment: bytes, lineno: int, path: Path) -> SessionRecord | None:
+    copy = record.model_copy(deep=True) if record is not None else None
+    return _fold_session(copy, fragment, lineno, path)
+
+
+_session_reader = cached_fold(_cold_session, _fold_session, _finish_session)
 
 
 def load_session_file(file_path: Path) -> SessionRecord | None:
-    """Replay one session JSONL (live or trashed); unknown events are ignored."""
-    if not file_path.exists():
-        return None
+    """Replay one session JSONL (live or trashed); unknown events are ignored.
 
-    lines = [
-        raw.strip() for raw in file_path.read_text(encoding="utf-8").splitlines() if raw.strip()
-    ]
-    if not lines:
-        return None
-
-    last_record: SessionRecord | None = None
-
-    for lineno, line in enumerate(lines, start=1):
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as exc:
-            # A truncated/corrupt line (e.g. crash mid-append) must not hide the
-            # rest of the append-only history; skip it but leave a trace.
-            logger.warning("Skipping malformed JSONL line %d in %s: %s", lineno, file_path, exc)
-            continue
-        if not isinstance(entry, dict):
-            logger.warning("Skipping non-object JSONL line %d in %s", lineno, file_path)
-            continue
-
-        if "mode" in entry and ("id" in entry or "session_id" in entry):
-            # Full snapshot
-            try:
-                if "session_id" in entry and "id" not in entry:
-                    entry["id"] = entry["session_id"]
-                last_record = SessionRecord.model_validate(entry)
-            except ValidationError as exc:
-                logger.warning(
-                    "Skipping invalid session snapshot at line %d in %s: %s", lineno, file_path, exc
-                )
-        elif last_record is not None:
-            # Incremental event
-            event_type = entry.get("event")
-            if event_type == "message" and "message" in entry:
-                try:
-                    msg = SessionMessage.model_validate(entry["message"])
-                except ValidationError as exc:
-                    logger.warning(
-                        "Skipping invalid session message at line %d in %s: %s",
-                        lineno,
-                        file_path,
-                        exc,
-                    )
-                else:
-                    last_record.messages.append(msg)
-            elif event_type == "quiz_pending":
-                last_record.pending_quiz_id = entry.get("quiz_id")
-            elif event_type == "plan_update" and "plan" in entry:
-                last_record.plan = entry["plan"]
-
-    return last_record
+    Every save appends a full snapshot, so only the last valid one is parsed; the result
+    is cached until the file grows (``jsonl_io``). Callers own the returned copy.
+    """
+    record = _session_reader(file_path)
+    return record.model_copy(deep=True) if record is not None else None
 
 
 def list_sessions(vault_path: Path) -> list[SessionRecord]:
     """List all sessions stored in .harness/sessions/, sorted descending by updated_at."""
-    _, sessions_dir = _ensure_harness_dir(vault_path)
-    records: list[SessionRecord] = []
-
-    for f in sessions_dir.glob("*.jsonl"):
-        session_id = f.stem
-        rec = load_session(vault_path, session_id)
-        if rec:
-            records.append(rec)
-
+    sessions_dir = _sessions_dir(vault_path)
+    if not sessions_dir.is_dir():
+        return []
+    records = [rec for f in sessions_dir.glob("*.jsonl") if (rec := load_session_file(f))]
     records.sort(key=lambda r: r.updated_at or r.created_at or "", reverse=True)
     return records
 
@@ -256,25 +277,30 @@ def append_quiz_log(
     append_line(file_path, line)
 
 
+def _harness_file(vault_path: Path, name: str) -> Path:
+    """A file directly under ``.harness/`` without creating the folder."""
+    return safe_path(Path(vault_path).resolve(), f".harness/{name}")
+
+
+def _validated(file_path: Path, model: type[Any], what: str) -> list[Any]:
+    results = []
+    for entry in read_objects(file_path):
+        try:
+            results.append(model.model_validate(entry))
+        except ValidationError as exc:
+            logger.warning("Skipping invalid %s line in %s: %s", what, file_path, exc)
+    return results
+
+
 def load_quiz_logs(vault_path: Path) -> list[CalibrationResult]:
     """Load all calibration logs from .harness/quiz-log.jsonl."""
-    harness_dir, _ = _ensure_harness_dir(vault_path)
-    file_path = safe_path(harness_dir, "quiz-log.jsonl")
+    return _validated(_harness_file(vault_path, "quiz-log.jsonl"), CalibrationResult, "quiz-log")
 
-    if not file_path.exists():
-        return []
 
-    results: list[CalibrationResult] = []
-    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            results.append(CalibrationResult.model_validate(json.loads(line)))
-        except ValueError as exc:  # json.JSONDecodeError and pydantic.ValidationError
-            logger.warning("Skipping malformed quiz-log line %d in %s: %s", lineno, file_path, exc)
-
-    return results
+def logged_quiz_keys(vault_path: Path) -> set[tuple[Any, Any]]:
+    """``(session_id, quiz_id)`` of every quiz-log line (cached read, no model validation)."""
+    return {(r.get("session_id"), r.get("quiz_id"))
+            for r in read_objects(_harness_file(vault_path, "quiz-log.jsonl"))}
 
 
 def append_practice_log(vault_path: Path, entry: PracticeLogEntry) -> None:
@@ -285,18 +311,7 @@ def append_practice_log(vault_path: Path, entry: PracticeLogEntry) -> None:
 
 def load_practice_log(vault_path: Path) -> list[PracticeLogEntry]:
     """All valid lines of .harness/practice-log.jsonl (malformed ones are skipped)."""
-    file_path = safe_path(Path(vault_path).resolve(), ".harness/practice-log.jsonl")
-    if not file_path.exists():
-        return []
-    entries: list[PracticeLogEntry] = []
-    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not raw.strip():
-            continue
-        try:
-            entries.append(PracticeLogEntry.model_validate(json.loads(raw)))
-        except ValueError as exc:
-            logger.warning("Skipping malformed practice-log line %d in %s: %s", lineno, file_path, exc)
-    return entries
+    return _validated(_harness_file(vault_path, "practice-log.jsonl"), PracticeLogEntry, "practice-log")
 
 
 # ==========================================
@@ -323,23 +338,7 @@ def append_chain(
 
 def load_chains(vault_path: Path) -> list[LogicalChain]:
     """Load all logical implication chains from .harness/chains.jsonl."""
-    harness_dir, _ = _ensure_harness_dir(vault_path)
-    file_path = safe_path(harness_dir, "chains.jsonl")
-
-    if not file_path.exists():
-        return []
-
-    chains: list[LogicalChain] = []
-    for lineno, raw in enumerate(file_path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            chains.append(LogicalChain.model_validate(json.loads(line)))
-        except ValueError as exc:  # json.JSONDecodeError and pydantic.ValidationError
-            logger.warning("Skipping malformed chain line %d in %s: %s", lineno, file_path, exc)
-
-    return chains
+    return _validated(_harness_file(vault_path, "chains.jsonl"), LogicalChain, "chain")
 
 
 # ==========================================

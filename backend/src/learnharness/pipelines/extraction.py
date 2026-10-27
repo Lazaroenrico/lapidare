@@ -205,13 +205,27 @@ def _runtime(config: RunnableConfig | None) -> tuple[Any, Any]:
     return engine, runtime.get("slot")
 
 
+_SETUP_LOCK = asyncio.Lock()
+_READY_DBS: set[Path] = set()
+
+
 @asynccontextmanager
 async def _get_checkpointer(vault_path: Path):
-    """Keep the async SQLite connection alive exactly for graph execution."""
+    """Keep the async SQLite connection alive exactly for graph execution.
+
+    The schema setup (``PRAGMA journal_mode=WAL`` + DDL) fails with "database is locked"
+    while another extraction's connection writes, so it runs once per database, never
+    alongside a running pipeline: concurrent extractions (a notes import) share the file.
+    """
     db_path = safe_path(vault_path, ".harness/langgraph.sqlite")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        await saver.setup()
+        async with _SETUP_LOCK:
+            if db_path in _READY_DBS and db_path.exists():
+                saver.is_setup = True
+            else:
+                await saver.setup()
+                _READY_DBS.add(db_path)
         yield saver
 
 

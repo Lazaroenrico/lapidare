@@ -10,6 +10,7 @@ Everything lands read-only in ``Fontes/`` with ``^pN`` anchors and provenance fr
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 from pathlib import Path
@@ -180,7 +181,7 @@ async def import_local(
         raise HTTPException(status_code=415, detail="Only .md, .txt and .pdf files are supported")
     data = await _read_limited(file)
     if suffix == ".pdf":
-        text = _pdf_text(data)
+        text = await asyncio.to_thread(_pdf_text, data)  # Up to 20 MB of pypdf work.
     else:
         try:
             text = data.decode("utf-8-sig")

@@ -29,13 +29,19 @@ def is_ignored_path(path_str: str) -> bool:
         return True
     if normalized.endswith(".tmp") or ".tmp." in normalized:
         return True
-    if ".harness/langgraph.sqlite" in normalized:
-        return True
-    # Machine-only caches: GitHub clones and per-execution CLI work dirs churn heavily
-    # and never contain user notes.
-    if "/.harness/repos/" in normalized or "/.harness/runtime/" in normalized:
-        return True
+    if "/.harness/" in normalized:
+        # The harness announces its own writes (sessions, jobs, usage, graph, logs) with
+        # targeted SSE events; only files a person may edit by hand get through.
+        return not normalized.endswith("/.harness/config.json") and "/.harness/prompts/" not in normalized
     return "/.git" in normalized or normalized.endswith("/.git")
+
+
+def affects_graph(paths: list[str]) -> bool:
+    """Whether a batch of (non-ignored) changes can change the graph snapshot.
+
+    Prompt overrides cannot; notes, sources and ``config.json`` (tracks) can.
+    """
+    return any("/.harness/prompts/" not in p.replace("\\", "/") for p in paths)
 
 
 class VaultWatcher:

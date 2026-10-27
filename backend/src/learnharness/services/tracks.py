@@ -475,7 +475,7 @@ class TrackService:
             root = Path(track.repo_path).expanduser().resolve()
             if not root.is_dir():
                 raise ValueError("Curriculum repository does not exist")
-            context += "\n" + build_curriculum_outline(root)
+            context += "\n" + await asyncio.to_thread(build_curriculum_outline, root)  # Walks the repo.
         if not context.strip():
             raise ValueError("Specify a goal or curriculum repository")
         engine = self.state.engine(config.slots.strong)

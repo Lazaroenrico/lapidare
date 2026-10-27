@@ -629,8 +629,8 @@ class SessionService:
         }
 
     def _ensure_quiz_logs(self, session):
-        from learnharness.vault.jsonl_store import load_quiz_logs
-        existing = {(q.session_id, q.quiz_id) for q in load_quiz_logs(self.state.vault_path)}
+        from learnharness.vault.jsonl_store import logged_quiz_keys
+        existing = logged_quiz_keys(self.state.vault_path)
         for answer in session.answers.values():
             # Only graded answers are calibration evidence (ask / ungraded explain are not).
             if answer.correct is not None and not answer.dismissed and (answer.session_id, answer.quiz_id) not in existing:
@@ -781,6 +781,7 @@ class SessionService:
                 session.title = title
                 self.save(session)
                 self._refresh_lesson_note(session)
+                self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})  # Petal labels.
         return session
 
     async def delete(self, session_id: str, mode: str = "preserve-graph") -> dict[str, Any]:
@@ -818,6 +819,7 @@ class SessionService:
         self.tasks.pop(session_id, None)
         self.locks.pop(session_id, None)
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "deleted": True})
+        self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})  # Its petal loses the title.
         return {"ok": True, "id": session_id, "mode": mode,
                 "trash_path": str(target.relative_to(self.state.vault_path)), "graph": graph}
 
@@ -852,6 +854,7 @@ class SessionService:
                 self.save(session)
             self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED,
                                          {"session_id": session_id, "restored": True})
+            self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
         return session
 
     def purge_trash(self, file_name: str) -> dict[str, Any]:

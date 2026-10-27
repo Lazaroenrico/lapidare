@@ -124,3 +124,10 @@ test('normalizeTitle trims, collapses spaces and rejects empty/unchanged/too lon
   assert.equal(ux.normalizeTitle('Velha', 'Velha'), null);
   assert.equal(ux.normalizeTitle('x'.repeat(201), 'Velha'), null);
 });
+
+test('isStreamingTick spots live-text notifies only', () => {
+  assert.equal(ux.isStreamingTick({session_id: 's', streaming: true}), true);
+  assert.equal(ux.isStreamingTick({session_id: 's', sequence: 3}), false);
+  assert.equal(ux.isStreamingTick(null), false);
+  assert.equal(ux.isStreamingTick('streaming'), false);
+});

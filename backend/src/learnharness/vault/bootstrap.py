@@ -655,16 +655,27 @@ def bootstrap_vault(
     return config
 
 
+_CONFIG_CACHE: dict[Path, tuple[tuple[int, int, int], HarnessConfig]] = {}
+
+
 def load_config(vault_path: Path) -> HarnessConfig:
-    """Load configuration from .harness/config.json."""
+    """Load configuration from .harness/config.json.
+
+    Parsed once per file version: ``save_config`` replaces the file (new inode), so the
+    ``(inode, size, mtime)`` key changes with every write. Callers own the returned copy.
+    """
     config_path = safe_path(vault_path, ".harness/config.json")
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found at: {config_path}")
-    raw = config_path.read_text(encoding="utf-8")
-    data = json.loads(raw)
-    config = HarnessConfig.model_validate(data)
-    validate_folders(vault_path, config.folders)
-    return config
+    try:
+        st = config_path.stat()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Configuration file not found at: {config_path}") from None
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    cached = _CONFIG_CACHE.get(config_path)
+    if cached is None or cached[0] != key:
+        config = HarnessConfig.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
+        validate_folders(vault_path, config.folders)
+        cached = _CONFIG_CACHE[config_path] = (key, config)
+    return cached[1].model_copy(deep=True)
 
 
 def save_config(vault_path: Path, config: HarnessConfig) -> None:

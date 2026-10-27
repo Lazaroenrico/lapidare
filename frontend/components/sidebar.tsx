@@ -23,12 +23,13 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
+import type { BackgroundJobStatus, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
 import { decodeJobFiles, notesText } from "@/lib/notes-import";
 import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
 import {
   filterByMode,
   fuzzyFilter,
+  isStreamingTick,
   moveCursor,
   normalizeTitle,
   relativeTime,
@@ -103,6 +104,7 @@ function saveTrackFilter(value: TrackFilter) {
 }
 
 const EXTRACT_NOTICE_MS = 6000;
+const SIDEBAR_EVENTS: SseEventType[] = ["session:updated", "plan:updated", "dock:opened", "dock:resolved"];
 
 type ExtractNotice = { sessionId: string; ok: boolean; text: string };
 
@@ -304,8 +306,10 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
 
   // Subscribe to SSE updates to refresh session list automatically (notify -> fetch)
   useEventSubscription(
-    ["session:updated", "plan:updated", "dock:opened", "dock:resolved"],
-    () => {
+    SIDEBAR_EVENTS,
+    (event) => {
+      // Live-text ticks (every ~0.2 s while a reply streams) change no row.
+      if (isStreamingTick(event.data)) return;
       void fetchSessionList();
     }
   );

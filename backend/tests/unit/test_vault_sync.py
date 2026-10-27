@@ -44,7 +44,7 @@ from learnharness.vault.transcript_importer import (
     get_source_paragraph,
     import_transcript_text,
 )
-from learnharness.vault.watcher import is_ignored_path
+from learnharness.vault.watcher import affects_graph, is_ignored_path
 
 # ============================================================================
 # 1. BOOTSTRAP TESTS (Case A and Case B)
@@ -572,6 +572,15 @@ def test_watcher_is_ignored_path():
     assert is_ignored_path("/vault/.harness/langgraph.sqlite") is True
     assert is_ignored_path("/vault/.harness/langgraph.sqlite-wal") is True
     assert is_ignored_path("/vault/.git/index") is True
+    # The harness's own appends are announced by targeted events, not by the watcher.
+    for machine in ("sessions/s1.jsonl", "jobs.jsonl", "usage.jsonl", "quiz-log.jsonl",
+                    "graph/nodes.jsonl", "repos/x/README.md", "runtime/s1/settings.json"):
+        assert is_ignored_path(f"/vault/.harness/{machine}") is True
+    assert is_ignored_path("/vault/.harness/config.json") is False
+    assert is_ignored_path("/vault/.harness/prompts/teacher/10-method.md") is False
+    assert affects_graph(["/vault/.harness/prompts/shared/20-voice.md"]) is False
+    assert affects_graph(["/vault/.harness/config.json"]) is True
+    assert affects_graph(["/vault/Conceitos/Atenção.md"]) is True
 
     # Real user content must NOT be ignored
     assert is_ignored_path("/vault/Conceitos/Chain-of-thought.md") is False

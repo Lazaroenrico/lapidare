@@ -279,6 +279,14 @@ type RowInput = Pick<SessionRecord, "mode" | "execution_status" | "updated_at"> 
   Partial<Pick<SessionRecord, "pending" | "status" | "recovery_required" | "pending_quiz" | "practice">>;
 
 /**
+ * A `session:updated` sent only to refresh the live text of a streaming reply
+ * (`{session_id, streaming: true}`, every ~0.2 s): it changes no sidebar row.
+ */
+export function isStreamingTick(data: unknown): boolean {
+  return typeof data === "object" && data !== null && (data as { streaming?: unknown }).streaming === true;
+}
+
+/**
  * Per-row status: failed, waiting for an answer, open problem (PRACTICE), compacting,
  * working, else the relative time of the last update.
  */

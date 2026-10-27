@@ -109,6 +109,27 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
     return data
 
 
+# The sidebar refetches the list on every session notify: rows carry no transcript.
+_LIST_EXCLUDE = {"messages", "plan", "answers", "pending_quiz", "applied_actions", "practice",
+                 "assessment", "leveling", "compaction", "graph_context"}
+
+
+def _summarize_session(session: SessionRecord) -> dict[str, Any]:
+    """One sidebar row: identity, status and track, without messages, plan or answers."""
+    pending = session.pending_quiz is not None
+    data = session.model_dump(mode="json", exclude=_LIST_EXCLUDE)
+    data.update({
+        "topic": session.title, "teach_context": session.context_kind,
+        "source_file": session.source_path,
+        "status": "waiting_quiz" if pending else ("completed" if session.phase == "completed" else "active"),
+        "recovery_required": session.recovery_required or bool(session.pending_quiz_id and not pending),
+        "practice": {"active_problem_id": session.practice.active_problem_id},
+        "pending": pending,
+        "problem_open": session.practice.active_problem_id is not None,
+    })
+    return data
+
+
 def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
     """Session payload plus the slot its next teaching turn will use."""
     data = _serialize_session(session)
@@ -119,7 +140,7 @@ def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
 @chats_router.get("")
 async def get_chats(request: Request):
     state = get_app_state(request.app)
-    return [_serialize_session(s) for s in list_sessions(state.vault_path)]
+    return [_summarize_session(s) for s in list_sessions(state.vault_path)]
 
 
 @chats_router.post("")
