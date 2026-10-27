@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -104,6 +105,8 @@ function saveTrackFilter(value: TrackFilter) {
 }
 
 const EXTRACT_NOTICE_MS = 6000;
+// Rasterized from lapidare_logo.svg (the source SVG is 1.7 MB of embedded bitmaps).
+const BRAND_MARK = "/brand/lapidare-mark.png";
 const SIDEBAR_EVENTS: SseEventType[] = ["session:updated", "plan:updated", "dock:opened", "dock:resolved"];
 
 type ExtractNotice = { sessionId: string; ok: boolean; text: string };
@@ -508,6 +511,9 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     return (
       <aside className="w-14 bg-background border-r border-border flex flex-col justify-between items-center py-4 select-none shrink-0 transition-all duration-200 z-30 max-md:hidden">
         <div className="flex flex-col items-center gap-4 w-full">
+          <Link href="/" title="Lapidare" aria-label="Lapidare" className="rounded cursor-pointer">
+            <Image src={BRAND_MARK} alt="" width={28} height={28} priority />
+          </Link>
           <button
             type="button"
             onClick={onToggleCollapse}
@@ -606,6 +612,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             href="/"
             className="flex items-center gap-2 group cursor-pointer"
           >
+            <Image src={BRAND_MARK} alt="" width={22} height={22} priority />
             <span className="font-title text-base font-bold text-foreground tracking-tight group-hover:text-foreground transition-colors">
               Lapidare
             </span>
