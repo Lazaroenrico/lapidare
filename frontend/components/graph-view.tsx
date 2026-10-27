@@ -88,18 +88,24 @@ interface GraphViewProps {
   /** Latest decoded snapshot (the Home uses it to name the selected nodes). */
   onSnapshot?: (snapshot: GraphSnapshot) => void;
   onOpenImport?: () => void;
+  /** Node to focus once it exists in the snapshot (Home `/?focus=<node_id>`). */
+  focusId?: string | null;
   className?: string;
 }
 
-export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImport, className = "" }: GraphViewProps) {
+export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImport, focusId = null, className = "" }: GraphViewProps) {
   const router = useRouter();
   const { t } = useLocale();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GraphCanvasEngine | null>(null);
   const fittedRef = useRef(false);
+  /** True once the one-shot initial fit has run. */
+  const fitDoneRef = useRef(false);
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot>(EMPTY_GRAPH);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [focused, setFocused] = useState<ConceptNode | null>(null);
   const [ghost, setGhost] = useState<RoadmapItem | null>(null);
   const [isChainsOpen, setIsChainsOpen] = useState(false);
@@ -123,6 +129,10 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   onSelectionChangeRef.current = onSelectionChange;
   const onSnapshotRef = useRef(onSnapshot);
   onSnapshotRef.current = onSnapshot;
+  // `?focus=` target: applied once per id, after the initial fit (so the fit does not undo it).
+  const focusIdRef = useRef(focusId);
+  focusIdRef.current = focusId;
+  const appliedFocusRef = useRef<string | null>(null);
 
   // Dragged positions are batched and sent after the last drag ends.
   const pendingPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
@@ -240,10 +250,23 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
     engine.setData(snapshot.nodes, snapshot.edges, snapshot.clusters);
     if (!fittedRef.current && snapshot.nodes.length > 0) {
       fittedRef.current = true;
-      // One-shot fit once the first layout has spread out (not polling).
-      setTimeout(() => engineRef.current?.resetView(), 700);
+      // One-shot fit once the first layout has spread out (not polling); a `?focus=`
+      // target replaces the fit with centring on that node.
+      setTimeout(() => {
+        fitDoneRef.current = true;
+        if (!applyFocusParam()) engineRef.current?.resetView();
+      }, 700);
+      return;
     }
+    if (fitDoneRef.current) applyFocusParam();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
+
+  // A new `?focus=` while the graph is already laid out.
+  useEffect(() => {
+    if (fitDoneRef.current) applyFocusParam();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId]);
 
   const hasRoadmap = snapshot.roadmap.length > 0;
   useEffect(() => {
@@ -283,6 +306,18 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       )
       .slice(0, 8);
   }, [snapshot.nodes, nodeSearch]);
+
+  function applyFocusParam(): boolean {
+    const id = focusIdRef.current;
+    if (!id || appliedFocusRef.current === id) return false;
+    const node = snapshotRef.current.nodes.find((n) => n.id === id);
+    if (!node) return false;
+    appliedFocusRef.current = id;
+    setGhost(null);
+    setFocused(node);
+    engineRef.current?.focusNode(id);
+    return true;
+  }
 
   const focusNode = (id: string) => {
     const node = snapshot.nodes.find((n) => n.id === id);
