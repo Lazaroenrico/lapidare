@@ -12,7 +12,7 @@ check-backend:
 check-frontend:
 	cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 
-.PHONY: desktop desktop-clean
+.PHONY: desktop desktop-clean desktop-install desktop-uninstall
 
 # AppImage Linux x64: UI estatica + python embutido + casca Electron.
 desktop:
@@ -30,3 +30,10 @@ endif
 # Removes every build output, including the downloaded CPython and the Next.js cache.
 desktop-clean:
 	rm -rf desktop/build desktop/dist desktop/.cache frontend/out frontend/.next/cache
+
+# Puts the built AppImage in ~/Applications with an icon and a .desktop entry (app launchers).
+desktop-install:
+	bash desktop/scripts/install-desktop-entry.sh
+
+desktop-uninstall:
+	bash desktop/scripts/install-desktop-entry.sh --uninstall
