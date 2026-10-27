@@ -245,7 +245,7 @@ Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
 
 | Evento | Emitido quando | A UI busca |
 |---|---|---|
-| `session:updated` | Mensagem, fase, status, renomear, excluir (`deleted: true`) | `GET /api/chats/{id}`, `GET /api/chats` |
+| `session:updated` | Mensagem, fase, status, renomear, excluir (`deleted: true`), restaurar da lixeira (`restored: true`), excluir da lixeira (`purged: true`) | `GET /api/chats/{id}`, `GET /api/chats`, `GET /api/chats/trash` |
 | `dock:opened` | Uma ferramenta de pergunta abriu o `QuestionDock` | `GET /api/chats/{id}` |
 | `dock:resolved` | Resposta ou dispensa de pergunta | `GET /api/chats/{id}` |
 | `plan:updated` | `plan_init` / `plan_advance` / status derivado | `GET /api/chats/{id}` |
@@ -483,7 +483,10 @@ sequenceDiagram
 | Abortar | `POST /api/chats/{id}/abort` | Cancela a task (→ `interrupted`), dispensa a pergunta pendente e fecha o processo persistente |
 | Dispensar pergunta | `POST /api/chats/{id}/questions/dismiss` | `dismissed: true`, sem nota nem `quiz-log`; o modelo recebe "não repita a pergunta" |
 | Renomear | `PUT /api/chats/{id}` `{title}` (1–200) | A nota mantém o caminho; só os campos gerenciados mudam |
-| Excluir | `DELETE /api/chats/{id}?mode=preserve-graph\|delete-nodes` | Move o JSONL para `.harness/trash/`; **nunca** apaga a nota em `Aulas/`; `delete-nodes` desfaz os vínculos no grafo (seção 8); `409` com turno rodando |
+| Excluir | `DELETE /api/chats/{id}?mode=preserve-graph\|delete-nodes` | Acrescenta ao JSONL o evento `{"event":"trashed","deleted_at","mode","graph_unlinked"}` e o move para `.harness/trash/`; **nunca** apaga a nota em `Aulas/`; `delete-nodes` desfaz os vínculos no grafo (seção 8); `409` com turno rodando |
+| Lixeira | `GET /api/chats/trash` | `[{id, file, title, mode, deleted_at, updated_at, message_count, graph_unlinked, delete_mode}]`, excluídas mais recentes primeiro. Arquivos antigos sem o evento `trashed` entram com `deleted_at` = ctime do arquivo (o `rename` o atualiza), `graph_unlinked=false` e `delete_mode=null` |
+| Restaurar | `POST /api/chats/trash/{file}/restore` | Move o arquivo de volta para `.harness/sessions/<id>.jsonl` (o id vem do snapshot, não do nome com sufixo datado; `os.link` + `unlink`, nunca sobrescreve). `409` se já existe sessão viva com esse id. Uma sessão excluída no meio do turno volta normalizada como em `recover()` (`interrupted`, ou `waiting` com pergunta). Resposta `{session, graph_restored: false}`: os vínculos de grafo removidos por `delete-nodes` **não** voltam; a nota em `Aulas/` nunca saiu do lugar |
+| Excluir definitivamente | `DELETE /api/chats/trash/{file}?confirm=true` | Apaga só aquele arquivo da lixeira; sem `confirm=true` → `422`. `{file}` é um basename `*.jsonl` resolvido por `safe_path` dentro de `.harness/trash/` (`..`, ocultos, outras extensões → `403`) |
 | Exportar | `GET /api/chats/{id}/markdown` | `text/markdown` com `Content-Disposition` (`core/session_export.py`) |
 | Retomar | `POST /api/chats/{id}/resume` `{restart_diagnostic}` | Reagenda a sessão; registros legados incompletos exigem reiniciar o diagnóstico |
 | Modelo/esforço | `PUT /api/chats/{id}/settings` | Seção 5.5 |
@@ -681,7 +684,7 @@ Os nomes das pastas ficam em `HarnessConfig.folders` (`VaultFolderMap`). A tabel
 | `prompt-overrides.json` | JSON (legado) | Flags antigas de override: só lidas, nunca escritas |
 | `runtime/<session_id>/` | diretório | Work dir dos CLIs (`.agents/` do agy); motores não persistentes usam `runtime/<sid>/<execution_id>/` |
 | `repos/<owner>__<repo>@<ref>/` | clone git | Cache do import do GitHub |
-| `trash/` | diretório | JSONL de sessões excluídas (com sufixo datado em colisão) |
+| `trash/` | diretório | JSONL de sessões excluídas (com sufixo datado em colisão); a última linha `{"event":"trashed",…}` registra quando e como. Restaurável pela UI; só `DELETE /api/chats/trash/{file}?confirm=true` apaga de vez |
 | `chains.jsonl` | append-only (legado) | Cadeias anteriores à Fase 8B, lidas como `legacy` |
 
 O watcher (`vault/watcher.py`, `watchfiles`) ignora `langgraph.sqlite`, `repos/`, `runtime/`, `.git`, temporários e `.obsidian/workspace*`, e emite `vault:changed` + `graph:updated`.
@@ -696,7 +699,7 @@ O watcher (`vault/watcher.py`, `watchfiles`) ignora `langgraph.sqlite`, `repos/`
   - só as chaves de frontmatter gerenciadas são tocadas;
   - escritas idempotentes não geram churn no watcher.
 - **Notas de aula:** são criadas em modo create-only. Uma colisão de nome (inclusive só de caixa) ganha o sufixo ` (2)`, ` (3)` e assim por diante; um arquivo do usuário nunca é adotado nem sobrescrito.
-- **Lixeira:** excluir uma sessão só move o seu JSONL. As notas do usuário nunca são apagadas.
+- **Lixeira:** excluir uma sessão só move o seu JSONL (depois de acrescentar o evento `trashed`). Restaurar move de volta sem reescrever o histórico; a exclusão definitiva só alcança arquivos dentro de `.harness/trash/`. As notas do usuário nunca são apagadas.
 
 ### 11.4 Configuração (`HarnessConfig`, `schema_version = 2`)
 
@@ -779,7 +782,8 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
   - filtros Ensino / Todas / Prática e filtro por trilha;
   - status por linha;
   - menu ⋯: Extrair para o grafo, Renomear, Exportar Markdown, Excluir (com "remover também os nós");
-  - bandeja BACKGROUND AGENTS e link para Configurações.
+  - bandeja BACKGROUND AGENTS, entrada **Lixeira (N)** (só com N > 0) e link para Configurações.
+- **`session-trash.tsx`:** `useSessionTrash` (lista refeita em `session:updated` com `deleted`/`restored`/`purged`/`resync`, nunca por polling), `SessionTrashList` (título, tag de modo, "excluída há…", nº de mensagens, aviso "nós do grafo removidos" que não voltam; **Restaurar** e **Excluir definitivamente** com `ConfirmDialog`) e `SessionTrashDialog` (modal da sidebar; restaurar navega para `/chat/{id}`, exceto quando o grafo foi desvinculado: aí mostra o aviso com link). A mesma lista aparece em Configurações → Geral.
 - **`setup-dialog.tsx`, `slot-editor.tsx`, `agy-permission-card.tsx`:** onboarding (conector e slots, Vault e idioma, MCP genérico, trilha opcional).
 
 ### 13.3 `lib/`: módulos puros e testes
@@ -795,6 +799,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `model-choice.ts`, `popover-position.ts` | Seletor de modelo |
 | `keyboard.ts`, `key-capture.ts`, `command-events.ts`, `appearance.ts` | Atalhos e aparência |
 | `tracks.ts`, `tracks-i18n.ts`, `settings-i18n.ts` | Trilhas e strings |
+| `session-trash.ts` | Decoder da lixeira (`decodeTrashList`, `decodeRestoreResult`), caminhos das rotas, filtro de SSE (`touchesTrash`) e strings PT-BR/EN |
 | `api.ts`, `tracks-api.ts`, `settings-api.ts`, `types.ts` | Clientes HTTP e tipos (não puros) |
 
 ### 13.4 Configurações e teclado
@@ -835,7 +840,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 |---|---|
 | Eventos | `GET /api/events` |
 | Setup | `GET /api/setup/status` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
-| Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
+| Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `GET /api/chats/trash` · `POST /api/chats/trash/{file}/restore` · `DELETE /api/chats/trash/{file}?confirm=true` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
 | Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` |
 | Trilhas | `GET\|POST /api/tracks` · `PUT\|DELETE /api/tracks/{id}` · `POST /api/tracks/{id}/activate` · `POST /api/tracks/{id}/regenerate` · *(Fase 15)* `POST /api/tracks/{id}/leveling` · `POST /api/tracks/{id}/leveling/{session_id}/undo` |
 | Jobs e artefatos | `GET /api/jobs` · `POST /api/jobs/{id}/retry` · `POST /api/jobs/extract` · `POST /api/demos` · `GET /api/demos/{slug}` · `GET /api/visuals/{slug}` |
