@@ -26,6 +26,7 @@ import type {
 import { decodeSlotOverride } from "./model-choice";
 import { decodeUsageCounters } from "./usage";
 import { decodePractice } from "./practice";
+import { decodeJobSteer, type JobSteer } from "./job-steer";
 
 type Raw = Record<string, unknown>;
 
@@ -177,6 +178,9 @@ function decodeMessage(raw: Raw): SessionMessage {
     content: str(raw.content),
     timestamp: ts,
     created_at: str(raw.created_at) || ts,
+    steer_kind: raw.steer_kind === "learner" || raw.steer_kind === "job" ? raw.steer_kind : null,
+    details: isObj(raw.details) ? raw.details : null,
+    delivered: raw.delivered !== false,
   };
 }
 
@@ -232,6 +236,7 @@ export function normalizePhase(phase: SessionPhase | string | undefined, hasPlan
 export type TranscriptItem =
   | { type: "divider"; key: string; phase: TeachPhase }
   | { type: "message"; key: string; message: SessionMessage }
+  | { type: "job"; key: string; message: SessionMessage; job: JobSteer }
   | { type: "answer"; key: string; answer: CalibrationResult }
   | { type: "probe_done"; key: string; assessment: ProbeAssessment }
   | { type: "pending"; key: string; quiz: QuizPayload };
@@ -285,6 +290,10 @@ export function buildTranscript(
   for (const message of visible) {
     const ts = message.created_at || message.timestamp;
     if (assessedAt && ts && ts > assessedAt) showPlanning();
+    if (message.steer_kind === "job") {
+      items.push({ type: "job", key: message.id, message, job: decodeJobSteer(message.details, ts) });
+      continue;
+    }
     const stored = message.quiz_id ? session.answers[message.quiz_id] : undefined;
     const fromMessage = parseAnswerMessage(message);
     const answer = stored

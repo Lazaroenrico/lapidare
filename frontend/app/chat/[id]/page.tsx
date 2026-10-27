@@ -53,6 +53,7 @@ import { AnsweredQuestionCard, PhaseChip, PhaseDivider, ProbeDoneCard } from "@/
 import { SourceCitationPane } from "@/components/source-citation-pane";
 import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
+import { JobCard, LearnerSteerBadge } from "@/components/job-cards";
 
 interface ChatPageProps {
   params: Promise<{ id: string }>;
@@ -573,6 +574,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <div className="max-w-[85%] rounded-lg bg-card border border-border p-3.5 text-foreground font-prose text-[15.5px] leading-relaxed shadow-sm whitespace-pre-wrap">
             <span className="font-ui text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
               {t.you}
+              <LearnerSteerBadge message={message} />
             </span>
             {message.content}
           </div>
@@ -743,6 +745,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             if (item.type === "divider") return <PhaseDivider key={item.key} phase={item.phase} />;
             if (item.type === "probe_done") return <ProbeDoneCard key={item.key} assessment={item.assessment} />;
             if (item.type === "answer") return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
+            if (item.type === "job") return <JobCard key={item.key} job={item.job} message={item.message} />;
             if (item.type === "pending") {
               return (
                 <QuestionDock
