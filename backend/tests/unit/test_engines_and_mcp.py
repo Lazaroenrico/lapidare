@@ -275,8 +275,7 @@ def test_build_system_prompt() -> None:
     )
     assert "R0" in prompt_practice
     assert "R5" in prompt_practice
-    assert "Commit-Before-Pose" in prompt_practice
-    assert "Ilusão de Competência" in prompt_practice
+    assert "`conclude(" in prompt_practice and "One rung per request" in prompt_practice
 
 
 def test_engine_factory() -> None:
