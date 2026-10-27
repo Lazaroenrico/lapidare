@@ -9,7 +9,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Route } from "lucide-react";
+import { Check, ChevronDown, ListChecks, Route } from "lucide-react";
 import {
   findActiveTrack,
   isTrackComplete,
@@ -19,11 +19,13 @@ import {
   type TrackSummary,
 } from "@/lib/tracks";
 import { activateTrack } from "@/lib/tracks-api";
+import { canLevelTrack, pendingSteps } from "@/lib/leveling";
 import { tracksText } from "@/lib/tracks-i18n";
 import { useLocale } from "./locale-provider";
 import { NewTrackDialog } from "./new-track-dialog";
 import { TrackDot, TrackJobState, TrackProgressBar } from "./tracks-ui";
 import { errMsg } from "./import-ui";
+import { useStartLeveling } from "./leveling-ui";
 
 export interface TrackStep {
   id: string;
@@ -58,6 +60,7 @@ export function TrackChip({
   const switchable = useMemo(() => switchableTracks(tracks), [tracks]);
   const tones = useMemo(() => trackTones(tracks), [tracks]);
   const active = findActiveTrack(tracks);
+  const leveling = useStartLeveling();
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -218,7 +221,24 @@ export function TrackChip({
               ))}
             </div>
             {error && <p role="alert" className="px-2 py-1 text-[11px] text-danger">{error}</p>}
+            {leveling.error && <p role="alert" className="px-2 py-1 text-[11px] text-danger">{leveling.error.text}</p>}
             <div className="border-t border-accent mt-1 pt-1 flex flex-col">
+              {active && canLevelTrack(active) && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={leveling.busyId !== null}
+                  title={tt.levelTrackTitle(pendingSteps(active))}
+                  onClick={() => {
+                    void leveling.start(active.id).then((ok) => ok && setMenuOpen(false));
+                  }}
+                  className="w-full text-left px-2 py-1.5 rounded text-[12px] text-foreground hover:bg-accent focus-visible:bg-accent cursor-pointer flex items-center gap-2 disabled:cursor-wait"
+                >
+                  <ListChecks className="w-3.5 h-3.5 text-muted-foreground" aria-hidden />
+                  <span className="truncate">{tt.levelTrack}</span>
+                  {leveling.busyId === active.id && <span className="text-[10.5px] text-muted-foreground">…</span>}
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"

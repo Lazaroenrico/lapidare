@@ -8,6 +8,9 @@
 * ``POST   /api/tracks/{id}/activate``     -> the track
 * ``DELETE /api/tracks/{id}``              -> ``{deleted, active_track_id}`` (Vault untouched)
 * ``POST   /api/tracks/{id}/regenerate``   -> the track (``generating: true``)
+* ``POST   /api/tracks/{id}/leveling``     -> the leveling TEACH session (Fase 15; reuses an open one)
+* ``POST   /api/tracks/{id}/leveling/{session_id}/undo`` -> ``{ok, session_id, track}``; 409 once a
+  leveled step changed
 Every change emits ``config:updated``; job progress arrives as ``jobs:updated``.
 """
 from __future__ import annotations
@@ -17,6 +20,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from learnharness.api.routes.chats import _with_slot
 from learnharness.api.state import get_app_state
 from learnharness.vault import github_source
 from learnharness.vault.github_source import GitHubSourceError
@@ -106,3 +110,16 @@ async def regenerate_track(track_id: str, request: Request) -> dict[str, Any]:
     state = get_app_state(request.app)
     await state.tracks.regenerate(track_id)
     return _one(state, track_id)
+
+
+@tracks_router.post("/{track_id}/leveling")
+async def start_leveling(track_id: str, request: Request) -> dict[str, Any]:
+    """Fase 15: open a TEACH session (``context_kind="leveling"``) that finds where to start."""
+    state = get_app_state(request.app)
+    session = await state.leveling.start(track_id)
+    return _with_slot(state, session)
+
+
+@tracks_router.post("/{track_id}/leveling/{session_id}/undo")
+async def undo_leveling(track_id: str, session_id: str, request: Request) -> dict[str, Any]:
+    return await get_app_state(request.app).leveling.undo(track_id, session_id)

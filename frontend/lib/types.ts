@@ -126,7 +126,7 @@ export interface SetupStatusResponse {
 
 export type SessionMode = "TEACH" | "PRACTICE";
 
-export type TeachContextKind = "free_topic" | "dense_source" | "track_step" | "drawing_review";
+export type TeachContextKind = "free_topic" | "dense_source" | "track_step" | "drawing_review" | "leveling";
 
 /** Teaching cycle phases (spec Fase 8 §3). */
 export type TeachPhase = "probing" | "planning" | "teaching" | "completed";
@@ -177,6 +177,22 @@ export interface ProbeAssessment {
   strands: ProbeStrand[];
   summary: string | null;
   created_at: string;
+}
+
+/** A track step as the leveling record names it (Fase 15). */
+export interface LevelingItemRef {
+  id: string;
+  title: string;
+}
+
+/** Result of `leveling_done` (Fase 15); `undone_at` is set once it was undone. */
+export interface LevelingResult {
+  track_id: string;
+  known_items: LevelingItemRef[];
+  start_item: LevelingItemRef | null;
+  summary: string;
+  created_at: string;
+  undone_at: string | null;
 }
 
 export interface SourceCitation {
@@ -257,6 +273,8 @@ export interface SessionRecord {
   answers: Record<string, CalibrationResult>;
   /** Result of `probe_done` (diagnosis per strand). */
   assessment: ProbeAssessment | null;
+  /** Fase 15: result of `leveling_done` (leveling sessions only). */
+  leveling?: LevelingResult | null;
   /** Per-session model override (replaces `slots.strong`), Fase 8B. */
   slot_override?: ModelSlotConfig | null;
   /** Slot actually used by the session (override or strong slot). */

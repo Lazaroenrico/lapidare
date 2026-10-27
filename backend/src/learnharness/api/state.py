@@ -43,6 +43,7 @@ class AppState:
         self.refresh_content_mcp_client()
         from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
+        from learnharness.services.leveling import LevelingService
         from learnharness.services.practice import PracticeService
         from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
@@ -53,6 +54,7 @@ class AppState:
         self.tracks = TrackService(self)
         self.graph = GraphService(self)
         self.practice = PracticeService(self)
+        self.leveling = LevelingService(self)
 
     def refresh_content_mcp_client(self):
         servers = self.get_config().content_mcps

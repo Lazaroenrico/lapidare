@@ -46,7 +46,7 @@ HARNESS_SERVER = "harness"
 HARNESS_TOOLS = frozenset({
     "probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
     "grade_recall", "plan_advance", "track_foundation", "spawn_demo", "problem", "conclude", "graph_search",
-    "research", "read_pdf", "visual",
+    "research", "read_pdf", "visual", "leveling_done",
 })
 IDLE_CLOSE_SECONDS = 600
 CANCEL_GRACE_SECONDS = 2.0

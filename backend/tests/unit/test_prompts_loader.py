@@ -24,6 +24,7 @@ from learnharness.prompts.loader import (
 SPEC_TOOLS = {
     "probe", "recall", "quiz", "explain", "ask_user_question", "probe_done",
     "plan_init", "grade_recall", "plan_advance", "track_foundation", "spawn_demo",
+    "leveling_done",  # Fase 15
 }
 
 
