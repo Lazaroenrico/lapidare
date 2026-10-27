@@ -1,0 +1,137 @@
+name: Desktop release
+
+# Tag v* → checks, AppImage, draft release, asset verification. A human publishes the draft.
+# workflow_dispatch builds the same artifacts but never touches releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  quality:
+    name: Checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd frontend && npm ci
+      - run: cd desktop && npm ci
+      - name: Tag must match desktop/package.json
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p 'require("./desktop/package.json").version')
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
+      - run: make check
+      - run: cd desktop && npm test
+
+  package:
+    name: AppImage (linux-x64)
+    needs: quality
+    # The oldest supported runner keeps the build-time glibc baseline low.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb libfuse2
+      - run: cd frontend && npm ci
+      # build-web → build-python → guard → smoke → electron-builder (no publish yet).
+      - run: make desktop
+      - name: Smoke the extracted AppImage backend
+        run: |
+          cd desktop/dist
+          ./Lapidare-*.AppImage --appimage-extract >/dev/null
+          node ../scripts/smoke.mjs --python squashfs-root/resources/python --web squashfs-root/resources/web
+      - name: GUI smoke (window loads the UI)
+        run: |
+          home=$(mktemp -d)
+          HOME="$home" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
+          for _ in $(seq 1 60); do
+            grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log" 2>/dev/null && break
+            sleep 1
+          done
+          cat "$home/.config/Lapidare/logs/main.log"
+          grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log"
+          pkill -f squashfs-root/lapidare || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lapidare-linux-x64
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload to the draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cd desktop && npx electron-builder --linux AppImage --x64 --prepackaged dist/linux-unpacked --publish always
+
+  compat:
+    name: Backend on ${{ matrix.image }}
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "debian:12"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lapidare-linux-x64
+      - name: Start the bundled backend and probe it
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl >/dev/null
+          chmod +x Lapidare-*.AppImage
+          ./Lapidare-*.AppImage --appimage-extract >/dev/null
+          vault=$(mktemp -d)
+          LEARNHARNESS_PORT=8790 LEARNHARNESS_VAULT_PATH="$vault" LEARNHARNESS_DESKTOP_SECRET=ci \
+            LEARNHARNESS_STATIC_DIR=squashfs-root/resources/web \
+            squashfs-root/resources/python/bin/python3 -I -m learnharness.desktop &
+          for _ in $(seq 1 60); do
+            curl -sf -H "x-lapidare-desktop: ci" http://127.0.0.1:8790/api/health && break
+            sleep 1
+          done
+          curl -sf -H "x-lapidare-desktop: ci" http://127.0.0.1:8790/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/api/health)" = 403
+          curl -sf http://127.0.0.1:8790/chat/anything | grep -qi "<html"
+
+  verify:
+    name: Verify draft release
+    needs: [package, compat]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      # electron-builder embeds the AppImage's blockmap in the file itself: no separate asset.
+      - name: Draft holds exactly the AppImage and latest-linux.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and (.tag_name == \"$GITHUB_REF_NAME\")) | .assets[].name" | sort)
+          expected=$(printf '%s\n' "Lapidare-$version-x86_64.AppImage" latest-linux.yml | sort)
+          echo "$assets"
+          test "$assets" = "$expected" || { echo "::error::draft assets differ from expected"; exit 1; }
