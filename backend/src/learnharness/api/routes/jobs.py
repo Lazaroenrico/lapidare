@@ -55,6 +55,28 @@ async def get_demo_endpoint(slug: str, request: Request, raw: bool = False) -> A
     return data
 
 
+@jobs_router.get("/api/visuals/{slug}")
+async def get_visual_endpoint(slug: str, request: Request) -> dict[str, Any]:
+    """A lesson figure from ``<viz>/visuals/<slug>.svg`` as text (the UI renders it as a data URI)."""
+    from learnharness.core.svg_validation import validate_svg
+    from learnharness.services.visuals import visuals_dir
+    from learnharness.vault.safety import safe_component, safe_path
+
+    state = get_app_state(request.app)
+    try:
+        name = safe_component(slug.removesuffix(".svg"))
+        path = safe_path(state.vault_path, f"{visuals_dir(state)}/{name}.svg")
+    except (ValueError, PermissionError):
+        raise HTTPException(status_code=400, detail="Invalid visual slug") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Visual '{name}' not found")
+    svg = path.read_text(encoding="utf-8")
+    errors = validate_svg(svg)  # the file may have been edited in Obsidian since it was saved
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+    return {"slug": name, "path": f"{visuals_dir(state)}/{name}.svg", "svg": svg}
+
+
 @jobs_router.post("/api/jobs/extract", status_code=202)
 async def trigger_extraction_job(payload: TriggerExtractionPayload, request: Request) -> dict[str, Any]:
     """Legacy alias of ``POST /api/graph/extract/{session_id}`` (Fase 8B)."""

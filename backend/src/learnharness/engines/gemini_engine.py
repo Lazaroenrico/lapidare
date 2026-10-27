@@ -48,6 +48,30 @@ def write_workspace_settings(work_dir, mcp_servers=None):
     return path
 
 
+WEB_SEARCH_TOOL = "google_web_search"
+
+
+def write_research_settings(work_dir):
+    """Workspace settings for a research call: ``google_web_search`` is the only native tool.
+
+    ``tools.core`` is the CLI's allow-list of built-in tools and ``tools.allowed`` lets the
+    read-only search run headless without a confirmation prompt; everything else stays
+    excluded. No MCP server is configured here.
+    """
+    directory = Path(work_dir) / ".gemini"
+    directory.mkdir(parents=True, exist_ok=True)
+    settings = {
+        "tools": {
+            "core": [WEB_SEARCH_TOOL],
+            "allowed": [WEB_SEARCH_TOOL],
+            "exclude": [t for t in EXCLUDED_NATIVE_TOOLS if t != WEB_SEARCH_TOOL],
+        }
+    }
+    path = directory / "settings.json"
+    path.write_text(json.dumps(settings), encoding="utf-8")
+    return path
+
+
 class GeminiHeadlessEngine:
     binary_name = "gemini"
     tool_transport = "mcp"
@@ -198,6 +222,45 @@ class GeminiHeadlessEngine:
             return schema.model_validate(result["structured_output"])
         text = "".join(parts) or result.get("response", "")
         return schema.model_validate_json(_strip_fence(text))
+
+    def research_ready(self):
+        return bool(self.binary_path)
+
+    async def research(self, prompt, slot=None):
+        """Web research through ``google_web_search`` in a throwaway allow-list workspace.
+
+        Fails unless the search tool actually ran and succeeded.
+        """
+        from learnharness.core.contracts.jobs import ResearchResult
+
+        directive = "Return ONLY JSON matching this schema: " + json.dumps(
+            ResearchResult.model_json_schema()
+        )
+        searches, succeeded, parts, result = set(), 0, [], None
+        with tempfile.TemporaryDirectory(prefix="learnharness-gemini-research-") as directory:
+            write_research_settings(directory)
+            command, stdin = self._command(transcript(prompt, system_instruction=directive), slot)
+            async with aclosing(json_events(command, stdin=stdin, cwd=directory,
+                                            timeout=self.timeout)) as events:
+                async for event in events:
+                    kind = event.get("type")
+                    if kind == "tool_use" and event.get("tool_name") == WEB_SEARCH_TOOL:
+                        searches.add(event.get("tool_id"))
+                    elif kind == "tool_result" and event.get("tool_id") in searches:
+                        succeeded += event.get("status") == "success"
+                    else:
+                        parsed, value = self._parse(event)
+                        if parsed == "text":
+                            parts.append(value)
+                        elif parsed == "result":
+                            result = value
+        if result is None:
+            raise EngineError("Gemini CLI research ended without a result")
+        report_usage(slot.model_id if slot else self.default_model, self._usage_counts(result))
+        if not succeeded:
+            raise EngineError(f"Gemini CLI answered without a successful {WEB_SEARCH_TOOL} call")
+        text = "".join(parts) or result.get("response", "")
+        return ResearchResult.model_validate_json(_strip_fence(text))
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
         """Attach the PNG through the CLI's ``@<path>`` file reference.

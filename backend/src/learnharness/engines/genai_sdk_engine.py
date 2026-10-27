@@ -138,6 +138,44 @@ class GenAiSdkEngine:
         report_usage(model, genai_usage(getattr(response, "usage_metadata", None)))
         return schema.model_validate_json(response.text or "")
 
+    def research_ready(self):
+        return self.client is not None and types is not None
+
+    async def research(self, prompt, slot=None):
+        """Web research with ``google_search`` grounding; sources come from grounding metadata.
+
+        The brief is the model's markdown; the source list is never model-written here, it
+        is the set of pages the grounding actually returned. No grounding, no result.
+        """
+        from learnharness.core.contracts.jobs import ResearchResult, ResearchSource
+
+        self._ready()
+        model = slot.model_id if slot else self.default_model
+        async with asyncio.timeout(self.timeout):
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
+        report_usage(model, genai_usage(getattr(response, "usage_metadata", None)))
+        sources, seen = [], set()
+        for candidate in getattr(response, "candidates", None) or []:
+            metadata = getattr(candidate, "grounding_metadata", None)
+            for chunk in getattr(metadata, "grounding_chunks", None) or []:
+                web = getattr(chunk, "web", None)
+                url = getattr(web, "uri", None)
+                if url and url not in seen:
+                    seen.add(url)
+                    sources.append(ResearchSource(title=getattr(web, "title", None) or url, url=url))
+        brief = (response.text or "").strip()
+        if not sources:
+            raise EngineError("google_search grounding returned no sources")
+        if not brief:
+            raise EngineError("google_search research returned an empty answer")
+        return ResearchResult(brief=brief, sources=sources)
+
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
         self._ready()
         if not png_bytes:

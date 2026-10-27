@@ -10,7 +10,9 @@ Layout (every block below is a managed block, see ``markdown_ast.merge_owned_blo
 * ``## Mapa da fonte`` (dense sources only): Dito / Pressuposto / Pulado / Simplificações
   per block, citations rendered as ``[[<source stem>#^pN]]``;
 * one ``## <node label>`` section per plan node holding the prose produced while that
-  node was current.
+  node was current, followed by the artifacts of background jobs dispatched while it was
+  current (figure embed ``![[viz/visuals/<slug>.svg]]``, demo link, collapsible research
+  or PDF callout ``> [!note]- ...``).
 
 No I/O happens here; callers persist the result with ``sync_lesson_note``.
 """
@@ -298,6 +300,69 @@ def frontmatter_for(session: SessionRecord, language: str) -> tuple[dict[str, ob
     return managed, [lang["practice_tag"] if session.mode == "PRACTICE" else lang["tag"]]
 
 
+_ARTIFACT_LABELS = {
+    "pt-BR": {"research": "Pesquisa", "read_pdf": "PDF", "demo": "Simulador Interativo", "sources": "Fontes",
+              "pages": "páginas lidas"},
+    "en": {"research": "Research", "read_pdf": "PDF", "demo": "Interactive simulator", "sources": "Sources",
+           "pages": "pages read"},
+}
+
+
+def _callout(header: str, body: str) -> str:
+    lines = [header] + [f"> {line}" if line.strip() else ">" for line in body.strip().splitlines()]
+    return "\n".join(lines)
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def render_job_artifact(details: dict, language: str) -> str | None:
+    """Markdown for one finished background job (``steer_kind == "job"``, status ``done``)."""
+    words = _ARTIFACT_LABELS["en" if language == "en" else "pt-BR"]
+    result = details.get("result") or {}
+    kind = details.get("kind")
+    if kind == "visual" and result.get("path"):
+        caption = _flat(result.get("title"))
+        embed = f"![[{result['path']}]]"
+        return f"{embed}\n*{caption}*" if caption else embed
+    if kind == "demo" and result.get("slug"):
+        title = _flat(result.get("title")) or result["slug"]
+        path = result.get("rel_path") or f"viz/demos/{result['slug']}.html"
+        return f"[[{path}|{words['demo']}: {title}]]"
+    if kind == "research" and result.get("brief"):
+        sources = "\n".join(f"- [{_flat(s.get('title')) or s.get('url')}]({s.get('url')})"
+                            for s in result.get("sources") or [] if s.get("url"))
+        body = result["brief"] + (f"\n\n**{words['sources']}:**\n{sources}" if sources else "")
+        return _callout(f"> [!note]- {words['research']}: {_flat(result.get('question') or details.get('label'))}",
+                        body)
+    if kind == "read_pdf" and result.get("answer"):
+        pages = ", ".join(str(p) for p in result.get("pages_read") or [])
+        header = f"> [!note]- {words['read_pdf']}: {_flat(result.get('file'))} — {_flat(result.get('question'))}"
+        body = result["answer"] + (f"\n\n*{words['pages']}: {pages}*" if pages else "")
+        return _callout(header, body)
+    return None
+
+
+def job_artifacts_by_node(session: SessionRecord, language: str) -> dict[str | None, list[str]]:
+    """Finished job artifacts grouped by the plan node that was current when dispatched."""
+    known = {n.id for n in session.plan.nodes}
+    grouped: dict[str | None, list[str]] = {}
+    for message in session.messages:
+        details = message.details or {}
+        if message.steer_kind != "job" or details.get("status") != "done":
+            continue
+        markdown = render_job_artifact(details, language)
+        if markdown:
+            node = details.get("node_id") if details.get("node_id") in known else None
+            grouped.setdefault(node, []).append(markdown)
+    return grouped
+
+
+def _with_artifacts(body: str, artifacts: list[str]) -> str:
+    return "\n\n".join(part for part in [body, *artifacts] if part)
+
+
 def render_lesson_blocks(session: SessionRecord, language: str) -> list[tuple[str, str]]:
     """Ordered managed blocks ``(key, markdown)`` for the lesson note."""
     if session.mode == "PRACTICE":
@@ -305,20 +370,23 @@ def render_lesson_blocks(session: SessionRecord, language: str) -> list[tuple[st
     lang = labels(language)
     stem = source_stem(session)
     prose = prose_by_node(session)
+    artifacts = job_artifacts_by_node(session, language)
     blocks: list[tuple[str, str]] = [("lesson:v2:objective", f"**{lang['objective']}:** {session.title}")]
-    if prose.get(None):
-        body = balance_fences(normalize_citations(prose[None], stem))
+    if prose.get(None) or artifacts.get(None):
+        body = balance_fences(normalize_citations(prose.get(None, ""), stem))
+        body = _with_artifacts(body, artifacts.get(None, []))
         blocks.append(("lesson:v2:diagnosis", f"## {lang['diagnosis']}\n\n{body}"))
     if session.plan.nodes:
-        with_sections = {n.id for n in session.plan.nodes if prose.get(n.id)}
+        with_sections = {n.id for n in session.plan.nodes if prose.get(n.id) or artifacts.get(n.id)}
         blocks.append(("lesson:v2:plan", render_plan(session.plan, stem, with_sections, lang)))
         if session.context_kind == "dense_source":
             dense = render_dense_map(session.plan, stem, lang)
             if dense:
                 blocks.append(("lesson:v2:dense-map", dense))
         for node in session.plan.nodes:
-            if prose.get(node.id):
-                body = balance_fences(normalize_citations(prose[node.id], stem))
+            if node.id in with_sections:
+                body = balance_fences(normalize_citations(prose.get(node.id, ""), stem))
+                body = _with_artifacts(body, artifacts.get(node.id, []))
                 blocks.append((f"lesson:v2:node:{node.id}", f"## {heading_text(node.label)}\n\n{body}"))
     return blocks
 

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from learnharness.engines import agy_gate
-from learnharness.engines.cli_protocol import EngineError, idle_wait
+from learnharness.engines.cli_protocol import EngineError, idle_wait, json_events
 from learnharness.engines.detector import KNOWN_AGY_PATHS
 from learnharness.engines.gemini_acp import AcpProcessPool, compose_prompt
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine
@@ -52,12 +52,22 @@ STDOUT_LIMIT = 4 * 1024 * 1024
 AGY_POOL = AcpProcessPool()
 
 
-def write_agy_workspace(work_dir, mcp_url=None, mcp_token=None, python=None):
-    """Write ``<work_dir>/.agents/{mcp_config.json,hooks.json,harness_gate.py}``."""
+def write_agy_workspace(work_dir, mcp_url=None, mcp_token=None, python=None, policy="harness"):
+    """Write ``<work_dir>/.agents/{mcp_config.json,hooks.json,harness_gate.py,gate_policy.json}``.
+
+    ``policy="research"`` makes the gate allow only agy's web-read tools; such a workspace
+    never carries an MCP server.
+    """
+    if policy not in agy_gate.POLICIES:
+        raise ValueError(f"Unknown agy gate policy: {policy}")
+    if policy == "research" and mcp_url:
+        raise ValueError("A research workspace has no MCP server")
     directory = Path(work_dir) / ".agents"
     directory.mkdir(parents=True, exist_ok=True)
     gate = directory / "harness_gate.py"
     gate.write_text(Path(agy_gate.__file__).read_text(encoding="utf-8"), encoding="utf-8")
+    policy_path = directory / agy_gate.POLICY_FILE
+    policy_path.write_text(json.dumps({"policy": policy}), encoding="utf-8")
     command = f"{shlex.quote(python or sys.executable)} -I {shlex.quote(str(gate))}"
     hooks = {
         "harness-gate": {
@@ -459,6 +469,42 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                 return await super().run_structured(prompt, schema, slot, system_instruction)
             finally:
                 self.work_dir = None
+
+    def research_ready(self):
+        return bool(self.binary_path)
+
+    async def research(self, prompt, slot=None):
+        """Web research in a throwaway workspace whose gate allows only agy's web-read tools.
+
+        Fails unless agy actually ran ``search_web``/``read_url_content``: an answer written
+        from memory is not research.
+        """
+        from learnharness.core.contracts.jobs import ResearchResult
+
+        command = [*self._base_command(slot), "--json-schema", json.dumps(ResearchResult.model_json_schema())]
+        stdin = (json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False)
+                 + "\n").encode()
+        web_steps, result = [], None
+        with tempfile.TemporaryDirectory(prefix="learnharness-agy-research-") as directory:
+            write_agy_workspace(directory, policy="research")
+            async with aclosing(json_events(command, stdin=stdin, cwd=directory,
+                                            timeout=self.timeout, env=self._env())) as events:
+                async for event in events:
+                    kind, value = parse_event(event)
+                    if (kind == "tool" and value["name"] in agy_gate.WEB_READ_TOOLS
+                            and value["state"] == "DONE"):
+                        web_steps.append(value["name"])
+                    elif kind == "result":
+                        result = value
+        if result is None:
+            raise EngineError("agy research ended without a result")
+        model = slot.model_id if slot else self.default_model
+        report_usage(model, agy_usage(result))
+        if not web_steps:
+            raise EngineError("agy answered without consulting the web (no search_web/read_url_content step)")
+        if "structured_output" not in result:
+            raise EngineError("agy research returned no structured output")
+        return ResearchResult.model_validate(result["structured_output"])
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
         # The Gemini CLI ``@<path>`` attachment syntax is not a documented agy feature.
