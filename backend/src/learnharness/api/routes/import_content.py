@@ -153,12 +153,9 @@ def _import_text(state: Any, server_name: str, item_id: str, title: str, text: s
         title=title,
         force=True,
         subdir=f"MCP/{server_name}",
-        provenance={
-            "source_kind": "mcp",
-            "mcp_server": server_name,
-            "mcp_item_id": item_id,
-            "origem": server_name,
-        },
+        mcp_server=server_name,
+        mcp_item_id=item_id,
+        provenance={"source_kind": "mcp"},
     )
     return {
         "source_path": str(target.relative_to(state.vault_path)),
@@ -336,7 +333,8 @@ async def ingest_source(payload: IngestPayload, request: Request) -> dict[str, A
             vault_path=state.vault_path,
             raw_text=payload.file_content,
             title=payload.title,
-            praxis_id=payload.item_id,
+            mcp_server=payload.server if payload.item_id else None,
+            mcp_item_id=payload.item_id,
             force=True,
         )
         source_path = str(target_file.relative_to(state.vault_path))

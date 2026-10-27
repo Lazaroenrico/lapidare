@@ -202,27 +202,35 @@ class SessionService:
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session.id, "sequence": session.sequence})
 
     async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True,
-                     slot_override=None, graph_context=None):
+                     slot_override=None, graph_context=None, track_id=None):
         config = self.state.get_config()
         if not config.configured:
             raise SessionConflict("Complete setup before starting a session")
         graph_context = self.state.graph.validate_context(graph_context or [])  # Fase 8B
-        if track_item_id:
-            item = next((i for i in config.track.queue if i.id == track_item_id), None)
+        track = None
+        if track_item_id or track_id:
+            # Fase 14: the step is (track_id, item_id); no track_id means the track in focus.
+            track = config.find_track(track_id) if track_id else config.active_track()
+            if track is None:
+                raise SessionConflict("Unknown track")
+            track_item_id = track_item_id or track.active_item_id
+            item = track.item(track_item_id)
             if item is None:
                 raise SessionConflict("Unknown track item")
             for existing in list_sessions(self.state.vault_path):
-                if existing.track_item_id == track_item_id and existing.phase != "completed":
+                if (existing.track_item_id == track_item_id and existing.phase != "completed"
+                        and config.session_track(existing.track_id, existing.track_item_id) is track):
                     return existing
             topic = topic or item.title
             source_file = source_file or item.source_ref
         if source_file:
-            source_file = self.resolve_source(source_file, track_item_id is not None)
+            source_file = self.resolve_source(source_file, track)
         session_id = f"sess-{uuid4().hex}"
         session = SessionRecord(
             id=session_id, title=(topic or "Nova sessão").strip()[:240], mode=mode,
             context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
             source_path=source_file, track_item_id=track_item_id, slot_override=slot_override,
+            track_id=track.id if track else None,
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
             graph_context=graph_context, phase="teaching" if mode == "PRACTICE" else "probing",
         )
@@ -265,14 +273,15 @@ class SessionService:
             touched={"atualizado": date.today()}, create_only=create_only,
         )
 
-    def resolve_source(self, source: str, track=False) -> str:
+    def resolve_source(self, source: str, track=None) -> str:
+        """``track`` (a ``TrackConfig``) allows absolute paths inside its repository."""
         config = self.state.get_config()
         # Track materials outside the Vault are confined to the explicitly configured repository.
-        if track and config.track.repo_path:
+        if track is not None and track.repo_path:
             from pathlib import Path
             candidate = Path(source).expanduser()
             if candidate.is_absolute():
-                root = Path(config.track.repo_path).expanduser().resolve()
+                root = Path(track.repo_path).expanduser().resolve()
                 candidate = candidate.resolve()
                 if candidate.is_relative_to(root) and candidate.is_file():
                     return str(candidate)
@@ -558,7 +567,9 @@ class SessionService:
         if status == "mastered":  # Fase 8B: mastery is one case of the general graph trigger.
             self.state.graph.maybe_extract(session)
         if completed and session.track_item_id:
-            await self.state.tracks.complete(session.track_item_id)
+            track = self.state.get_config().session_track(session.track_id, session.track_item_id)
+            if track is not None:  # an orphan track_id (track removed) completes nothing
+                await self.state.tracks.complete(track.id, session.track_item_id)
         return {
             "ok": True, "node_id": node_id, "status": status, "phase": session.phase,
             "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes],
@@ -608,7 +619,8 @@ class SessionService:
             return ""
         from pathlib import Path
         if Path(session.source_path).is_absolute():
-            path = Path(self.resolve_source(session.source_path, track=True))
+            track = self.state.get_config().session_track(session.track_id, session.track_item_id)
+            path = Path(self.resolve_source(session.source_path, track))
         else:
             path = safe_path(self.state.vault_path, session.source_path)
         return path.read_text(encoding="utf-8")
@@ -814,12 +826,14 @@ class SessionService:
             tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
             practice = session.mode == "PRACTICE"
             rules = turn_rules(session)
+            # Fase 14: the session's own track, not the one in focus now.
+            track = config.session_track(session.track_id, session.track_item_id) if session.track_item_id else None
             context_data: dict[str, Any] = {
                 "topic": session.title, "phase": session.phase,
                 "assessment": session.assessment.model_dump(mode="json") if session.assessment else None,
                 "plan": session.plan.model_dump(),
                 "answers": [a.model_dump(mode="json") for a in session.answers.values()],
-                "track": config.track.model_dump(mode="json") if session.track_item_id else None,
+                "track": track.model_dump(mode="json") if track else None,
             }
             if practice:
                 context_data["practice"] = self.state.practice.state_context(session)

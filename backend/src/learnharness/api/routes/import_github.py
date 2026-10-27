@@ -2,8 +2,8 @@
 
 Contract (plan "Fase 3B"):
 * ``POST /api/import/github/preview``  ``{url}`` -> ``{repo, files, truncated}``
-* ``POST /api/import/github/import``   ``{url, paths, start_session, use_as_track, replace_track?}``
-  -> ``{imported, session_id, track_job_id}``
+* ``POST /api/import/github/import``   ``{url, paths, start_session, use_as_track}`` (``replace_track`` accepted, ignored)
+  -> ``{imported, session_id, track_job_id, track_id}`` (use_as_track adds a new track)
 * ``POST /api/import/local`` multipart ``file``, ``title?``, ``start_session`` -> ``{imported, session_id}``
 Everything lands read-only in ``Fontes/`` with ``^pN`` anchors and provenance frontmatter.
 """
@@ -20,10 +20,9 @@ from pydantic import BaseModel, Field
 
 from learnharness.api.routes.chats import CreateChatPayload, create_chat
 from learnharness.api.state import get_app_state
-from learnharness.core.contracts.config import TrackMode
 from learnharness.core.events import SseEventType
+from learnharness.services.tracks import track_job_key
 from learnharness.vault import github_source
-from learnharness.vault.bootstrap import save_config
 from learnharness.vault.github_source import GitHubSourceError
 from learnharness.vault.transcript_importer import import_transcript_text
 
@@ -43,7 +42,7 @@ class GitHubImportPayload(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=github_source.MAX_FILES)
     start_session: bool = False
     use_as_track: bool = False
-    replace_track: bool = False
+    replace_track: bool = False  # Fase 14: accepted and ignored (a new track is created)
 
 
 def _http_error(exc: GitHubSourceError) -> HTTPException:
@@ -93,12 +92,6 @@ async def github_import(payload: GitHubImportPayload, request: Request) -> dict[
         github_source.parse_github_url(payload.url)
     except GitHubSourceError as exc:
         raise _http_error(exc) from exc
-    # Never silently discard an existing learning track: check before any work happens.
-    if payload.use_as_track and state.get_config().track.queue and not payload.replace_track:
-        raise HTTPException(
-            status_code=409,
-            detail="A learning track already exists; resend with replace_track=true to replace it",
-        )
     try:
         clone = await github_source.ensure_clone(state.vault_path, payload.url, refresh=False)
         imported = github_source.import_repo_files(state.vault_path, clone, payload.paths)
@@ -106,24 +99,21 @@ async def github_import(payload: GitHubImportPayload, request: Request) -> dict[
         raise _http_error(exc) from exc
     _broadcast(request, imported)
 
-    track_job_id = None
+    track_job_id = track_id = None
     if payload.use_as_track:
-        config = state.get_config()
-        if config.track.queue and not payload.replace_track:
-            raise HTTPException(status_code=409, detail="A learning track already exists")
-        config.track.mode = TrackMode.REPO_LEVELING
-        config.track.repo_path = str(clone.content_root)
-        config.track.queue = []
-        config.track.active_item_id = None
-        save_config(state.vault_path, config)
-        state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"track": True})
-        job = state.jobs.submit(
-            "track_gen", {"topic": f"{clone.owner}/{clone.repo}", "repo": f"{clone.owner}/{clone.repo}"}
+        # Fase 14: a *new* track, in focus; the other tracks stay (replace_track is ignored).
+        track = await state.tracks.create(
+            source="github", title=f"{clone.owner}/{clone.repo}", repo_path=str(clone.content_root),
+            github_url=payload.url, activate=True,
         )
-        track_job_id = job["job_id"]
+        track_id = track.id
+        job = next((j for j in reversed(state.active_jobs.values())
+                    if j.get("dedup_key") == track_job_key(track.id)), None)
+        track_job_id = job["job_id"] if job else None
 
     session_id = await _maybe_start_session(request, imported, payload.start_session)
-    return {"imported": imported, "session_id": session_id, "track_job_id": track_job_id}
+    return {"imported": imported, "session_id": session_id, "track_job_id": track_job_id,
+            "track_id": track_id}
 
 
 def _pdf_text(data: bytes) -> str:

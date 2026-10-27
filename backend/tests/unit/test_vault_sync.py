@@ -164,12 +164,12 @@ Usado em:: [[Structured output]]
     assert (vault / ".harness" / "sessions").is_dir()
 
     # Track items detected
-    assert len(config.track.queue) >= 4
-    assert config.track.active_item_id is not None
+    assert len(config.active_track().queue) >= 4
+    assert config.active_track().active_item_id is not None
     # S01 or Etapa 0 should be active
     assert any(
-        config.track.active_item_id == item.id
-        for item in config.track.queue
+        config.active_track().active_item_id == item.id
+        for item in config.active_track().queue
         if "em andamento" in item.status_detail or "triagem feita" in item.status_detail
     )
 

@@ -171,8 +171,12 @@ class ContentMcpClient:
             return found
         for md in root.rglob("*.md"):
             meta = _frontmatter(md)
-            if str(meta.get("mcp_server", "")) == server_name and meta.get("mcp_item_id") not in (None, ""):
+            if str(meta.get("mcp_server") or "") == server_name and meta.get("mcp_item_id") not in (None, ""):
                 found.add(str(meta["mcp_item_id"]))
+            elif not meta.get("mcp_server") and meta.get("praxis_id") not in (None, ""):
+                # Sources imported before the generic MCP fields only carry ``praxis_id``
+                # (no server name): they count as imported for whichever server lists them.
+                found.add(str(meta["praxis_id"]))
         return found
 
     # ------------------------------------------------------------------ internals

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -19,6 +20,7 @@ from learnharness.core.contracts.config import (
     TrackItem,
     TrackMode,
     VaultFolderMap,
+    derive_track_title,
 )
 from learnharness.vault.safety import atomic_write, locked_path, safe_path, validate_folders
 
@@ -380,6 +382,29 @@ def determine_active_item_id(queue: list[TrackItem]) -> str | None:
     return None
 
 
+def _bootstrap_track(
+    language: str,
+    repo_path: Path | None,
+    learning_md_path: Path | None,
+    queue: list[TrackItem],
+    active_item_id: str | None,
+) -> TrackConfig | None:
+    """The first track of a freshly configured vault (repository and/or parsed queue)."""
+    if not (repo_path or queue):
+        return None
+    track = TrackConfig(
+        source="repo" if repo_path else "manual",
+        mode=TrackMode.REPO_LEVELING,
+        repo_path=str(repo_path.resolve()) if repo_path else None,
+        learning_md_path=str(learning_md_path.resolve()) if learning_md_path else None,
+        active_item_id=active_item_id,
+        queue=queue,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    track.title = derive_track_title(track, language)
+    return track
+
+
 def bootstrap_vault(
     vault_path: Path,
     language: Literal["pt-BR", "en"] = "pt-BR",
@@ -478,16 +503,15 @@ def bootstrap_vault(
             language=language,
             vault_path=str(vault_path),
             folders=folder_map,
-            track=TrackConfig(
-                mode=TrackMode.REPO_LEVELING if repo_path else TrackMode.FREE,
-                repo_path=str(repo_path.resolve()) if repo_path else None,
-                learning_md_path=str((repo_path / "LEARNING.md").resolve())
-                if repo_path and (repo_path / "LEARNING.md").exists()
-                else None,
-                active_item_id=None,
-                queue=[],
-            ),
         )
+        track = _bootstrap_track(
+            language, repo_path,
+            repo_path / "LEARNING.md" if repo_path and (repo_path / "LEARNING.md").exists() else None,
+            [], None,
+        )
+        if track:
+            config.tracks = [track]
+            config.active_track_id = track.id
         save_config(vault_path, config)
         return config
 
@@ -607,30 +631,25 @@ def bootstrap_vault(
         # with defaults: that would silently drop model slots and MCP servers.
         existing_config = load_config(vault_path)
 
+    track = _bootstrap_track(language, repo_path, learning_md_path, track_items, active_id)
     if existing_config:
         config = existing_config
         config.vault_path = str(vault_path)
         config.folders = folder_map
-        config.track.queue = track_items
-        config.track.active_item_id = active_id
-        if repo_path:
-            config.track.repo_path = str(repo_path.resolve())
-        if learning_md_path:
-            config.track.learning_md_path = str(learning_md_path.resolve())
+        # Never replace tracks someone else already configured; only seed an empty config.
+        if track and not config.tracks:
+            config.tracks = [track]
+            config.active_track_id = track.id
     else:
         config = HarnessConfig(
             configured=True,
             language=language,
             vault_path=str(vault_path),
             folders=folder_map,
-            track=TrackConfig(
-                mode=TrackMode.REPO_LEVELING if (repo_path or track_items) else TrackMode.FREE,
-                repo_path=str(repo_path.resolve()) if repo_path else None,
-                learning_md_path=str(learning_md_path.resolve()) if learning_md_path else None,
-                active_item_id=active_id,
-                queue=track_items,
-            ),
         )
+        if track:
+            config.tracks = [track]
+            config.active_track_id = track.id
 
     save_config(vault_path, config)
     return config
