@@ -117,7 +117,21 @@ export function ServerEventsProvider({
         if (!isMountedRef.current) return;
         setConnected(true);
         backoffRef.current = 1000; // Reset exponential backoff
-        for (const type of KNOWN_EVENT_TYPES) dispatchEvent(type, { resync: true });
+        // Resync after (re)connecting: once per subscriber, not once per event type it
+        // listens to (the chat page alone listens to five).
+        const seen = new Set<EventListener>();
+        for (const type of KNOWN_EVENT_TYPES) {
+          if (type === "jobs:updated") void fetchJobs();
+          listenersRef.current.get(type)?.forEach((cb) => {
+            if (seen.has(cb)) return;
+            seen.add(cb);
+            try {
+              cb({ type, data: { resync: true }, timestamp: Date.now() });
+            } catch (err) {
+              console.error(`[SSE] Error in resync listener for ${type}:`, err);
+            }
+          });
+        }
       };
 
       es.onerror = () => {
@@ -176,7 +190,7 @@ export function ServerEventsProvider({
         }
       }, delay);
     }
-  }, [dispatchEvent]);
+  }, [dispatchEvent, fetchJobs]);
 
   useEffect(() => {
     isMountedRef.current = true;
