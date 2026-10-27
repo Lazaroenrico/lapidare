@@ -7,6 +7,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Check, Copy } from "lucide-react";
 import { useLocale } from "./locale-provider";
+import { MermaidDiagram } from "./mermaid-diagram";
 
 interface LessonProseProps {
   content: string;
@@ -219,7 +220,11 @@ export const LessonProse = memo(function LessonProse({
           </code>
         );
       }
-      return <CodeBlock className={codeClassName}>{children}</CodeBlock>;
+      const block = <CodeBlock className={codeClassName}>{children}</CodeBlock>;
+      if (codeClassName === "language-mermaid") {
+        return <MermaidDiagram source={React.Children.toArray(children).join("").trim()} fallback={block} />;
+      }
+      return block;
     },
     a: ({ href, children, ...props }) => {
       // Check for custom citation links
