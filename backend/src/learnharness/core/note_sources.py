@@ -220,7 +220,7 @@ def uncovered_slices(
     source_id: str, slices: Iterable[NoteSlice], coverage: Mapping[tuple[str, str], set[str]]
 ) -> list[BatchMessage]:
     """Slices whose current fingerprint was never extracted for this source."""
-    result = []
+    result: list[BatchMessage] = []
     for item in slices:
         fp = fingerprint(item.content)
         if fp in coverage.get((source_id, item.id), set()):

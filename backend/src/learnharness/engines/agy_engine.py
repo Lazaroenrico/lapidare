@@ -31,7 +31,7 @@ import tempfile
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from learnharness.engines import agy_gate
 from learnharness.engines.cli_protocol import (
@@ -39,6 +39,7 @@ from learnharness.engines.cli_protocol import (
     drain_stderr,
     idle_wait,
     json_events,
+    pipes,
     terminate_group,
 )
 from learnharness.engines.detector import KNOWN_AGY_PATHS
@@ -94,7 +95,7 @@ def write_agy_workspace(work_dir, mcp_url=None, mcp_token=None, python=None, pol
     return path
 
 
-def parse_event(event):
+def parse_event(event: dict[str, Any]) -> tuple[str, Any]:
     """Map one agy stream-json event to ``(kind, value)``.
 
     kinds: ``init`` (conversation id), ``text``, ``tool`` (dict), ``result``, ``event``.
@@ -188,19 +189,20 @@ class AgyProcess:
             start_new_session=True,
             limit=STDOUT_LIMIT,
         )
-        self._stderr_task = asyncio.create_task(drain_stderr(self.process.stderr, self.stderr_tail))
+        self._stderr_task = asyncio.create_task(drain_stderr(pipes(self.process).stderr, self.stderr_tail))
 
     async def send(self, payload):
         if not self.alive:
             raise EngineError(f"agy process is not running (code {self.returncode})")
         try:
-            self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode())
-            await self.process.stdin.drain()
+            stdin = pipes(self.process).stdin
+            stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode())
+            await stdin.drain()
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise EngineError("agy process closed its input") from exc
 
     async def readline(self):
-        return await self.process.stdout.readline()
+        return await pipes(self.process).stdout.readline()
 
     async def close(self):
         process = self.process
@@ -208,7 +210,7 @@ class AgyProcess:
             return
         if process.returncode is None:
             with contextlib.suppress(Exception):
-                process.stdin.close()  # EOF: agy finishes and exits on its own
+                pipes(process).stdin.close()  # EOF: agy finishes and exits on its own
             try:
                 await asyncio.wait_for(process.wait(), CLOSE_GRACE_SECONDS)
             except TimeoutError:

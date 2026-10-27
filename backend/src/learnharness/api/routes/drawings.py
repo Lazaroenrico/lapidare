@@ -284,7 +284,7 @@ async def review_drawing_endpoint(slug: str, request: Request) -> dict[str, Any]
             quiz_id=f"quiz-{uuid4().hex[:12]}", session_id=session.id, topic=follow_up.topic,
             mode="CHECK", question=follow_up.question,
             choices=[QuizOption(value=chr(ord("a") + i), label=c) for i, c in enumerate(follow_up.choices)],
-            correct_index=follow_up.correct_index, explanation=follow_up.explanation,
+            correct_indices=[follow_up.correct_index], explanation=follow_up.explanation,
         )
         pending = await state.sessions.open_quiz(session.id, quiz, replace_pending=True)
         session_id = session.id

@@ -5,7 +5,9 @@ import contextlib
 import json
 import os
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 # While suspended (learner answering a QuestionDock) the idle clock is re-checked at this
 # cadence instead of firing.
@@ -17,6 +19,20 @@ class EngineError(RuntimeError):
 
 
 STDERR_TAIL_BYTES = 16384
+
+
+@dataclass(frozen=True)
+class Pipes:
+    stdin: asyncio.StreamWriter
+    stdout: asyncio.StreamReader
+    stderr: asyncio.StreamReader
+
+
+def pipes(process: asyncio.subprocess.Process | None) -> Pipes:
+    """The three pipes of a child started with stdin/stdout/stderr all ``PIPE``."""
+    if process is None or process.stdin is None or process.stdout is None or process.stderr is None:
+        raise EngineError("Provider process is not running with piped stdio")
+    return Pipes(process.stdin, process.stdout, process.stderr)
 
 
 async def drain_stderr(stream: asyncio.StreamReader, tail: bytearray | None = None) -> None:
@@ -90,7 +106,7 @@ async def json_events(
     timeout: float = 180,
     env=None,
     is_suspended: Callable[[], bool] | None = None,
-) -> AsyncIterator[dict]:
+) -> AsyncGenerator[dict[str, Any], None]:
     """Yield NDJSON objects from ``command``.
 
     ``timeout`` is an IDLE timeout (seconds without a stdout line), suspended while
@@ -106,21 +122,22 @@ async def json_events(
         start_new_session=True,
         limit=4 * 1024 * 1024,
     )
+    io = pipes(process)
 
     async def feed():
         try:
-            process.stdin.write(stdin)
-            await process.stdin.drain()
+            io.stdin.write(stdin)
+            await io.stdin.drain()
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
-            process.stdin.close()
+            io.stdin.close()
 
-    stderr_task = asyncio.create_task(drain_stderr(process.stderr))
+    stderr_task = asyncio.create_task(drain_stderr(io.stderr))
     input_task = asyncio.create_task(feed())
     try:
         while line := await idle_wait(
-            process.stdout.readline(), timeout=timeout, is_suspended=is_suspended
+            io.stdout.readline(), timeout=timeout, is_suspended=is_suspended
         ):
             if not line.strip():
                 continue

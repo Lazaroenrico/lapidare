@@ -8,10 +8,18 @@ import hashlib
 import json
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def wire_dict(value: object) -> dict[str, Any] | None:
+    """A shallow copy of ``value`` when it is a JSON object, else None.
+
+    ``mode="before"`` validators receive anything the caller passed; this is their typed entry.
+    """
+    return dict(cast("dict[str, Any]", value)) if isinstance(value, dict) else None
 
 
 class EngineKind(StrEnum):
@@ -21,8 +29,8 @@ class EngineKind(StrEnum):
     GENAI_SDK = "genai_sdk"
 
     @classmethod
-    def _missing_(cls, value):
-        return {"gemini": cls.GEMINI_CLI, "sdk": cls.GENAI_SDK}.get(value)
+    def _missing_(cls, value: object) -> "EngineKind | None":
+        return {"gemini": cls.GEMINI_CLI, "sdk": cls.GENAI_SDK}.get(str(value))
 
 
 class EffortLevel(StrEnum):
@@ -81,15 +89,15 @@ class VaultFolderMap(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def legacy_names(cls, values):
-        if isinstance(values, dict):
+    def legacy_names(cls, values: Any) -> Any:
+        if (data := wire_dict(values)) is not None:
             aliases = {"aulas": "lessons_dir", "conceitos": "concepts_dir", "fontes": "sources_dir", "desenhos": "drawings_dir", "viz": "viz_dir", "templates": "templates_dir"}
-            values = {aliases.get(k, k): v for k, v in values.items()}
+            return {aliases.get(k, k): v for k, v in data.items()}
         return values
 
     @field_validator("map_file", "lessons_dir", "concepts_dir", "sources_dir", "drawings_dir", "sessions_dir", "templates_dir", "viz_dir")
     @classmethod
-    def confined_name(cls, value):
+    def confined_name(cls, value: str) -> str:
         if not value or value.startswith(("/", "\\")) or "\\" in value or any(p in ("", ".", "..") for p in value.split("/")):
             raise ValueError("Vault folders must be relative paths without traversal")
         return value
@@ -115,13 +123,13 @@ class McpServerConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def legacy_active(cls, values):
-        if isinstance(values, dict):
-            values = dict(values)
-            if "active" in values and "enabled" not in values:
-                values["enabled"] = values["active"]
-            if values.get("url") and "transport" not in values:
-                values["transport"] = "http"
+    def legacy_active(cls, values: Any) -> Any:
+        if (data := wire_dict(values)) is not None:
+            if "active" in data and "enabled" not in data:
+                data["enabled"] = data["active"]
+            if data.get("url") and "transport" not in data:
+                data["transport"] = "http"
+            return data
         return values
 
     @model_validator(mode="after")
@@ -138,7 +146,7 @@ class TrackMode(StrEnum):
     FREE = "free"
 
     @classmethod
-    def _missing_(cls, value):
+    def _missing_(cls, value: object) -> "TrackMode | None":
         return cls.REPO_LEVELING if value == "repo_binary" else None
 
 
@@ -186,11 +194,11 @@ class TrackConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def legacy_queue(cls, values):
-        if isinstance(values, dict):
-            values = dict(values)
-            values.setdefault("queue", values.get("items", []))
-            values.setdefault("active_item_id", values.get("current_step_id"))
+    def legacy_queue(cls, values: Any) -> Any:
+        if (data := wire_dict(values)) is not None:
+            data.setdefault("queue", data.get("items", []))
+            data.setdefault("active_item_id", data.get("current_step_id"))
+            return data
         return values
 
     def item(self, item_id: str | None) -> TrackItem | None:
@@ -224,7 +232,8 @@ def migrate_legacy_track(data: dict[str, Any]) -> dict[str, Any]:
         return data
     if isinstance(legacy, TrackConfig):
         legacy = legacy.model_dump(mode="json")
-    if not isinstance(legacy, dict):
+    legacy = wire_dict(legacy)
+    if legacy is None:
         return data
     track = TrackConfig.model_validate({k: v for k, v in legacy.items() if k != "id"})
     if not track.queue and track.mode == TrackMode.FREE:
@@ -329,8 +338,9 @@ class HarnessConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def legacy_track(cls, values):
-        return migrate_legacy_track(values) if isinstance(values, dict) else values
+    def legacy_track(cls, values: Any) -> Any:
+        data = wire_dict(values)
+        return migrate_legacy_track(data) if data is not None else values
 
     def find_track(self, track_id: str | None) -> TrackConfig | None:
         return next((t for t in self.tracks if t.id == track_id), None) if track_id else None

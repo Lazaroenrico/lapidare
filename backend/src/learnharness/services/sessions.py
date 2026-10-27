@@ -752,7 +752,7 @@ class SessionService:
         session = self.get(session_id)
         task = self.tasks.get(session_id)
         running = task is not None and not task.done()
-        if running:
+        if task is not None and running:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         self.streaming.pop(session_id, None)

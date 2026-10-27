@@ -118,8 +118,9 @@ class PlanDag(BaseModel):
         if len(ids) != len(self.nodes):
             raise ValueError("Plan node ids must be unique")
         graph = {node.id: node.depends_on for node in self.nodes}
-        done, active = set(), set()
-        def visit(node_id):
+        done: set[str] = set()
+        active: set[str] = set()
+        def visit(node_id: str) -> None:
             if node_id not in ids:
                 raise ValueError("Unknown plan dependency")
             if node_id in active:
@@ -213,7 +214,7 @@ def slot_override_for(strong: ModelSlotConfig, model_id: str | None = None,
     """Per-session override of the strong slot; ``None`` when neither field is chosen."""
     if not model_id and effort is None:
         return None
-    update = {}
+    update: dict[str, Any] = {}
     if model_id:
         update["model_id"] = model_id
     if effort is not None:

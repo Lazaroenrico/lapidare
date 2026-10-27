@@ -45,7 +45,7 @@ def graph_search(
         if score:
             scored.append((-score, node.name, node.id, node))
     scored.sort(key=lambda item: (item[0], len(item[1]), item[2]))
-    results = []
+    results: list[dict[str, str]] = []
     for _, _, _, node in scored[:limit]:
         birth = node.provenance[0].session_id if node.provenance else ""
         results.append({"id": node.id, "name": node.name, "statement": node.statement,

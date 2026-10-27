@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
+from learnharness.core.contracts.config import wire_dict
+
 QuizMode = Literal["PROBE", "PREDICTION", "CHECK"]
 QuestionKind = Literal["quiz", "explain", "ask"]
 GradeVerdict = Literal["correct", "partial", "incorrect"]
@@ -32,13 +34,13 @@ CalibrationBand = Literal[
 
 def _fold_legacy_index(data: Any, scalar: str, plural: str) -> Any:
     """Map a legacy ``scalar`` index into the ``plural`` list (the list wins when both exist)."""
-    if not isinstance(data, dict) or scalar not in data:
+    fields = wire_dict(data)
+    if fields is None or scalar not in fields:
         return data
-    data = dict(data)
-    value = data.pop(scalar)
-    if plural not in data and value is not None:
-        data[plural] = [value]
-    return data
+    value = fields.pop(scalar)
+    if plural not in fields and value is not None:
+        fields[plural] = [value]
+    return fields
 
 
 class QuizOption(BaseModel):

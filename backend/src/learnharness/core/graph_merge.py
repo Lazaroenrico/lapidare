@@ -60,7 +60,7 @@ def _tokens(text: str) -> set[str]:
 
 def _dedupe(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
-    result = []
+    result: list[str] = []
     for value in values:
         value = value.strip()
         key = normalize_name(value)
@@ -76,8 +76,9 @@ def _dedupe(values: Iterable[str]) -> list[str]:
 
 
 def _provenance(raw: Any) -> list[Provenance]:
-    result = []
-    for item in raw or []:
+    result: list[Provenance] = []
+    items: list[Any] = raw or []
+    for item in items:
         try:
             result.append(Provenance.model_validate(item))
         except ValidationError:
@@ -130,7 +131,8 @@ def fold_nodes(records: Iterable[Mapping[str, Any]]) -> dict[str, PropositionNod
             except ValidationError:
                 continue
             continue
-        aliases = [a for a in record.get("aliases") or [] if isinstance(a, str)]
+        raw_aliases: list[Any] = record.get("aliases") or []
+        aliases = [a for a in raw_aliases if isinstance(a, str)]
         known = {normalize_name(node.name), *(normalize_name(a) for a in node.aliases)}
         node.aliases += [a for a in _dedupe(aliases) if normalize_name(a) not in known]
         node.provenance = _union_provenance(node.provenance, _provenance(record.get("provenance")))
@@ -250,7 +252,7 @@ def uncovered_messages(
     exclude: set[str] | None = None,
 ) -> list[BatchMessage]:
     """Teacher prose (``role == "assistant"``) whose current fingerprint was never read."""
-    result = []
+    result: list[BatchMessage] = []
     for message_id, role, content in messages:
         if role != "assistant" or not content.strip() or message_id in (exclude or set()):
             continue
@@ -295,7 +297,7 @@ def candidate_matches(
     all_tokens = name_tokens | _tokens(statement)
     if not all_tokens:
         return []
-    scored = []
+    scored: list[tuple[float, str, str]] = []
     for node in nodes.values():
         node_name = _tokens(" ".join([node.name, *node.aliases]))
         node_all = node_name | _tokens(node.statement)
@@ -341,7 +343,7 @@ def plan_merge(
         key_message[key] = message_id
         provenance = Provenance(session_id=session_id, message_id=message_id)
         target = links.get(key) or (key if key in nodes else None)
-        if target in nodes:
+        if target is not None and target in nodes:
             plan.key_to_id[key] = target
             node = nodes[target]
             entry = appends.setdefault(target, {"id": target, "aliases": [], "provenance": []})
@@ -374,17 +376,18 @@ def plan_merge(
             ref = ref.strip()
             return plan.key_to_id.get(ref) or (ref if ref in nodes else None)
 
-        premises = [resolve(p) for p in raw.premises]
+        resolved = [resolve(p) for p in raw.premises]
         conclusion = resolve(raw.conclusion)
+        premises = [p for p in resolved if p is not None]
+        if conclusion is None or len(premises) != len(resolved):
+            plan.rejected_chains.append({"chain": raw.model_dump(), "reason": "unknown reference"})
+            continue
+        premises = list(dict.fromkeys(premises))
         reason = None
-        if conclusion is None or any(p is None for p in premises):
-            reason = "unknown reference"
-        else:
-            premises = list(dict.fromkeys(premises))
-            if conclusion in premises:
-                reason = "self-implication"
-            elif is_redundant(premises, conclusion, [*chains, *accepted]):
-                reason = "redundant"
+        if conclusion in premises:
+            reason = "self-implication"
+        elif is_redundant(premises, conclusion, [*chains, *accepted]):
+            reason = "redundant"
         if reason:
             plan.rejected_chains.append({"chain": raw.model_dump(), "reason": reason})
             continue

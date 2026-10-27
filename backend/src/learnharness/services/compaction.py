@@ -57,9 +57,9 @@ async def compact_session(sessions: SessionService, session_id: str) -> bool:
     state = sessions.state
     config = state.get_config()
     session = sessions.get(session_id)
-    if not compaction_due(session, config.agent.compaction_tokens):
-        return False
     first_kept = choose_first_kept(session.messages, session.compaction)
+    if first_kept is None or not compaction_due(session, config.agent.compaction_tokens):
+        return False
     tokens_before = history_tokens(session.messages, session.compaction)
     async with sessions.lock(session_id):
         current = sessions.get(session_id)

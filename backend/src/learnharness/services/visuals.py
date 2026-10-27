@@ -99,6 +99,7 @@ async def generate_visual(engine, slot, brief: str, context: dict[str, Any],
         request.update(previous_svg=edit["previous_svg"][:MAX_SVG_BYTES], fix_what_the_reviewer_saw=edit["problems"],
                        task="Edit previous_svg so that every problem the reviewer saw in the rendered figure "
                             "is gone; keep what already works. Return the whole corrected SVG.")
+    errors: list[str] = []
     for attempt in range(MAX_CORRECTIONS + 1):
         if attempt:
             progress(f"corrigindo o SVG ({attempt}/{MAX_CORRECTIONS})")

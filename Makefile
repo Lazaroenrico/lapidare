@@ -7,7 +7,7 @@ dev:
 check: check-backend check-frontend
 
 check-backend:
-	cd backend && uv run pytest -q && uv run ruff check src tests
+	cd backend && uv run pytest -q && uv run ruff check src tests && uv run basedpyright
 
 check-frontend:
 	cd frontend && npm run typecheck && npm run lint && npm test && npm run build
