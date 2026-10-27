@@ -118,6 +118,17 @@ async def test_agy_review_without_reading_the_image_fails(tmp_path):
         await engine.review_drawing_multimodal(b"png", "t")
 
 
+async def test_agy_generic_image_review_takes_the_shared_keywords(tmp_path):
+    # Same signature on every engine: the Fase 17 visual check calls it with all of these.
+    engine, log = _fake_agy(tmp_path)
+    review = await engine.review_image(b"\x89PNG", "Judge the figure.", DrawingReviewResult, None,
+                                       context="brief", system_instruction="Be strict.",
+                                       image_name="drawing.png", subject="figure")
+    assert isinstance(review, DrawingReviewResult)
+    prompt = json.loads(log.read_text())["prompt"]
+    assert prompt.startswith("Be strict.\nJudge the figure.") and "First open the figure" in prompt
+
+
 async def test_agy_review_refuses_an_empty_png(tmp_path):
     engine, _ = _fake_agy(tmp_path)
     with pytest.raises(ValueError):

@@ -269,16 +269,22 @@ class GeminiHeadlessEngine:
         return ResearchResult.model_validate_json(_strip_fence(text))
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
+        from learnharness.core.contracts.drawing import DrawingReviewResult
+
+        return await self.review_image(
+            png_bytes, f"Review the learner diagram {drawing_title}. Context: {context_notes}",
+            DrawingReviewResult, system_instruction=DRAWING_REVIEW_INSTRUCTION, subject="drawing")
+
+    async def review_image(self, png_bytes, instructions, schema, slot=None, *, context="",
+                           system_instruction=None, image_name=None, subject="image"):
         """Attach the PNG through the CLI's ``@<path>`` file reference.
 
         Gemini CLI expands ``@path`` with a directly-constructed ReadManyFiles tool (images
         become inline data), so the workspace tool exclusion does not block it. The path
         must live inside the workspace (cwd).
         """
-        from learnharness.core.contracts.drawing import DrawingReviewResult
-
         if not png_bytes:
-            raise ValueError("Drawing PNG is empty")
+            raise ValueError("Image PNG is empty")
         with contextlib.ExitStack() as stack:
             if self.work_dir:
                 directory = Path(self.work_dir)
@@ -289,18 +295,15 @@ class GeminiHeadlessEngine:
                 stack.callback(setattr, self, "work_dir", None)
             if not (directory / ".gemini" / "settings.json").exists():
                 write_workspace_settings(directory)
-            image = directory / f"drawing-{uuid4().hex}.png"
+            image = directory / f"{subject}-{uuid4().hex}.png"
             image.write_bytes(png_bytes)
             stack.callback(image.unlink, missing_ok=True)
+            notes = f"\n<notes>\n{context}\n</notes>\n" if context else " "
             # The reference must be followed by whitespace: the prompt is JSON-embedded and a
             # trailing quote or escape sequence would become part of the path.
-            prompt = (
-                f"Review the learner diagram {drawing_title}. Context: {context_notes} "
-                f"Image: @{image.name} (attached PNG)."
-            )
-            return await self.run_structured(
-                prompt, schema=DrawingReviewResult, system_instruction=DRAWING_REVIEW_INSTRUCTION
-            )
+            prompt = f"{instructions}{notes}Image: @{image.name} (attached PNG)."
+            return await self.run_structured(prompt, schema=schema, slot=slot,
+                                             system_instruction=system_instruction)
 
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n?```", re.DOTALL)

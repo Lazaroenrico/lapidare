@@ -176,6 +176,30 @@ class GenAiSdkEngine:
             raise EngineError("google_search research returned an empty answer")
         return ResearchResult(brief=brief, sources=sources)
 
+    async def review_image(self, png_bytes, instructions, schema, slot=None, *, context="",
+                           system_instruction=None, image_name=None, subject=None):
+        """Structured verdict on a PNG sent as an inline image part."""
+        self._ready()
+        if not png_bytes:
+            raise ValueError("Image PNG is empty")
+        model = slot.model_id if slot else self.default_model
+        prompt = f"{instructions}\n<notes>\n{context}\n</notes>" if context else instructions
+        async with asyncio.timeout(self.timeout):
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=[prompt, types.Part.from_bytes(data=png_bytes, mime_type="image/png")],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    system_instruction=system_instruction,
+                ),
+            )
+        report_usage(model, genai_usage(getattr(response, "usage_metadata", None)))
+        try:
+            return schema.model_validate_json(response.text or "")
+        except ValidationError as exc:
+            raise EngineError(f"Provider returned an invalid image review: {exc}") from exc
+
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
         self._ready()
         if not png_bytes:

@@ -410,7 +410,9 @@ async def test_visual_job_corrects_saves_and_embeds_in_the_current_node(tmp_path
         (steer,) = _job_steers(state, session.id)
         assert steer.details["result"] == {"slug": "fluxo-da-softmax", "path": "viz/visuals/fluxo-da-softmax.svg",
                                            "title": "Fluxo da softmax", "alt": "logits viram probabilidades",
-                                           "bytes": len(GOOD_SVG.encode())}
+                                           "bytes": len(GOOD_SVG.encode()), "checked": False,
+                                           "check_notes": "Não conferido: sem Chromium headless."}
+        assert record["warnings"] and "não conferido" in record["warnings"][0]
         assert steer.content.startswith("O visual 'Fluxo da softmax' está pronto e foi inserido na aula.")
         text = note.read_text(encoding="utf-8")
         section = text[text.index("## Softmax"):]

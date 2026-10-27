@@ -507,27 +507,33 @@ class AgyStreamEngine(GeminiHeadlessEngine):
         return ResearchResult.model_validate(result["structured_output"])
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
-        """Review the PNG in a throwaway workspace whose gate allows only reading files inside it.
-
-        agy has no image attachment in stream-json input, but its ``read_file`` tool returns
-        a PNG to the model as an image (verified with agy 1.4.8). The review fails unless agy
-        actually read the drawing: a verdict written without seeing it is worthless.
-        """
+        """Review the learner's retrieval drawing (see ``review_image``)."""
         from learnharness.core.contracts.drawing import DrawingReviewResult
 
+        return await self.review_image(
+            png_bytes, f"{DRAWING_REVIEW_PROMPT}\nDrawing title: {drawing_title!r}.", DrawingReviewResult,
+            context=context_notes, image_name="drawing.png", subject="drawing")
+
+    async def review_image(self, png_bytes, instructions, schema, slot=None, *, context="",
+                           system_instruction=None, image_name="image.png", subject="image"):
+        """Structured verdict on a PNG, in a throwaway workspace whose gate allows only reading files inside it.
+
+        agy has no image attachment in stream-json input, but its ``read_file`` tool returns
+        a PNG to the model as an image (verified with agy 1.4.8). The call fails unless agy
+        actually read the image: a verdict written without seeing it is worthless.
+        """
         if not png_bytes:
-            raise ValueError("Drawing PNG is empty")
-        command = [*self._base_command(), "--json-schema",
-                   json.dumps(DrawingReviewResult.model_json_schema())]
+            raise ValueError("Image PNG is empty")
+        command = [*self._base_command(slot), "--json-schema", json.dumps(schema.model_json_schema())]
         with tempfile.TemporaryDirectory(prefix="learnharness-agy-vision-") as directory:
             write_agy_workspace(directory, policy="vision")
-            image = Path(directory) / "drawing.png"
+            image = Path(directory) / image_name
             image.write_bytes(png_bytes)
+            preamble = f"{system_instruction}\n" if system_instruction else ""
             prompt = (
-                f"{DRAWING_REVIEW_PROMPT}\n"
-                f"Drawing title: {drawing_title!r}.\n"
-                f"First open the drawing with read_file on this exact path: {image}\n"
-                f"<notes>\n{context_notes}\n</notes>"
+                f"{preamble}{instructions}\n"
+                f"First open the {subject} with read_file on this exact path: {image}\n"
+                f"<notes>\n{context}\n</notes>"
             )
             stdin = (json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False)
                      + "\n").encode()
@@ -542,13 +548,13 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                     elif kind == "result":
                         result = value
         if result is None:
-            raise EngineError("agy drawing review ended without a result")
-        report_usage(self.default_model, agy_usage(result))
+            raise EngineError(f"agy {subject} review ended without a result")
+        report_usage(slot.model_id if slot else self.default_model, agy_usage(result))
         if not read_image:
-            raise EngineError("agy answered without opening the drawing image (no read_file step on the PNG)")
+            raise EngineError(f"agy answered without opening the {subject} image (no read_file step on the PNG)")
         if "structured_output" not in result:
-            raise EngineError("agy drawing review returned no structured output")
-        return pick_structured(DrawingReviewResult, result["structured_output"], result.get("response", ""))
+            raise EngineError(f"agy {subject} review returned no structured output")
+        return pick_structured(schema, result["structured_output"], result.get("response", ""))
 
 
 DRAWING_REVIEW_PROMPT = (

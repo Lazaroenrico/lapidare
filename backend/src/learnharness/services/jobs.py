@@ -94,9 +94,10 @@ class JobManager:
             record["result_id"] = (track or {}).get("id") or "track"
         elif kind == "demo_builder":
             from learnharness.services.demos import run_demo_job
-            result = await run_demo_job(self.state, payload)
+            result = await run_demo_job(self.state, payload, lambda a: self.progress(record, a))
             record["result_id"] = result["slug"]
-            record["result"] = {k: result[k] for k in ("slug", "rel_path", "title", "description")}
+            record["result"] = {k: result[k] for k in ("slug", "rel_path", "title", "description", "verified",
+                                                       "warnings") if k in result}
         elif kind == "research":
             from learnharness.services.research import run_research_job
             record["result"] = await run_research_job(self.state, payload, lambda a: self.progress(record, a))
@@ -110,6 +111,10 @@ class JobManager:
             record["result"] = result
         else:
             raise ValueError("Unsupported background job")
+        # Degraded checks (no Chromium, vision unavailable) finish the job with a warning.
+        warnings = (record.get("result") or {}).pop("warnings", None)
+        if warnings:
+            record["warnings"] = warnings
 
     async def run(self, record):
         # Provider usage of the whole job goes to the global ledger (job_kind, no session).
@@ -192,6 +197,7 @@ class JobManager:
         if record["status"] not in ("failed", "interrupted"):
             raise ValueError("Only failed or interrupted jobs may be retried")
         record["error"] = None
+        record.pop("warnings", None)
         record["status"] = "queued"
         record["attempt"] = record.get("attempt", 1) + 1
         record.pop("steer_message_id", None)
