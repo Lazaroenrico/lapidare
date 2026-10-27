@@ -11,7 +11,7 @@ import { importGithubRepo, isAbortError, previewGithubRepo } from "@/lib/api";
 import { isGithubRepoUrl } from "@/lib/import-wire";
 import type { GithubImportResult, GithubPreview, GithubPreviewFile } from "@/lib/types";
 import { useLocale } from "./locale-provider";
-import { Badge, Banner, Btn, BusyStrip, Check, Field, cx, errMsg, handleListKeys, inputClass } from "./import-ui";
+import { Badge, Banner, Btn, BusyStrip, Check, Field, FolderCheckbox, cx, errMsg, handleListKeys, inputClass } from "./import-ui";
 
 type Phase = "idle" | "previewing" | "importing";
 
@@ -21,35 +21,6 @@ const dirOf = (path: string) => {
 };
 const baseOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const fmtSize = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`);
-
-function FolderCheckbox({
-  id,
-  state,
-  onChange,
-  label,
-}: {
-  id: string;
-  state: "all" | "some" | "none";
-  onChange: (value: boolean) => void;
-  label: string;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = state === "some";
-  }, [state]);
-  return (
-    <input
-      ref={ref}
-      id={id}
-      data-nav
-      type="checkbox"
-      aria-label={label}
-      checked={state === "all"}
-      onChange={(e) => onChange(e.target.checked)}
-      className="accent-foreground cursor-pointer"
-    />
-  );
-}
 
 export function GithubImportPanel({ onImported }: { onImported: (result: GithubImportResult) => void }) {
   const { t } = useLocale();

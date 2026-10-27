@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Edit3,
   ExternalLink,
+  FileText,
   Link2,
   Loader2,
   Minus,
@@ -58,6 +59,7 @@ import {
   type RoadmapScope,
 } from "@/lib/tracks";
 import { tracksText } from "@/lib/tracks-i18n";
+import { notesText, paragraphAnchor } from "@/lib/notes-import";
 import { RoadmapLegend, RoadmapStepCard } from "./roadmap-ui";
 import { useStartLeveling } from "./leveling-ui";
 import { NavDrawerButton } from "@/components/nav-drawer";
@@ -153,6 +155,8 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const [openInObsidian, setOpenInObsidian] = useState(false);
   const [vaultName, setVaultName] = useState("");
   const [noteNode, setNoteNode] = useState<ConceptNode | null>(null);
+  // Fase 16: a vault note the focused node came from, open in the read-only pane.
+  const [noteSource, setNoteSource] = useState<{ id: string; title: string; path: string } | null>(null);
 
   // Latest selection for engine callbacks (bound once).
   const selectionRef = useRef(selection);
@@ -213,6 +217,14 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       return;
     }
     setNoteNode(node);
+  };
+
+  const handleOpenSource = (ref: { source_id: string; title: string; path: string }) => {
+    if (openInObsidian && vaultName) {
+      window.location.href = buildObsidianUri(vaultName, ref.path);
+      return;
+    }
+    setNoteSource({ id: ref.source_id, title: ref.title, path: ref.path });
   };
 
   const loadGraph = useCallback(async () => {
@@ -412,7 +424,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const validIds = useMemo(() => new Set(snapshot.nodes.map((n) => n.id)), [snapshot.nodes]);
   const sessionTitles = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of snapshot.clusters) if (c.kind === "session") m.set(c.id, c.label);
+    for (const c of snapshot.clusters) if (c.kind === "session" || c.kind === "notes") m.set(c.id, c.label);
     for (const n of snapshot.nodes) for (const s of n.sessions) if (!m.has(s.session_id)) m.set(s.session_id, s.title);
     return m;
   }, [snapshot]);
@@ -697,6 +709,8 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
 
           <p className="font-prose text-[13px] text-foreground leading-relaxed mb-3">{focused.statement || t.noSummary}</p>
 
+          {/* A node born only from vault notes shows just its note origin (below). */}
+          {(focused.sessions.length > 0 || focused.sources.length === 0) && (
           <div className="mb-3">
             <span className="text-[10px] text-muted-foreground block uppercase tracking-wider mb-1.5">{t.nodeSessions}</span>
             {focused.sessions.length === 0 ? (
@@ -719,6 +733,30 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
               </ul>
             )}
           </div>
+          )}
+
+          {focused.sources.length > 0 && (
+            <div className="mb-3">
+              <span className="text-[10px] text-muted-foreground block uppercase tracking-wider mb-1.5">{notesText(locale).origin}</span>
+              <ul className="flex flex-col gap-1">
+                {focused.sources.map((src) => (
+                  <li key={`${src.source_id}-${src.paragraph ?? ""}`}>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSource(src)}
+                      title={notesText(locale).openNote(src.path)}
+                      className="w-full flex items-center gap-1.5 text-left text-[11px] text-foreground hover:bg-accent rounded px-1.5 py-1 border border-accent hover:border-border transition-colors cursor-pointer"
+                    >
+                      <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <span className="truncate">{notesText(locale).originNote(src.title)}</span>
+                      {paragraphAnchor(src) && <span className="ml-auto text-muted-foreground shrink-0">{paragraphAnchor(src)}</span>}
+                      {src.deleted && <span className="ml-auto text-muted-foreground shrink-0">{notesText(locale).noteRemoved}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="mb-3 text-[11px] text-muted-foreground flex items-center gap-1.5 bg-background px-2 py-1 rounded border border-accent">
             <span>{t.vaultLabel}</span>
@@ -865,6 +903,13 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
         conceptName={noteNode?.name ?? ""}
         fallbackPath={noteNode ? notePathFor(noteNode) : ""}
         onClose={() => setNoteNode(null)}
+      />
+      <ConceptNotePane
+        conceptId={null}
+        sourceId={noteSource?.id ?? null}
+        conceptName={noteSource?.title ?? ""}
+        fallbackPath={noteSource?.path ?? ""}
+        onClose={() => setNoteSource(null)}
       />
     </div>
   );

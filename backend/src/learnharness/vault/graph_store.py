@@ -18,8 +18,14 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from learnharness.core.contracts.graph import ChainRecord, CoverageRecord, PropositionNode
+from learnharness.core.contracts.graph import (
+    ChainRecord,
+    CoverageRecord,
+    PropositionNode,
+    SourceRecord,
+)
 from learnharness.core.graph_merge import fold_chains, fold_nodes
+from learnharness.core.note_sources import fold_sources
 from learnharness.vault.lesson_layout import sanitize_note_title
 from learnharness.vault.markdown_ast import (
     body_without_frontmatter,
@@ -112,13 +118,23 @@ def append_session_unlink(vault_path: Path, session_id: str, plan: dict[str, lis
 
 
 def load_coverage(vault_path: Path) -> list[CoverageRecord]:
-    result = []
+    """Coverage lines; a ``{session_id, reset: true}`` line forgets that origin's earlier lines
+    (a note source removed with its nodes is extracted again when re-imported)."""
+    result: list[CoverageRecord] = []
     for record in _read_jsonl(_file(vault_path, "coverage.jsonl")):
+        if record.get("reset"):
+            result = [c for c in result if c.session_id != record.get("session_id")]
+            continue
         try:
             result.append(CoverageRecord.model_validate(record))
         except ValidationError:
             continue
     return result
+
+
+def load_sources(vault_path: Path) -> dict[str, SourceRecord]:
+    """Note sources registered for the graph (``sources.jsonl``), deleted ones flagged."""
+    return fold_sources(_read_jsonl(_file(vault_path, "sources.jsonl")))
 
 
 def load_positions(vault_path: Path) -> dict[str, dict[str, float]]:

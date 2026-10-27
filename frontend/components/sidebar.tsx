@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
+import { decodeJobFiles, notesText } from "@/lib/notes-import";
 import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
 import {
   filterByMode,
@@ -994,6 +995,24 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                           )}
                         </div>
                       </div>
+                      {job.kind === "notes_import" && (
+                        <ul className="flex flex-col gap-0.5 pl-1.5 border-l border-border">
+                          {decodeJobFiles(job).map((f) => (
+                            <li key={f.source_id ?? f.filename} className="flex items-center justify-between gap-1 text-[9.5px]">
+                              <span className="truncate text-muted-foreground" title={f.path ?? f.filename}>
+                                {f.title}
+                              </span>
+                              <span
+                                className={`shrink-0 ${
+                                  f.status === "failed" ? "text-danger" : f.status === "partial" || f.status === "running" ? "text-warning" : "text-muted-foreground"
+                                }`}
+                              >
+                                {notesText(locale).status(f.status)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       {err && canRetry && (
                         <p className="text-[9.5px] text-danger break-words line-clamp-3" title={err}>
                           {err}

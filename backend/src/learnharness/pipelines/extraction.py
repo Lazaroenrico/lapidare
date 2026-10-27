@@ -17,9 +17,10 @@ There is no fallback: an engine failure propagates to the job owner (job ``faile
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
@@ -42,10 +43,12 @@ from learnharness.core.graph_merge import (
     exact_match,
     plan_merge,
 )
+from learnharness.core.note_sources import citation_target, is_source_id
 from learnharness.vault.graph_store import (
     append_records,
     load_graph_chains,
     load_nodes,
+    load_sources,
     note_link,
     render_concept_block,
     sync_concept_note,
@@ -103,6 +106,19 @@ Answer with one entry per new proposition: {"key": <its key>, "link_to": <candid
 id or null>}. Use only the candidate ids you were given."""
 
 
+NOTES_PREAMBLE = """The batch below is NOT a tutoring conversation: it is a note the learner wrote or
+imported into their vault (study notes, a summary, a document). Read every rule that
+mentions the tutor or a TEACHER message as applying to the NOTE blocks: the id in
+brackets after NOTE is the "message_id" of the block a proposition comes from.
+
+Notes are often terse: bullet lists, fragments, formulas, headings that carry meaning.
+Expand them into self-contained statements only as far as the note itself supports.
+Skip to-do items, open questions, reminders, links lists and metadata. A note may be
+wrong: record only statements that are true; never record an error as a fact.
+
+"""
+
+
 def _language_line(language: str) -> str:
     return f"Write every name, alias and statement in {_LANGUAGE_NAMES.get(language, language)}."
 
@@ -118,6 +134,21 @@ def render_extractor_prompt(
         f"Session topic: {session_title}\n{_language_line(language)}\n\n"
         f"GRAPH SO FAR (this session; reuse these ids):\n{known}\n\nChains so far:\n{chains}\n\n"
         f"BATCH:\n{messages}"
+    )
+
+
+def render_notes_prompt(
+    note_title: str, batch: list[BatchMessage], source_nodes: list[PropositionNode],
+    source_chains: list[str], language: str,
+) -> str:
+    """Extractor input for a vault note: same contract, ``NOTE [slice id]`` blocks."""
+    known = "\n".join(f"[{n.id}] {n.name}: {n.statement}" for n in source_nodes) or "(empty)"
+    chains = "\n".join(source_chains) or "(none)"
+    blocks = "\n\n".join(f"NOTE [{m.message_id}]\n{m.content}" for m in batch)
+    return (
+        f"Note: {note_title}\n{_language_line(language)}\n\n"
+        f"GRAPH SO FAR (from this note; reuse these ids):\n{known}\n\nChains so far:\n{chains}\n\n"
+        f"BATCH:\n{blocks}"
     )
 
 
@@ -139,6 +170,8 @@ class ExtractionState(TypedDict, total=False):
     session_id: str
     session_title: str
     language: str
+    # "session" (teacher prose of a TEACH session) or "notes" (a vault note, Fase 16).
+    origin: str
     batch: list[dict[str, Any]]
     extraction: dict[str, Any]
     audit: dict[str, Any]
@@ -152,6 +185,16 @@ def _now() -> str:
 
 def _make_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
+
+
+def _merge_lock(config: RunnableConfig | None) -> AbstractAsyncContextManager[Any]:
+    """The graph lock for the read-then-append steps, when the caller does not hold it.
+
+    Session extraction holds ``GraphService.lock`` for the whole run; note imports run
+    several extractors in parallel and only serialize the auditor and the merger.
+    """
+    lock = (config or {}).get("configurable", {}).get("merge_lock")
+    return lock if isinstance(lock, asyncio.Lock) else nullcontext()
 
 
 def _runtime(config: RunnableConfig | None) -> tuple[Any, Any]:
@@ -190,14 +233,25 @@ async def extractor_node(state: ExtractionState, config: RunnableConfig) -> dict
     vault = Path(state["vault_path"])
     batch = [BatchMessage.model_validate(m) for m in state.get("batch", [])]
     session_nodes, session_chains = _session_slice(load_nodes(vault), vault, state["session_id"])
-    prompt = render_extractor_prompt(state.get("session_title", ""), batch, session_nodes,
+    if state.get("origin") == "notes":
+        prompt = render_notes_prompt(state.get("session_title", ""), batch, session_nodes,
                                      session_chains, state.get("language", "pt-BR"))
+        system = NOTES_PREAMBLE + EXTRACTOR_SYSTEM
+    else:
+        prompt = render_extractor_prompt(state.get("session_title", ""), batch, session_nodes,
+                                         session_chains, state.get("language", "pt-BR"))
+        system = EXTRACTOR_SYSTEM
     result = await engine.run_structured(prompt=prompt, schema=ExtractionPayload, slot=slot,
-                                         system_instruction=EXTRACTOR_SYSTEM)
+                                         system_instruction=system)
     return {"extraction": ExtractionPayload.model_validate(result).model_dump()}
 
 
 async def auditor_node(state: ExtractionState, config: RunnableConfig) -> dict[str, Any]:
+    async with _merge_lock(config):
+        return await _audit(state, config)
+
+
+async def _audit(state: ExtractionState, config: RunnableConfig) -> dict[str, Any]:
     vault = Path(state["vault_path"])
     nodes = load_nodes(vault)
     extraction = ExtractionPayload.model_validate(state.get("extraction") or {})
@@ -233,6 +287,7 @@ def refresh_notes(vault: Path, node_ids: list[str], language: str) -> tuple[list
     """
     nodes = load_nodes(vault)
     chains = load_graph_chains(vault, set(nodes))
+    sources = load_sources(vault)
     sessions: dict[str, Any] = {}
     written: list[str] = []
     errors: list[str] = []
@@ -243,8 +298,14 @@ def refresh_notes(vault: Path, node_ids: list[str], language: str) -> tuple[list
         groups = [[note_link(nodes[p].vault_rel_path).rsplit("/", 1)[-1] if nodes[p].vault_rel_path
                    else nodes[p].name for p in c.premises]
                   for c in chains if c.conclusion == node_id]
-        session_ids = list(dict.fromkeys(p.session_id for p in node.provenance))
+        session_ids = list(dict.fromkeys(p.session_id for p in node.provenance
+                                         if not is_source_id(p.session_id)))
         lessons = []
+        for p in node.provenance:
+            # Fase 16: a note source is cited by its paragraph anchor ([[nota#^pN]]).
+            source = sources.get(p.session_id) if is_source_id(p.session_id) else None
+            if source is not None:
+                lessons.append(citation_target(source.path, p.message_id))
         for sid in session_ids:
             if sid not in sessions:
                 sessions[sid] = load_session(vault, sid)
@@ -266,16 +327,28 @@ def refresh_notes(vault: Path, node_ids: list[str], language: str) -> tuple[list
     return written, errors
 
 
-async def merger_node(state: ExtractionState) -> dict[str, Any]:
+async def merger_node(state: ExtractionState, config: RunnableConfig) -> dict[str, Any]:
+    async with _merge_lock(config):
+        return _merge(state)
+
+
+def _merge(state: ExtractionState) -> dict[str, Any]:
     vault = Path(state["vault_path"])
     nodes = load_nodes(vault)
     chains = load_graph_chains(vault, set(nodes))
     batch = [BatchMessage.model_validate(m) for m in state.get("batch", [])]
-    plan = plan_merge(
-        ExtractionPayload.model_validate(state.get("extraction") or {}),
-        AuditPayload.model_validate(state.get("audit") or {}),
-        nodes, chains, state["session_id"], batch, _now(), _make_id,
-    )
+    extraction = ExtractionPayload.model_validate(state.get("extraction") or {})
+    audit = AuditPayload.model_validate(state.get("audit") or {})
+    # Another merge may have landed since the audit (parallel note imports): a proposition
+    # left unlinked that now has an exact-name twin links to it instead of duplicating.
+    linked = {link.key for link in audit.links if link.link_to}
+    for prop in extraction.propositions:
+        if prop.key not in linked and prop.key not in nodes:
+            twin = exact_match(prop.name, prop.aliases, nodes)
+            if twin:
+                audit.links = [link for link in audit.links if link.key != prop.key]
+                audit.links.append(AuditLink(key=prop.key, link_to=twin))
+    plan = plan_merge(extraction, audit, nodes, chains, state["session_id"], batch, _now(), _make_id)
     append_records(vault, "nodes.jsonl", [n.model_dump(mode="json", exclude={"note_created"}) for n in plan.new_nodes])
     append_records(vault, "nodes.jsonl", plan.link_appends)
     append_records(vault, "chains.jsonl", [c.model_dump(mode="json") for c in plan.new_chains])
@@ -323,6 +396,8 @@ async def run_extraction_pipeline(
     session_title: str = "",
     language: str = "pt-BR",
     on_progress: Callable[[str, float], None] | None = None,
+    origin: str = "session",
+    merge_lock: asyncio.Lock | None = None,
 ) -> dict[str, Any]:
     """Run Extractor -> Auditor -> Merger over one batch; provider errors propagate."""
     if engine is None:
@@ -334,12 +409,14 @@ async def run_extraction_pipeline(
     initial: ExtractionState = {
         "vault_path": str(vault_path), "session_id": session_id, "session_title": session_title,
         "language": language, "batch": [m.model_dump() for m in batch], "status": "running",
+        "origin": origin,
     }
     async with _get_checkpointer(vault_path) as checkpointer:
         graph = build_extraction_graph(checkpointer)
         # A unique thread per run: a finished checkpoint is never resumed instead of re-executed.
         final = await graph.ainvoke(initial, config={"configurable": {
             "thread_id": f"extraction-{session_id}-{run_id}", "engine": engine, "slot": slot,
+            "merge_lock": merge_lock,
         }})
     if final.get("status") != "completed":
         raise RuntimeError("Extraction graph finished without completing the merge")
@@ -351,6 +428,7 @@ async def run_extraction_pipeline(
 __all__ = [
     "AUDITOR_SYSTEM",
     "EXTRACTOR_SYSTEM",
+    "NOTES_PREAMBLE",
     "ExtractionState",
     "auditor_node",
     "build_extraction_graph",
@@ -359,5 +437,6 @@ __all__ = [
     "refresh_notes",
     "render_auditor_prompt",
     "render_extractor_prompt",
+    "render_notes_prompt",
     "run_extraction_pipeline",
 ]

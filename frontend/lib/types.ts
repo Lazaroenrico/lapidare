@@ -384,6 +384,16 @@ export interface NodeSessionRef {
   message_id: string | null;
 }
 
+/** Fase 16: a vault note the node was extracted from (`paragraph` = slice id, `p3` or `s2`). */
+export interface NodeSourceRef {
+  source_id: string;
+  title: string;
+  path: string;
+  paragraph: string | null;
+  /** The source was removed from the graph (the note itself still exists). */
+  deleted: boolean;
+}
+
 /**
  * Graph node. Fase 8B propositions carry `statement`/`sessions`; legacy concept
  * notes may still carry `status`/`depends_on`/`file_path`.
@@ -399,6 +409,8 @@ export interface ConceptNode {
   depends_on: string[];
   aliases: string[];
   sessions: NodeSessionRef[];
+  /** Fase 16: vault notes this node came from. */
+  sources: NodeSourceRef[];
   cluster?: string;
   x?: number;
   y?: number;
@@ -431,6 +443,8 @@ export interface GraphCluster {
   label: string;
   kind: GraphClusterKind;
   size: number;
+  /** Vault-relative note path of a `notes` cluster (Fase 16). */
+  path?: string;
 }
 
 /** Track item not yet completed, rendered as a ghost node when ⇶ Roteiro is on. */
@@ -575,6 +589,10 @@ export interface BackgroundJobStatus {
   result_id?: string | null;
   created_at?: string;
   updated_at?: string;
+  /** What the job is doing now (e.g. "2/5" for `notes_import`). */
+  activity?: string | null;
+  /** `notes_import`: one live status per file (decoded by lib/notes-import `decodeJobFiles`). */
+  files?: unknown[];
 }
 
 // --- 8. MCP Catalog & Sources ---

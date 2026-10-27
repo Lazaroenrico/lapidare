@@ -15,6 +15,7 @@ import type {
   NodeSessionRef,
   RoadmapItem,
 } from "./types";
+import { decodeNodeSources } from "./notes-import";
 
 type Raw = Record<string, unknown>;
 
@@ -64,6 +65,7 @@ export function decodeNode(raw: unknown): ConceptNode | null {
     depends_on: strList(raw.depends_on),
     aliases: strList(raw.aliases),
     sessions: decodeSessions(raw.sessions),
+    sources: decodeNodeSources(raw.sources),
     cluster: str(raw.cluster) || undefined,
     x: num(raw.x),
     y: num(raw.y),
@@ -149,7 +151,8 @@ export function deriveClusters(rawClusters: unknown, nodes: ConceptNode[]): Grap
       const id = str(c.id);
       if (!id) continue;
       const kind = CLUSTER_KINDS.find((k) => k === c.kind) ?? "session";
-      fromServer.push({ id, label: str(c.label) || id, kind, size: num(c.size) ?? counts.get(id) ?? 0 });
+      const path = str(c.path);
+      fromServer.push({ id, label: str(c.label) || id, kind, size: num(c.size) ?? counts.get(id) ?? 0, ...(path ? { path } : {}) });
     }
   }
   if (fromServer.length > 0) return fromServer;
