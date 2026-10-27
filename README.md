@@ -40,22 +40,39 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 
 ---
 
-## Baixando o App (Linux)
+## Baixando o App
 
-Baixe `Lapidare-<versão>-x86_64.AppImage` na página de *Releases*, torne-o executável e abra:
+Baixe o pacote da sua plataforma na página de *Releases*. Todos já trazem o backend e a interface: ninguém precisa instalar Python, Node ou `uv`. Ainda é preciso **um conector Google**: `agy`, `gemini` ou uma `GEMINI_API_KEY` em *Setup*.
+
+### Linux (x86_64)
+
+- **AppImage** (`Lapidare-<versão>-x86_64.AppImage`), qualquer distro:
+
+  ```bash
+  chmod +x Lapidare-*-x86_64.AppImage
+  ./Lapidare-*-x86_64.AppImage
+  ```
+
+  Na primeira execução ele se integra ao menu de apps (ícone e atalho em `~/.local/share`). Não precisa de `libfuse2`. O app se atualiza sozinho quando sai uma versão nova.
+- **Debian/Ubuntu**: `sudo apt install ./Lapidare-<versão>-amd64.deb`
+- **Fedora/RHEL/openSUSE**: `sudo dnf install ./Lapidare-<versão>-x86_64.rpm`
+- **Ubuntu 24.04+**: se a janela não abrir por causa do sandbox do Chromium (restrição do AppArmor a *user namespaces*), rode com `--no-sandbox`.
+
+### macOS (Apple Silicon e Intel)
+
+Baixe `Lapidare-<versão>-mac-arm64.dmg` (M1 ou mais novo) ou `Lapidare-<versão>-mac-x64.dmg` (Intel), abra e arraste o Lapidare para *Aplicativos*. O app **não é assinado** (sem conta de desenvolvedor Apple), então o Gatekeeper bloqueia a primeira abertura: clique com o botão direito no app, escolha **Abrir** e confirme. Ou, no Terminal:
 
 ```bash
-chmod +x Lapidare-*-x86_64.AppImage
-./Lapidare-*-x86_64.AppImage
+xattr -dr com.apple.quarantine /Applications/Lapidare.app
 ```
 
-O AppImage já traz o backend e a interface. Ninguém precisa instalar Python, Node ou `uv`. Ainda é preciso **um conector Google**: `agy`, `gemini` ou uma `GEMINI_API_KEY` em *Setup*. O app se atualiza sozinho quando sai uma versão nova.
+No Mac não há atualização automática: baixe o `.dmg` novo quando sair.
 
-- **Sem FUSE** (algumas distros novas não trazem `libfuse2`): rode com `--appimage-extract-and-run`.
-- **Ubuntu 24.04+**: se a janela não abrir por causa do sandbox do Chromium (restrição do AppArmor a *user namespaces*), rode com `--no-sandbox`.
-- **Logs**: `~/.config/Lapidare/logs/main.log`. Seus dados continuam no Vault. Antes de cada atualização, o app guarda uma cópia do banco em `.harness/backups/`.
+### Geral
 
-Para gerar o AppImage a partir do código: `make desktop` (detalhes em [`docs/ARCHITECTURE.md` §15.1](docs/ARCHITECTURE.md)).
+- **Logs**: `~/.config/Lapidare/logs/main.log` (no Mac, `~/Library/Application Support/Lapidare/logs/main.log`). Seus dados continuam no Vault. Antes de cada atualização, o app guarda uma cópia do banco em `.harness/backups/`.
+
+Para gerar os pacotes a partir do código: `make desktop` (AppImage no Linux, `.dmg` da sua arquitetura no Mac; `make desktop TARGETS="AppImage deb rpm"` para os três do Linux, o rpm exige `rpmbuild`) e `make desktop-install` para pôr o AppImage local no menu de apps. Detalhes em [`docs/ARCHITECTURE.md` §15.1](docs/ARCHITECTURE.md).
 
 ## Rodando Localmente
 

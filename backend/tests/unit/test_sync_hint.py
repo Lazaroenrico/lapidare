@@ -35,3 +35,10 @@ def test_warning_for_sync_folder_and_network_mount(tmp_path):
     assert "network" in (vault_location_warning(local, mounts) or "")
     mounts.write_text("/dev/sda1 / ext4 rw 0 0\n")
     assert vault_location_warning(local, mounts) is None
+
+
+def test_missing_proc_mounts_is_not_a_warning(tmp_path):
+    # macOS has no /proc/self/mounts: the check must degrade to "no warning".
+    local = tmp_path / "vault"
+    local.mkdir()
+    assert vault_location_warning(local, tmp_path / "does-not-exist") is None

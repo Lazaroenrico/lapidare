@@ -23,9 +23,13 @@ mkdir -p "$(dirname "$TARGET")" "$(dirname "$ICON")" "$(dirname "$ENTRY")"
 install -m 755 "${built[0]}" "$TARGET"
 install -m 644 "$ROOT/desktop/build-resources/icon.png" "$ICON"
 
-# Sem libfuse2 (comum em distros novas) o AppImage nao monta; extrair e rodar funciona sempre.
+# O runtime de AppImage novo (toolsets.appimage 1.0.3) monta sem libfuse2. Um build antigo,
+# que ainda depende dela, cai no modo extrair-e-rodar quando nao consegue montar.
 args=""
-ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2' || args=" --appimage-extract-and-run"
+"$TARGET" --appimage-mount >/dev/null 2>&1 &
+probe=$!; sleep 2
+if kill -0 "$probe" 2>/dev/null; then kill "$probe" 2>/dev/null; wait "$probe" 2>/dev/null || true
+else wait "$probe" 2>/dev/null || args=" --appimage-extract-and-run"; fi
 
 cat >"$ENTRY" <<DESKTOP
 [Desktop Entry]

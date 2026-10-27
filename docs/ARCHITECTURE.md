@@ -931,9 +931,9 @@ Na época desta revisão:
 
 Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
 
-### 15.1 Distribuição desktop (AppImage)
+### 15.1 Distribuição desktop (Linux e macOS)
 
-`make desktop` gera `desktop/dist/Lapidare-<versão>-x86_64.AppImage`: Electron como casca e um CPython 3.12 relocável ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) rodando o backend, que também serve o `next export`. Ninguém precisa ter Python, Node ou `uv` instalado. A inferência continua nos conectores Google (`agy`/`gemini` detectados no sistema; `google-genai` embutido).
+`make desktop` gera os pacotes em `desktop/dist/`: Linux x64 em **AppImage** (padrão), **.deb** e **.rpm** (`TARGETS="AppImage deb rpm"`; o rpm exige `rpmbuild` na máquina), e macOS em **.dmg** da arquitetura da máquina (`Lapidare-<versão>-mac-arm64.dmg` ou `-mac-x64.dmg`). O Electron como casca e um CPython 3.12 relocável ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) rodando o backend, que também serve o `next export`. Ninguém precisa ter Python, Node ou `uv` instalado. A inferência continua nos conectores Google (`agy`/`gemini` detectados no sistema; `google-genai` embutido).
 
 ```
 resources/
@@ -985,14 +985,22 @@ Ao sair, manda `SIGTERM` ao grupo e `SIGKILL` 6 s depois.
 **Build.** `make desktop`:
 
 1. `desktop/scripts/build-web.sh`: export do frontend;
-2. `desktop/scripts/build-python.sh`: CPython com URL e sha256 fixos, `uv export --frozen` + `pip install --require-hashes`, `compileall`;
+2. `desktop/scripts/build-python.sh`: CPython com URL e sha256 fixos por plataforma (`x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`; escolhido por `uname`, ou `PY_TARGET` explícito), `uv export --frozen` + `pip install --require-hashes` (roda na própria máquina de build, então as wheels são as do alvo; não há build cruzado), `compileall`;
 3. `desktop/scripts/guard-payload.mjs`: falha se o bundle tiver `.env*`, `secrets.json`, `active-vault`, `.harness`/`.gemini`/`.agents`, `*.jsonl`, `*.sqlite` ou o `$HOME` do dev em texto;
 4. `desktop/scripts/smoke.mjs`: sobe o Python empacotado com um Vault descartável e testa as rotas;
 5. `electron-builder` (`desktop/electron-builder.yml`, fuses `runAsNode`/`NODE_OPTIONS`/inspect desligados, `onlyLoadAppFromAsar`).
 
-Ao final, o `make desktop` apaga a montagem intermediária (`dist/linux-unpacked`, `dist/__appImage-x64`, ~1,4 GB) e deixa só o AppImage; a CI a mantém com `KEEP_UNPACKED=1`. `make desktop-clean` apaga todas as saídas: `desktop/build`, `desktop/dist`, o CPython baixado (`desktop/.cache`), `frontend/out` e o cache do Next (`frontend/.next/cache`).
+Ao final, o `make desktop` apaga a montagem intermediária (`dist/linux-unpacked`, `dist/__appImage-x64`, `dist/mac*`; ~1,4 GB) e deixa só os pacotes; a CI a mantém com `KEEP_UNPACKED=1` para o smoke. `make desktop-clean` apaga todas as saídas: `desktop/build`, `desktop/dist`, o CPython baixado (`desktop/.cache`), `frontend/out` e o cache do Next (`frontend/.next/cache`).
 
-**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em `ubuntu-22.04`. Depois faz o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`) e o backend em `ubuntu:22.04` e `debian:12`. Por fim sobe para um release **draft** e confere os assets. Publicar o draft é manual. O auto-update (`electron-updater`, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
+**Formatos.**
+
+- **AppImage** usa o runtime estático novo (`toolsets.appimage: "1.0.3"`, runtime 20251108): monta com FUSE 3 e não exige `libfuse2`. Na primeira execução ele mesmo se integra ao menu de apps (lê `resources/icon.png`; ver `desktop/integration.cjs`). `make desktop-install` faz a mesma integração a partir do build local.
+- **.deb / .rpm** instalam em `/opt/Lapidare` com `lapidare.desktop` (`Categories=Education`, `StartupWMClass=lapidare`) e ícone em `hicolor`; o pacote se chama `lapidare`. Mantenedor e URL vêm do `author`/`homepage` do `desktop/package.json`.
+- **.dmg** (macOS arm64 e x64) **sem assinatura nem notarização** (`identity: null`, `hardenedRuntime: false`); o Gatekeeper avisa na primeira abertura. Sem auto-update no Mac. O ícone é gerado de `desktop/build-resources/icon-1024.png` (a partir de `docs/assets/lapidare_logo.svg`).
+
+**Portabilidade do backend.** O aviso de Vault em pasta sincronizada lê `/proc/self/mounts`; no macOS o arquivo não existe e a checagem de rede/FUSE simplesmente não avisa (`vault/sync_warning.py`, coberto em `tests/unit/test_sync_hint.py`). `flock` e `start_new_session` funcionam igual no macOS.
+
+**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em paralelo: Linux em `ubuntu-22.04` (AppImage, deb e rpm), macOS em `macos-14` (arm64) e `macos-15-intel` (x64). No Linux há ainda o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`), o backend em `ubuntu:22.04` e `debian:12`, a instalação do `.deb` nessas imagens e do `.rpm` no Fedora. Um único job `publish` cria o release **draft** e sobe os artefatos (sem corrida entre runners); `verify` confere a lista exata de assets (AppImage, deb, rpm, `latest-linux.yml`, dois dmg). Publicar o draft é manual. O auto-update (`electron-updater`, só Linux/AppImage, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
 
 ---
 

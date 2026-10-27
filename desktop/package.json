@@ -7,7 +7,8 @@
   "main": "main.cjs",
   "private": true,
   "license": "UNLICENSED",
-  "author": "Lazaroenrico",
+  "author": "Lazaro Enrico <lazaroenrico@gmail.com>",
+  "homepage": "https://github.com/Lazaroenrico/lapidare",
   "scripts": {
     "test": "node --test tests/",
     "dist": "electron-builder --linux AppImage --x64"
