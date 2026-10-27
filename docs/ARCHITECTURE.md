@@ -312,8 +312,9 @@ Atributos que o runner de sessão consulta:
 - **Gate** (`agy_gate.decide`):
   - política `harness`: permite só `call_mcp_tool` com `ServerName == "harness"`, o terminador `finish` (saída estruturada) e a leitura dos schemas MCP em cache; nega o resto (shell, arquivos, navegador, outros MCPs globais do usuário);
   - política `research`: permite só `search_web`, `read_url_content` e `finish`, num workspace temporário **sem** servidor MCP.
+  - política `vision`: permite só `read_file`/`view_file` dentro do workspace descartável, mais `finish`. Usada por `review_drawing_multimodal`: o PNG do desenho é gravado no workspace e o agy o lê como imagem. A revisão falha com erro claro se o agy nunca abrir a imagem.
 - **Permissão global `mcp(harness/*)`** (`services/agy_permissions.py`): o agy headless recusa sem aviso chamadas MCP que pediriam confirmação, e só lê regras do arquivo **global** `~/.gemini/antigravity-cli/settings.json`. O harness acrescenta essa única regra estreita, **só com consentimento explícito** (`POST /api/setup/agy-permission`), com backup datado e escrita atômica. Sem ela, um turno com slot forte agy falha com uma instrução clara ("Conceda em Configurações → Conectores"). Status: `GET /api/setup/agy-permission`.
-- **Chamadas avulsas:** `run_structured` usa `--json-schema` num workspace temporário, nunca no cwd do backend. `research` exige que `search_web`/`read_url_content` tenham de fato rodado.
+- **Chamadas avulsas:** `run_structured` usa `--json-schema` num workspace temporário, nunca no cwd do backend. `research` exige que `search_web`/`read_url_content` tenham de fato rodado. Com `--json-schema`, o agy às vezes escreve o JSON completo no texto e chama `finish` com um resumo; `pick_structured` (`engines/gemini_engine.py`) prefere o bloco JSON do texto quando ele valida e é mais completo.
 
 ### 5.3 `GeminiCliAcpEngine` (`gemini --acp`)
 
@@ -615,7 +616,7 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
 | `DELETE /api/tracks/{id}` | Remove do config; sessões ficam com `track_id` órfão; nada no Vault é apagado |
 | `POST /api/tracks/{id}/regenerate` | Refaz a fila, preservando o `completed` de itens com o mesmo título |
 
-- **Geração** (`track_gen`): `build_curriculum_outline` lê primeiro os documentos de estrutura (README, ROADMAP, `LEARNING.md`, `learning-paths/`) e depois cada lição em ordem natural. Quando o orçamento de caracteres aperta, reduz o detalhe em vez de cortar o repositório. A resposta é validada: ids, pré-requisitos e `source_ref` dentro do repositório.
+- **Geração** (`track_gen`): `build_curriculum_outline` lê primeiro os documentos de estrutura (README, ROADMAP, `LEARNING.md`, `learning-paths/`) e depois cada lição em ordem natural. Quando o orçamento de caracteres aperta, reduz o detalhe em vez de cortar o repositório. A resposta é validada: ids, pré-requisitos e `source_ref` dentro do repositório. A geração mora em `services/track_generation.py`: o prompt pede um item por tópico, e uma ementa que lista 3 ou mais tópicos mas volta com menos de 3 itens é refeita uma vez com correção; se colapsar de novo, o job falha com mensagem clara.
 - **Nota no Vault:** `_save` grava o config e reescreve **só** o bloco gerenciado do `00 Mapa.md`, com uma seção por trilha não arquivada (checklist e marca da ativa). Emite `vault:changed` e `config:updated`.
 - **`complete(track_id, item_id)`** marca o passo concluído. **`foundation`** (ferramenta `track_foundation`) insere um pré-requisito na trilha da sessão.
 
