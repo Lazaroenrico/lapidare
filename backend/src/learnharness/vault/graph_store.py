@@ -93,6 +93,24 @@ def raw_chain_records(vault_path: Path) -> list[dict[str, Any]]:
     return _read_jsonl(_file(vault_path, "chains.jsonl"))
 
 
+def raw_node_records(vault_path: Path) -> list[dict[str, Any]]:
+    return _read_jsonl(_file(vault_path, "nodes.jsonl"))
+
+
+def append_session_unlink(vault_path: Path, session_id: str, plan: dict[str, list[str]]) -> None:
+    """Append the unlink lines of ``core.graph_merge.plan_unlink`` and its tombstones.
+
+    ``{id, unlink_session}`` drops the session from that record's provenance; nodes and
+    chains left without provenance get ``{id, deleted: true}``. Nothing is rewritten.
+    """
+    append_records(vault_path, "nodes.jsonl",
+                   [{"id": i, "unlink_session": session_id} for i in plan["unlink_nodes"]]
+                   + [{"id": i, "deleted": True} for i in plan["dead_nodes"]])
+    append_records(vault_path, "chains.jsonl",
+                   [{"id": i, "unlink_session": session_id} for i in plan["unlink_chains"]]
+                   + [{"id": i, "deleted": True} for i in plan["dead_chains"]])
+
+
 def load_coverage(vault_path: Path) -> list[CoverageRecord]:
     result = []
     for record in _read_jsonl(_file(vault_path, "coverage.jsonl")):

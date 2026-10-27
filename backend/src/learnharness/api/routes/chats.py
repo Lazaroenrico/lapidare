@@ -99,6 +99,9 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
         "messages": [{**m.model_dump(mode="json"), "timestamp": m.created_at} for m in session.messages],
         # Fase 9: model_solution only appears once a problem is concluded.
         "practice": public_practice(session),
+        # Fase 12 sidebar: a question waits for the learner / a PRACTICE problem is open.
+        "pending": pending_quiz is not None,
+        "problem_open": session.practice.active_problem_id is not None,
     })
     statuses = derive_plan_statuses(session.plan.nodes, _question_node_ids(session, pending_quiz))
     data["plan"]["nodes"] = [{**n.model_dump(mode="json"), "status": statuses[n.id], "title": n.label, "dependencies": n.depends_on, "summary": n.four_dimensions.said if n.four_dimensions else ""} for n in session.plan.nodes]
@@ -131,6 +134,60 @@ async def create_chat(payload: CreateChatPayload, request: Request):
 async def get_chat(chat_id: str, request: Request):
     state = get_app_state(request.app)
     return _with_slot(state, state.sessions.get(chat_id))
+
+
+class RenamePayload(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+@chats_router.put("/{chat_id}")
+async def rename_chat(chat_id: str, payload: RenamePayload, request: Request):
+    """Rename the session; the lesson note keeps its path (only managed title fields change)."""
+    state = get_app_state(request.app)
+    session = await state.sessions.rename(chat_id, payload.title)
+    return _with_slot(state, session)
+
+
+@chats_router.delete("/{chat_id}")
+async def delete_chat(chat_id: str, request: Request,
+                      mode: Literal["preserve-graph", "delete-nodes"] = "preserve-graph"):
+    """Move the session to ``.harness/trash/`` (the Aulas/ note stays); 409 while a turn runs."""
+    state = get_app_state(request.app)
+    return await state.sessions.delete(chat_id, mode)
+
+
+@chats_router.post("/{chat_id}/abort")
+async def abort_chat(chat_id: str, request: Request):
+    """Cancel the running turn (-> interrupted) and dismiss a pending question."""
+    state = get_app_state(request.app)
+    session = await state.sessions.abort(chat_id)
+    return {"session": _serialize_session(session)}
+
+
+@chats_router.post("/{chat_id}/questions/dismiss")
+async def dismiss_question(chat_id: str, request: Request):
+    """Close the pending question without answering it (no grade, no quiz-log line)."""
+    state = get_app_state(request.app)
+    result = await state.sessions.dismiss_question(chat_id)
+    return {"answer": result.model_dump(mode="json"), "session": _serialize_session(state.sessions.get(chat_id))}
+
+
+@chats_router.get("/{chat_id}/markdown")
+async def export_chat_markdown(chat_id: str, request: Request):
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    from learnharness.core.session_export import export_filename, render_session_markdown
+
+    state = get_app_state(request.app)
+    session = state.sessions.get(chat_id)
+    body = render_session_markdown(session, state.get_config().language)
+    filename = export_filename(session.title)
+    fallback = filename.encode("ascii", "replace").decode("ascii").replace("?", "_").replace('"', "_")
+    disposition = f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
+    return Response(content=body, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": disposition})
 
 
 @chats_router.put("/{chat_id}/settings")

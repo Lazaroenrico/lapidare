@@ -16,6 +16,7 @@ from learnharness.core.calibration import (
     is_mastery_evidence,
     submission_matches,
 )
+from learnharness.core.compaction import split_history, summary_block
 from learnharness.core.contracts.config import EngineKind
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import (
@@ -99,6 +100,26 @@ class SessionConflict(ValueError):
     """An operation conflicts with the authoritative persisted session."""
 
 
+class SessionNotFound(KeyError, FileNotFoundError):
+    """No session with that id: a ``KeyError`` for callers, a 404 for the HTTP layer."""
+
+    def __str__(self) -> str:
+        return f"Session '{self.args[0] if self.args else ''}' not found"
+
+
+# What the model receives when the learner closes a question without answering (Fase 12).
+DISMISSED_DIRECTIVE = (
+    "The learner dismissed this question without answering. Do not ask it again (not even "
+    "reworded); continue the lesson from here."
+)
+
+
+def dismissed_answer(result: CalibrationResult) -> dict[str, Any]:
+    """Compact tool result for a dismissed question (no grade, no answer key)."""
+    return {"question_id": result.quiz_id, "kind": result.kind, "dismissed": True,
+            "directive": DISMISSED_DIRECTIVE}
+
+
 def opening_request(session):
     """First-turn request: the session title IS what the learner asked for."""
     if session.mode == "PRACTICE":
@@ -147,7 +168,7 @@ class SessionService:
     def get(self, session_id: str) -> SessionRecord:
         session = load_session(self.state.vault_path, session_id)
         if session is None:
-            raise KeyError(session_id)
+            raise SessionNotFound(session_id)
         if session.pending_quiz_id and not session.pending_quiz:
             session.recovery_required = True
         self._normalize_phase(session)
@@ -338,7 +359,7 @@ class SessionService:
         result = self.get(session_id).answers.get(quiz.quiz_id)
         if result is None:
             raise SessionConflict("The question was closed without an answer")
-        return compact_answer(result)
+        return dismissed_answer(result) if result.dismissed else compact_answer(result)
 
     async def open_quiz(self, session_id: str, quiz: QuizPayload, *, replace_pending: bool = False) -> QuizPayload:
         """Persist ``quiz`` as pending and open the dock without awaiting the answer.
@@ -417,6 +438,8 @@ class SessionService:
                     "That question has not been answered yet." if pending
                     else f"Unknown question_id {question_id!r}; grade the question_id returned by explain/recall."
                 )
+            if result.dismissed:
+                raise SessionConflict("The learner dismissed that question; there is no answer to grade.")
             if result.kind != "explain":
                 raise SessionConflict("grade_recall only grades explain/recall answers; quiz answers are graded automatically.")
             if result.grade is not None:
@@ -542,7 +565,7 @@ class SessionService:
         existing = {(q.session_id, q.quiz_id) for q in load_quiz_logs(self.state.vault_path)}
         for answer in session.answers.values():
             # Only graded answers are calibration evidence (ask / ungraded explain are not).
-            if answer.correct is not None and (answer.session_id, answer.quiz_id) not in existing:
+            if answer.correct is not None and not answer.dismissed and (answer.session_id, answer.quiz_id) not in existing:
                 append_quiz_log(self.state.vault_path, answer)
 
     def _recover_answer_modes(self, session: SessionRecord) -> None:
@@ -617,6 +640,112 @@ class SessionService:
         if idle:
             self.schedule(session_id)
         return message
+
+    # ------------------------------------------------------------------ session controls (Fase 12)
+
+    async def dismiss_question(self, session_id: str, *, resume: bool = True) -> CalibrationResult:
+        """Close the pending question without an answer.
+
+        The answer is stored as ``dismissed`` (ungraded, never in the quiz-log) and a
+        blocked ``pose`` returns ``dismissed_answer``. With ``resume`` and no turn running,
+        a turn is scheduled so the model hears about the dismissal (like ``answer``).
+        """
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            quiz = session.pending_quiz
+            if quiz is None:
+                raise SessionConflict("There is no pending question to dismiss")
+            result = CalibrationResult(
+                quiz_id=quiz.quiz_id, session_id=session_id, topic=quiz.topic, node_id=quiz.node_id,
+                kind=quiz.kind, mode=quiz.mode, question=quiz.question, choices=quiz.choices,
+                timestamp=now(), dismissed=True, pedagogical_directive=DISMISSED_DIRECTIVE,
+            )
+            session.answers[quiz.quiz_id] = result
+            session.pending_quiz = None
+            session.pending_quiz_id = None
+            session.recovery_required = False
+            session.execution_status = "running" if self.is_running(session_id) else "idle"
+            session.messages.append(SessionMessage(
+                id=f"answer-{quiz.quiz_id}", role="user", created_at=now(), quiz_id=quiz.quiz_id,
+                content=json.dumps({"quiz": quiz.question, **dismissed_answer(result)}, ensure_ascii=False),
+            ))
+            self._derive_statuses(session)
+            self.save(session)
+            self.state.dock_registry.dismiss_dock(session_id, result)
+            self.state.sse_hub.broadcast(SseEventType.DOCK_RESOLVED, {"session_id": session_id})
+        if resume and not self.is_running(session_id) and session.phase != "completed":
+            self.schedule(session_id)
+        return result
+
+    async def abort(self, session_id: str) -> SessionRecord:
+        """Stop the running turn: cancel its task, close the persistent process, dismiss the question."""
+        session = self.get(session_id)
+        task = self.tasks.get(session_id)
+        running = task is not None and not task.done()
+        if running:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.streaming.pop(session_id, None)
+        if self.get(session_id).pending_quiz:  # Also resolves a pose blocked in an MCP request.
+            await self.dismiss_question(session_id, resume=False)
+        from learnharness.engines import close_engine_processes
+        try:
+            await close_engine_processes(session_id)
+        except Exception:
+            logger.warning("Could not close engine processes for %s", session_id, exc_info=True)
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if session.phase != "completed" and (running or session.execution_status in
+                                                  ("running", "queued", "waiting", "compacting")):
+                session.execution_status = "interrupted"
+                self.save(session)
+        return session
+
+    async def rename(self, session_id: str, title: str) -> SessionRecord:
+        """New title; the lesson note keeps its path, only its managed title fields change."""
+        title = title.strip()
+        if not 1 <= len(title) <= 200:
+            raise ValueError("The title must have between 1 and 200 characters")
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            if session.title != title:
+                session.title = title
+                self.save(session)
+                self._refresh_lesson_note(session)
+        return session
+
+    async def delete(self, session_id: str, mode: str = "preserve-graph") -> dict[str, Any]:
+        """Move the session JSONL to ``.harness/trash/``; the lesson note in the Vault stays.
+
+        ``delete-nodes`` also unlinks the session from the graph first (nodes and chains
+        that only came from it are tombstoned). Refused while a turn runs.
+        """
+        if mode not in ("preserve-graph", "delete-nodes"):
+            raise ValueError("mode must be 'preserve-graph' or 'delete-nodes'")
+        self.get(session_id)
+        if self.is_running(session_id):
+            raise SessionConflict("A turn is running; abort it before deleting the session")
+        graph = None
+        if mode == "delete-nodes":
+            graph = await self.state.graph.unlink_session(session_id)
+        async with self.lock(session_id):
+            if self.is_running(session_id):
+                raise SessionConflict("A turn is running; abort it before deleting the session")
+            source = safe_path(self.state.vault_path, f".harness/sessions/{safe_component(session_id)}.jsonl")
+            trash = safe_path(self.state.vault_path, ".harness/trash")
+            trash.mkdir(parents=True, exist_ok=True)
+            target = trash / source.name
+            if target.exists():
+                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                target = trash / f"{source.stem}.{stamp}.jsonl"
+            source.rename(target)
+        self.state.dock_registry.cancel_dock(session_id)
+        await self._release_runtime(session_id)
+        self.tasks.pop(session_id, None)
+        self.locks.pop(session_id, None)
+        self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "deleted": True})
+        return {"ok": True, "id": session_id, "mode": mode,
+                "trash_path": str(target.relative_to(self.state.vault_path)), "graph": graph}
 
     @staticmethod
     def _steers_due(session: SessionRecord) -> bool:
@@ -700,10 +829,18 @@ class SessionService:
             if practice and (material := self.state.practice.prompt_material(session)):  # Fase 9
                 system += "\n\n" + material
             handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
+            # Fase 12: after a compaction the model reads its summary plus the verbatim tail.
+            summary, tail = split_history(session.messages, session.compaction)
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
                 # with a compact history) and per turn only what is new.
                 history, prompt = self._persistent_turn(session, handoff=handoff, steers=steers)
+                if summary:
+                    # Rehydration of a fresh process (compose_prompt) gets the summary with
+                    # the instructions; its history is only the tail.
+                    tail_ids = {m.id for m in tail}
+                    history = [m for m in history if m.id in tail_ids]
+                    system += "\n\n" + summary_block(summary)
                 if session.prompt_phase is not None and session.prompt_phase != family:
                     # A live process still holds the previous phase's rules (prober -> teacher).
                     prompt = ("UPDATED INSTRUCTIONS (they replace your previous system instructions):\n"
@@ -714,7 +851,9 @@ class SessionService:
                     self.save(current)
                 stream = engine.stream_turn(prompt, session_id, history=history, slot=slot, tools=tools, system_instruction=system + "\n" + rules)
             else:
-                history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
+                history = "\n\n".join(f"{m.role}: {m.content}" for m in tail)
+                if summary:
+                    history = summary_block(summary) + "\n\n" + history
                 prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + rules
                 if not session.messages and not handoff:
                     prompt += "\n\nNOW:\n" + opening_request(session)
@@ -747,6 +886,8 @@ class SessionService:
             completed = session.phase == "completed"
             self.save(session)
             self._trigger_extraction(session_id)  # Fase 8B: end-of-run graph trigger
+            if not completed:
+                follow_up = await self._compact_at_settle(session_id, follow_up)
         except asyncio.CancelledError:
             session = self.get(session_id)
             if session.phase != "completed":
@@ -764,6 +905,39 @@ class SessionService:
             self.streaming.pop(session_id, None)
             if completed:
                 await self._release_runtime(session_id)
+        return follow_up
+
+    async def _compact_at_settle(self, session_id: str, follow_up: bool) -> bool:
+        """Compact the history when it outgrew the budget; the next turn waits for it (Fase 12).
+
+        Input that arrived while compacting (an answer, a steer) cannot schedule a turn
+        because this task is still running, so the follow-up decision is taken again.
+        A failed compaction is logged and the session goes on with the full history.
+        """
+        from learnharness.services.compaction import compact_session
+
+        before = self.get(session_id)
+        if not before.messages:
+            return follow_up
+        last_id = before.messages[-1].id
+        try:
+            compacted = await compact_session(self, session_id)
+        except Exception:
+            logger.exception("Context compaction failed for %s", session_id)
+            compacted = True  # The status still has to leave "compacting".
+        if not compacted:
+            return follow_up
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            ids = [m.id for m in session.messages]
+            arrived = ids[ids.index(last_id) + 1:] if last_id in ids else []
+            new_input = any(m.role == "user" for m in session.messages if m.id in set(arrived))
+            follow_up = follow_up or self._steers_due(session) or (
+                new_input and not session.pending_quiz and not session.recovery_required)
+            if session.phase != "completed":
+                session.execution_status = ("waiting" if session.pending_quiz
+                                            else "queued" if follow_up else "idle")
+            self.save(session)
         return follow_up
 
     def _trigger_extraction(self, session_id: str) -> None:
@@ -852,7 +1026,7 @@ class SessionService:
     async def recover(self):
         for session in list_sessions(self.state.vault_path):
             self._ensure_quiz_logs(session)
-            if session.execution_status in ("running", "queued", "waiting"):
+            if session.execution_status in ("running", "queued", "waiting", "compacting"):
                 session.execution_status = "waiting" if session.pending_quiz else "interrupted"
                 self.save(session)
 

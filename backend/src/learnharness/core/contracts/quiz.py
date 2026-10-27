@@ -137,7 +137,8 @@ class CalibrationResult(BaseModel):
 
     ``correct`` is ``None`` for ``ask`` and for an ``explain`` not yet graded; confidence
     and the bands only exist for a ``quiz`` answered without "Don't know" (the band is
-    ``conscious_gap`` for a quiz "Don't know").
+    ``conscious_gap`` for a quiz "Don't know"). ``dismissed`` marks a question the learner
+    closed without answering (Fase 12): nothing is graded and it never reaches the quiz-log.
     """
     quiz_id: str
     session_id: str
@@ -167,6 +168,7 @@ class CalibrationResult(BaseModel):
     pedagogical_directive: str = ""
     explanation: str = ""
     timestamp: str = ""
+    dismissed: bool = False
 
     @model_validator(mode="before")
     @classmethod

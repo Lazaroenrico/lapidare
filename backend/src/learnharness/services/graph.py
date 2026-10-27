@@ -288,6 +288,45 @@ class GraphService:
             self.state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": [node.vault_rel_path]})
         return {"ok": True, "id": node_id, "deleted_chain_ids": doomed}
 
+    async def unlink_session(self, session_id: str) -> dict[str, Any]:
+        """Remove ``session_id`` from the provenance of every node and chain (Fase 12).
+
+        Nodes and chains left without provenance are tombstoned; their concept notes
+        follow ``delete_node``: only the managed block goes, and the file only when the
+        harness created it and nothing else remains. Surviving nodes that cited the
+        session (or lost a premise line) get their notes re-rendered.
+        """
+        from learnharness.core.graph_merge import plan_unlink
+        from learnharness.vault.graph_store import append_session_unlink, raw_node_records
+
+        async with self.lock:
+            vault = self.state.vault_path
+            nodes = self.nodes()
+            chains = raw_chain_records(vault)
+            plan = plan_unlink(raw_node_records(vault), chains, session_id)
+            if not (plan["unlink_nodes"] or plan["unlink_chains"]):
+                return {"ok": True, "session_id": session_id, "unlinked_node_ids": [],
+                        "deleted_node_ids": [], "deleted_chain_ids": []}
+            dead_chains = set(plan["dead_chains"])
+            dead_nodes = set(plan["dead_nodes"])
+            # Conclusions whose premise lines change, and nodes whose origin list changes.
+            affected = [r["conclusion"] for r in chains
+                        if r.get("id") in dead_chains and isinstance(r.get("conclusion"), str)]
+            affected += plan["unlink_nodes"]
+            affected = [i for i in dict.fromkeys(affected) if i not in dead_nodes]
+            append_session_unlink(vault, session_id, plan)
+            changed = [nodes[i].vault_rel_path for i in plan["dead_nodes"]
+                       if i in nodes and remove_concept_section(vault, nodes[i])]
+            if affected:
+                from learnharness.pipelines.extraction import refresh_notes
+                written, _ = refresh_notes(vault, affected, self.state.get_config().language)
+                changed += written
+        self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
+        if changed:
+            self.state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": changed})
+        return {"ok": True, "session_id": session_id, "unlinked_node_ids": plan["unlink_nodes"],
+                "deleted_node_ids": plan["dead_nodes"], "deleted_chain_ids": plan["dead_chains"]}
+
     def update_positions(self, positions: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
         saved = save_positions(self.state.vault_path, positions)
         self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})

@@ -93,8 +93,20 @@ def _union_provenance(current: list[Provenance], extra: Iterable[Provenance]) ->
     return merged
 
 
+def _without_session(provenance: list[Provenance], session_id: str) -> list[Provenance]:
+    return [p for p in provenance if p.session_id != session_id]
+
+
+def _unlinked(record: Mapping[str, Any]) -> str | None:
+    value = record.get("unlink_session")
+    return value if isinstance(value, str) else None
+
+
 def fold_nodes(records: Iterable[Mapping[str, Any]]) -> dict[str, PropositionNode]:
-    """Creation lines + link-appends (aliases/provenance/note path) - tombstones."""
+    """Creation lines + link-appends (aliases/provenance/note path) - unlinks - tombstones.
+
+    An unlink line ``{id, unlink_session}`` drops that session's provenance (Fase 12).
+    """
     nodes: dict[str, PropositionNode] = {}
     deleted: set[str] = set()
     for record in records:
@@ -104,6 +116,10 @@ def fold_nodes(records: Iterable[Mapping[str, Any]]) -> dict[str, PropositionNod
         if record.get("deleted"):
             nodes.pop(node_id, None)
             deleted.add(node_id)
+            continue
+        if (session_id := _unlinked(record)) is not None:
+            if node_id in nodes:
+                nodes[node_id].provenance = _without_session(nodes[node_id].provenance, session_id)
             continue
         node = nodes.get(node_id)
         if node is None:
@@ -128,13 +144,8 @@ def chain_signature(premises: Iterable[str], conclusion: str) -> tuple[tuple[str
     return tuple(sorted(set(premises))), conclusion
 
 
-def fold_chains(
-    records: Iterable[Mapping[str, Any]], live_node_ids: set[str] | None = None
-) -> list[ChainRecord]:
-    """Fold chain lines; chains with the same (sorted premises, conclusion) merge.
-
-    With ``live_node_ids``, chains that reference a missing/tombstoned node are dropped.
-    """
+def fold_chain_ids(records: Iterable[Mapping[str, Any]]) -> dict[str, ChainRecord]:
+    """Chain lines folded per id (no signature merge): creations, link-appends, unlinks, tombstones."""
     by_id: dict[str, ChainRecord] = {}
     deleted: set[str] = set()
     for record in records:
@@ -145,6 +156,10 @@ def fold_chains(
             by_id.pop(chain_id, None)
             deleted.add(chain_id)
             continue
+        if (session_id := _unlinked(record)) is not None:
+            if chain_id in by_id:
+                by_id[chain_id].provenance = _without_session(by_id[chain_id].provenance, session_id)
+            continue
         if chain_id in by_id:
             current = by_id[chain_id]
             current.provenance = _union_provenance(current.provenance, _provenance(record.get("provenance")))
@@ -153,8 +168,47 @@ def fold_chains(
             by_id[chain_id] = ChainRecord.model_validate(record)
         except ValidationError:
             continue
+    return by_id
+
+
+def plan_unlink(
+    node_records: Iterable[Mapping[str, Any]], chain_records: Iterable[Mapping[str, Any]], session_id: str
+) -> dict[str, list[str]]:
+    """What unlinking ``session_id`` from the graph appends (Fase 12, delete-nodes).
+
+    * ``unlink_nodes`` / ``unlink_chains``: live ids whose provenance cites the session;
+    * ``dead_nodes``: cited nodes left without any provenance (tombstoned);
+    * ``dead_chains``: cited chains whose signature is left without provenance, plus every
+      live chain touching a dead node (tombstoned like ``delete_node`` does).
+    """
+    nodes = fold_nodes(node_records)
+    unlink_nodes = sorted(i for i, n in nodes.items() if any(p.session_id == session_id for p in n.provenance))
+    dead_nodes = sorted(i for i in unlink_nodes if not _without_session(nodes[i].provenance, session_id))
+    chains = fold_chain_ids(chain_records)
+    unlink_chains = sorted(i for i, c in chains.items() if any(p.session_id == session_id for p in c.provenance))
+    groups: dict[tuple[tuple[str, ...], str], list[ChainRecord]] = {}
+    for chain in chains.values():
+        groups.setdefault(chain_signature(chain.premises, chain.conclusion), []).append(chain)
+    cited = set(unlink_chains)
+    dead_chains = {c.id for group in groups.values()
+                   if cited & {c.id for c in group}
+                   and not any(_without_session(c.provenance, session_id) for c in group)
+                   for c in group}
+    dead = set(dead_nodes)
+    dead_chains |= {c.id for c in chains.values() if dead & {c.conclusion, *c.premises}}
+    return {"unlink_nodes": unlink_nodes, "unlink_chains": unlink_chains,
+            "dead_nodes": dead_nodes, "dead_chains": sorted(dead_chains)}
+
+
+def fold_chains(
+    records: Iterable[Mapping[str, Any]], live_node_ids: set[str] | None = None
+) -> list[ChainRecord]:
+    """Fold chain lines; chains with the same (sorted premises, conclusion) merge.
+
+    With ``live_node_ids``, chains that reference a missing/tombstoned node are dropped.
+    """
     merged: dict[tuple[tuple[str, ...], str], ChainRecord] = {}
-    for chain in by_id.values():
+    for chain in fold_chain_ids(records).values():
         if live_node_ids is not None and not ({chain.conclusion, *chain.premises} <= live_node_ids):
             continue
         signature = chain_signature(chain.premises, chain.conclusion)
