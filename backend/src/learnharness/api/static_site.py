@@ -8,8 +8,9 @@ from starlette.responses import FileResponse, PlainTextResponse, Response
 from starlette.types import Receive, Scope, Send
 
 # Dynamic segments are exported once under a placeholder; the page reads the real value
-# from the URL (frontend lib/route-param.ts).
-PLACEHOLDER_ROUTES = {"chat": "chat/_.html", "draw": "draw/_.html"}
+# from the URL (frontend lib/route-param.ts). Client-side navigation asks for the RSC
+# payload (``/chat/<id>.txt?_rsc=…``), which must be the placeholder's ``.txt``, not HTML.
+PLACEHOLDER_ROUTES = {"chat": "chat/_", "draw": "draw/_"}
 IMMUTABLE = "public, max-age=31536000, immutable"
 
 
@@ -24,7 +25,8 @@ def resolve(root: Path, url_path: str) -> tuple[Path | None, int]:
     candidates = [relative] if relative else []
     candidates += [f"{relative}.html", f"{relative}/index.html" if relative else "index.html"]
     if len(parts) == 2 and parts[0] in PLACEHOLDER_ROUTES:
-        candidates.append(PLACEHOLDER_ROUTES[parts[0]])
+        suffix = ".txt" if parts[1].endswith(".txt") else ".html"
+        candidates.append(PLACEHOLDER_ROUTES[parts[0]] + suffix)
     for candidate in candidates:
         path = (root / candidate).resolve()
         if path.is_file() and path.is_relative_to(root):

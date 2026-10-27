@@ -19,6 +19,7 @@ def site(tmp_path):
     (root / "docs/index.html").write_text("docs")
     (root / "chat/_.html").write_text("chat-shell")
     (root / "draw/_.html").write_text("draw-shell")
+    (root / "chat/_.txt").write_text("chat-rsc")
     (root / "404.html").write_text("missing")
     (root / "_next/static/a.js").write_text("js")
     (tmp_path / "secret.txt").write_text("secret")
@@ -32,6 +33,8 @@ def test_resolution_order(site):
     assert resolve(site, "/docs") == (site / "docs/index.html", 200)
     assert resolve(site, "/chat/abc123") == (site / "chat/_.html", 200)
     assert resolve(site, "/draw/some-slug") == (site / "draw/_.html", 200)
+    # Client-side navigation fetches the RSC payload, never the HTML shell.
+    assert resolve(site, "/chat/abc123.txt") == (site / "chat/_.txt", 200)
     assert resolve(site, "/nope") == (site / "404.html", 404)
     assert resolve(site, "/chat/a/b") == (site / "404.html", 404)
 
