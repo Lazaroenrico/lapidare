@@ -101,3 +101,4 @@ npm run build
 - **[`AGENTS.md`](AGENTS.md)** — Guia rápido de contexto, invariantes e regras para agentes e desenvolvedores.
 - **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** — **Especificação Comportamental Completa**: como cada tela (`Setup`, `Home`, `TEACH`, `QuestionDock`, `Import MCP`, `Excalidraw`, `PRACTICE`) e cada arquivo do Vault deve se comportar passo a passo.
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — **Arquitetura Técnica e Plano de Ondas**: estrutura de diretórios (`backend/` Python FastAPI + `frontend/` Next.js), protocolos `stream-json` / `ACP` / `FastMCP` / `SSE`, sincronização com o Vault e escopo detalhado da **Onda 1** e **Onda 2**.
+# lapidare
