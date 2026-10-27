@@ -216,3 +216,100 @@ export const trackItemIdOf = (roadmapId: string) => roadmapId.replace(/^track:/,
 /** Chat link that scrolls to the message where a node was born. */
 export const sessionMessageHref = (ref: NodeSessionRef) =>
   `/chat/${encodeURIComponent(ref.session_id)}${ref.message_id ? `#message-${encodeURIComponent(ref.message_id)}` : ""}`;
+
+// --- Constellation wiring (Home canvas) --------------------------------------
+
+/** Prefix of the virtual implication-junction ids (never a real node id). */
+export const JUNCTION_PREFIX = "junction:";
+export const isJunctionId = (id: string) => id.startsWith(JUNCTION_PREFIX);
+
+/** Virtual point where the premises of a ≥2-premise chain meet before the conclusion. */
+export interface ConstellationJunction {
+  id: string;
+  chainId: string;
+  premises: string[];
+  conclusion: string;
+  /** Cluster of the conclusion (the junction is pulled into its region). */
+  cluster?: string;
+}
+
+/** A drawn line: premise→junction, junction→conclusion, or a direct node→node link. */
+export interface ConstellationLink {
+  source: string;
+  target: string;
+  kind: "premise" | "conclusion" | "direct";
+}
+
+export interface ConstellationWiring {
+  junctions: ConstellationJunction[];
+  links: ConstellationLink[];
+}
+
+/**
+ * Builds the drawn structure of the constellation graph: every chain with ≥ 2
+ * distinct resolvable premises gets one junction (premises → junction →
+ * conclusion); single-premise chains, server edges and legacy `depends_on`
+ * become direct lines. Premise→conclusion pairs routed through a junction are
+ * not drawn again as direct lines. Junctions are virtual: callers must not count,
+ * select or label them.
+ */
+export function buildConstellation(
+  nodes: readonly ConceptNode[],
+  edges: readonly GraphEdge[],
+  chains: readonly LogicalChain[],
+): ConstellationWiring {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const byName = new Map<string, ConceptNode>();
+  for (const n of nodes) {
+    for (const key of [n.name, ...n.aliases]) {
+      if (!byName.has(key.toLowerCase())) byName.set(key.toLowerCase(), n);
+    }
+  }
+  const resolve = (ref: string) => byId.get(ref) ?? byName.get(ref.toLowerCase()) ?? null;
+
+  const junctions: ConstellationJunction[] = [];
+  const links: ConstellationLink[] = [];
+  const routed = new Set<string>();
+  const direct = new Set<string>();
+  const junctionIds = new Set<string>();
+  const pair = (a: string, b: string) => `${a}\u0000${b}`;
+  const addDirect = (source: string, target: string) => {
+    const key = pair(source, target);
+    if (source === target || routed.has(key) || direct.has(key)) return;
+    direct.add(key);
+    links.push({ source, target, kind: "direct" });
+  };
+
+  const singles: [string, string][] = [];
+  chains.forEach((chain, idx) => {
+    const conclusion = resolve(chain.conclusion);
+    if (!conclusion) return;
+    const premises = [
+      ...new Set(chain.premises.map((p) => resolve(p)?.id).filter((p): p is string => !!p && p !== conclusion.id)),
+    ];
+    if (premises.length === 0) return;
+    if (premises.length === 1) {
+      singles.push([premises[0], conclusion.id]);
+      return;
+    }
+    let id = `${JUNCTION_PREFIX}${chain.id || idx}`;
+    if (junctionIds.has(id)) id = `${id}#${idx}`;
+    junctionIds.add(id);
+    junctions.push({ id, chainId: chain.id, premises, conclusion: conclusion.id, cluster: conclusion.cluster });
+    for (const p of premises) {
+      routed.add(pair(p, conclusion.id));
+      links.push({ source: p, target: id, kind: "premise" });
+    }
+    links.push({ source: id, target: conclusion.id, kind: "conclusion" });
+  });
+
+  for (const [s, t] of singles) addDirect(s, t);
+  for (const e of edges) if (byId.has(e.source) && byId.has(e.target)) addDirect(e.source, e.target);
+  for (const n of nodes) {
+    for (const dep of n.depends_on) {
+      const target = resolve(dep);
+      if (target) addDirect(target.id, n.id);
+    }
+  }
+  return { junctions, links };
+}

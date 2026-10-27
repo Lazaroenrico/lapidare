@@ -34,16 +34,17 @@ export interface SettingRange {
 }
 
 export const GRAPH_SETTING_RANGES: Record<GraphSettingKey, SettingRange> = {
-  nodeSize: { min: 6, max: 36, step: 1, default: 14, group: "display" },
-  edgeWidth: { min: 0.5, max: 4, step: 0.25, default: 1, group: "display" },
-  labelSize: { min: 8, max: 18, step: 0.5, default: 11, group: "display" },
-  labelZoom: { min: 0.25, max: 2.5, step: 0.05, default: 0.7, group: "display" },
-  regionIntensity: { min: 0, max: 1, step: 0.05, default: 0.5, group: "display" },
-  repulsion: { min: 200, max: 8000, step: 100, default: 2400, group: "physics" },
-  attraction: { min: 0.005, max: 0.2, step: 0.005, default: 0.045, group: "physics" },
-  linkDistance: { min: 30, max: 300, step: 5, default: 110, group: "physics" },
-  centerGravity: { min: 0, max: 0.05, step: 0.001, default: 0.008, group: "physics" },
-  clusterCohesion: { min: 0, max: 0.08, step: 0.002, default: 0.018, group: "physics" },
+  // Constellation look: tiny dots, hairline threads, small labels.
+  nodeSize: { min: 1, max: 12, step: 0.5, default: 2.5, group: "display" },
+  edgeWidth: { min: 0.25, max: 3, step: 0.05, default: 0.75, group: "display" },
+  labelSize: { min: 7, max: 16, step: 0.5, default: 9.5, group: "display" },
+  labelZoom: { min: 0.25, max: 4, step: 0.05, default: 1.6, group: "display" },
+  regionIntensity: { min: 0, max: 1, step: 0.05, default: 0.6, group: "display" },
+  repulsion: { min: 50, max: 4000, step: 25, default: 320, group: "physics" },
+  attraction: { min: 0.005, max: 0.2, step: 0.005, default: 0.06, group: "physics" },
+  linkDistance: { min: 15, max: 200, step: 1, default: 45, group: "physics" },
+  centerGravity: { min: 0, max: 0.05, step: 0.001, default: 0.006, group: "physics" },
+  clusterCohesion: { min: 0, max: 0.08, step: 0.002, default: 0.016, group: "physics" },
 };
 
 export const GRAPH_SETTING_KEYS = Object.keys(GRAPH_SETTING_RANGES) as GraphSettingKey[];
