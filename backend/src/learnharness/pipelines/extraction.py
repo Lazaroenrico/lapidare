@@ -73,6 +73,13 @@ Output two lists:
 - chains: logical implications only. "premises" (keys or existing node ids) are
   statements that TOGETHER imply the "conclusion" (a key or an existing node id). Do not
   emit a chain for mere topical relatedness, sequence in the lesson or "is an example of".
+  Teaching builds conclusions from premises, so chains are the backbone of the graph:
+  whenever the tutor derived, justified or explained WHY something holds ("because",
+  "so", "therefore", a calculation, a step of a proof), record that step as a chain from
+  the statements it used to the statement it established. Most propositions that are not
+  foundational definitions should be the conclusion of at least one chain. Split a long
+  derivation into its steps (A ∧ B ⟹ C, C ∧ D ⟹ E) instead of one chain with many
+  premises; use existing node ids as premises when the step builds on them.
 
 Rules:
 - Only facts about the subject matter. Never record the learner's state, what they know,
