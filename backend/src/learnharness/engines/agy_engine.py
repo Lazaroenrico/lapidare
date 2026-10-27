@@ -39,6 +39,7 @@ from learnharness.engines.cli_protocol import EngineError, idle_wait
 from learnharness.engines.detector import KNOWN_AGY_PATHS
 from learnharness.engines.gemini_acp import AcpProcessPool, compose_prompt
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine
+from learnharness.engines.usage import agy_usage, report_usage
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,9 @@ class AgyStreamEngine(GeminiHeadlessEngine):
             return "result", value
         return "event", event
 
+    def _usage_counts(self, result):
+        return agy_usage(result)
+
     def _env(self):
         env = dict(os.environ)
         env.update(self.extra_env)
@@ -345,7 +349,8 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                 for attempt in range(2):
                     text = compose_prompt(prompt, history, system_instruction, fresh=fresh)
                     try:
-                        async with aclosing(self._turn(session_id, entry, text)) as chunks:
+                        model = slot.model_id if slot else self.default_model
+                        async with aclosing(self._turn(session_id, entry, text, model)) as chunks:
                             async for chunk in chunks:
                                 yield chunk
                         break
@@ -359,7 +364,7 @@ class AgyStreamEngine(GeminiHeadlessEngine):
             finally:
                 self.pool.release(session_id)
 
-    async def _turn(self, session_id, entry, text):
+    async def _turn(self, session_id, entry, text, model_id=""):
         connection = entry.connection
         harness_inflight = set()
         assembler = TextAssembler()
@@ -424,6 +429,7 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                             session_id,
                         )
                     entry.turns += 1
+                    report_usage(model_id, agy_usage(value))
                     clean = True
                     return
         finally:

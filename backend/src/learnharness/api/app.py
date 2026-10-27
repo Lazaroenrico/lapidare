@@ -19,6 +19,7 @@ from learnharness.api.routes.import_github import import_github_router
 from learnharness.api.routes.practice import practice_router
 from learnharness.api.routes.prompts import prompts_router
 from learnharness.api.routes.setup import setup_router
+from learnharness.api.routes.usage import usage_router
 from learnharness.api.sse import sse_router
 from learnharness.api.state import AppState
 from learnharness.engines.cli_protocol import EngineError
@@ -165,6 +166,7 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     app.include_router(drawings_router)
     app.include_router(practice_router)
     app.include_router(prompts_router)
+    app.include_router(usage_router)
     app.mount(MCP_MOUNT, ExecutionTokenGate(mcp_app, state))
 
     return app

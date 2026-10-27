@@ -72,6 +72,8 @@ class JobManager:
         return self.submit("extraction", {"session_id": session.id, "topic": session.title, "messages_text": "\n\n".join(m.content for m in session.messages if m.role == "assistant"), "source_ref": session.source_path}, key=f"extract:{session.id}:{node_id}")
 
     async def run(self, record):
+        # Provider usage of the whole job goes to the global ledger (job_kind, no session).
+        usage = self.state.usage.capture(job_kind=record["kind"])
         try:
             async with self.semaphore:
                 record["status"] = "running"
@@ -109,6 +111,8 @@ class JobManager:
             record["status"] = "failed"
             record["error"] = self.state.redact(str(exc))
             self.save(record)
+        finally:
+            usage.close()
 
     def recover(self):
         self.load()

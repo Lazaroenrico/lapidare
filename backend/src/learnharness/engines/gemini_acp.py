@@ -36,6 +36,7 @@ from typing import ClassVar
 from learnharness.engines.cli_protocol import EngineError, idle_wait
 from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine, write_workspace_settings
+from learnharness.engines.usage import acp_usage, report_usage
 
 logger = logging.getLogger(__name__)
 
@@ -711,6 +712,7 @@ class GeminiCliAcpEngine:
             stop = result.get("stopReason")
             if stop != "end_turn":
                 raise EngineError(f"Gemini ACP turn ended with stopReason={stop!r}")
+            report_usage(entry.model, acp_usage(result))
             clean = True
         except asyncio.CancelledError:
             clean = await self._cancel(connection, acp_session, reply)

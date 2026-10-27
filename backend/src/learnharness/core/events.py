@@ -21,6 +21,7 @@ class SseEventType(StrEnum):
     VAULT_CHANGED = "vault:changed"
     GRAPH_UPDATED = "graph:updated"
     JOBS_UPDATED = "jobs:updated"
+    USAGE_UPDATED = "usage:updated"
 
 
 class BackgroundJobStatus(BaseModel):

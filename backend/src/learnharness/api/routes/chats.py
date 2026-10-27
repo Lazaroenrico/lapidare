@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from learnharness.api.state import get_app_state
+from learnharness.core.contracts.config import EffortLevel
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
-from learnharness.core.contracts.session import SessionMode, SessionRecord
+from learnharness.core.contracts.session import SessionMode, SessionRecord, slot_override_for
 from learnharness.core.plan_mermaid import derive_plan_statuses
 from learnharness.services.sessions import SessionConflict, now
 from learnharness.vault.jsonl_store import list_sessions
@@ -21,6 +22,15 @@ class CreateChatPayload(BaseModel):
     topic: str | None = Field(default=None, max_length=10000)
     source_file: str | None = None
     track_item_id: str | None = None
+    # Optional per-session model/effort (the strong slot's engine is kept).
+    model_id: str | None = Field(default=None, max_length=200)
+    effort: EffortLevel | None = None
+
+
+class SessionSettingsPayload(BaseModel):
+    """Per-session model/effort; both null clears the override (back to slots.strong)."""
+    model_id: str | None = Field(default=None, max_length=200)
+    effort: EffortLevel | None = None
 
 
 class SendMessagePayload(BaseModel):
@@ -89,6 +99,13 @@ def _serialize_session(session: SessionRecord, pending_quiz=None) -> dict[str, A
     return data
 
 
+def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
+    """Session payload plus the slot its next teaching turn will use."""
+    data = _serialize_session(session)
+    data["effective_slot"] = session.teaching_slot(state.get_config().slots.strong).model_dump(mode="json")
+    return data
+
+
 @chats_router.get("")
 async def get_chats(request: Request):
     state = get_app_state(request.app)
@@ -98,13 +115,43 @@ async def get_chats(request: Request):
 @chats_router.post("")
 async def create_chat(payload: CreateChatPayload, request: Request):
     state = get_app_state(request.app)
-    session = await state.sessions.create(**payload.model_dump())
-    return _serialize_session(session)
+    override = slot_override_for(state.get_config().slots.strong, payload.model_id, payload.effort)
+    session = await state.sessions.create(**payload.model_dump(exclude={"model_id", "effort"}),
+                                          slot_override=override)
+    return _with_slot(state, session)
 
 
 @chats_router.get("/{chat_id}")
 async def get_chat(chat_id: str, request: Request):
-    return _serialize_session(get_app_state(request.app).sessions.get(chat_id))
+    state = get_app_state(request.app)
+    return _with_slot(state, state.sessions.get(chat_id))
+
+
+@chats_router.put("/{chat_id}/settings")
+async def update_chat_settings(chat_id: str, payload: SessionSettingsPayload, request: Request):
+    """Change the session's model/effort; it applies from the next teaching turn.
+
+    An idle session's persistent engine process is closed so the next turn respawns with
+    the new model and rehydrates from the persisted history. A running turn is never
+    killed: the persistent engines respawn by themselves when the slot no longer matches.
+    """
+    from learnharness import engines
+
+    state = get_app_state(request.app)
+    strong = state.get_config().slots.strong
+    async with state.sessions.lock(chat_id):
+        try:
+            session = state.sessions.get(chat_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown session") from None
+        before = session.teaching_slot(strong)
+        session.slot_override = slot_override_for(strong, payload.model_id, payload.effort)
+        changed = session.teaching_slot(strong) != before
+        state.sessions.save(session)
+        running = state.sessions.is_running(chat_id)
+    if changed and not running:
+        await engines.close_engine_processes(chat_id)
+    return _with_slot(state, session)
 
 
 @chats_router.post("/{chat_id}/messages")

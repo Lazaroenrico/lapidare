@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from learnharness.core.contracts.practice import DrawingReviewResult
 from learnharness.engines.cli_protocol import EngineError
+from learnharness.engines.usage import genai_usage, report_usage
 
 try:
     from google import genai
@@ -106,21 +107,27 @@ class GenAiSdkEngine:
             if tools
             else None,
         )
+        model = slot.model_id if slot else self.default_model
+        metadata = None
         async with asyncio.timeout(self.timeout):
             stream = await self.client.aio.models.generate_content_stream(
-                model=slot.model_id if slot else self.default_model,
+                model=model,
                 contents=contents,
                 config=config,
             )
             async for chunk in stream:
+                # The last chunk's usage_metadata holds the call's totals.
+                metadata = getattr(chunk, "usage_metadata", None) or metadata
                 if chunk.text:
                     yield chunk.text
+        report_usage(model, genai_usage(metadata))
 
     async def run_structured(self, prompt, schema, slot=None, system_instruction=None):
         self._ready()
+        model = slot.model_id if slot else self.default_model
         async with asyncio.timeout(self.timeout):
             response = await self.client.aio.models.generate_content(
-                model=slot.model_id if slot else self.default_model,
+                model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -128,6 +135,7 @@ class GenAiSdkEngine:
                     system_instruction=system_instruction,
                 ),
             )
+        report_usage(model, genai_usage(getattr(response, "usage_metadata", None)))
         return schema.model_validate_json(response.text or "")
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):

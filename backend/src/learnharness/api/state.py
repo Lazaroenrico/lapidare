@@ -46,7 +46,9 @@ class AppState:
         from learnharness.services.jobs import JobManager
         from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
+        from learnharness.services.usage import UsageService
         self.sessions = SessionService(self)
+        self.usage = UsageService(self)
         self.jobs = JobManager(self)
         self.tracks = TrackService(self)
 

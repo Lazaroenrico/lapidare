@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from learnharness.core.contracts.config import EffortLevel, ModelSlotConfig
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload
 
 # Strictly ONLY these two modes exist across the entire platform!
@@ -125,6 +126,46 @@ class SessionMessage(BaseModel):
     node_spans: list[NodeSpan] = Field(default_factory=list)
 
 
+class TokenUsage(BaseModel):
+    """Token counts reported by a provider for one call (zero when not reported)."""
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    thinking_tokens: int = Field(default=0, ge=0)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens + self.thinking_tokens
+
+
+class TurnUsage(TokenUsage):
+    """What an engine reports after one provider call (see ``engines.usage``)."""
+    model_id: str = ""
+
+
+class SessionUsage(TokenUsage):
+    """Accumulated usage of a session's teaching turns; ``turns`` counts provider reports."""
+    turns: int = Field(default=0, ge=0)
+
+    def add(self, usage: TokenUsage) -> None:
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.thinking_tokens += usage.thinking_tokens
+        self.turns += 1
+
+
+def slot_override_for(strong: ModelSlotConfig, model_id: str | None = None,
+                      effort: EffortLevel | str | None = None) -> ModelSlotConfig | None:
+    """Per-session override of the strong slot; ``None`` when neither field is chosen."""
+    if not model_id and effort is None:
+        return None
+    update = {}
+    if model_id:
+        update["model_id"] = model_id
+    if effort is not None:
+        update["effort"] = EffortLevel(effort)
+    return strong.model_copy(update=update)
+
+
 class SessionRecord(BaseModel):
     """Full session record persisted in .harness/sessions/<id>.jsonl."""
     id: str
@@ -153,5 +194,15 @@ class SessionRecord(BaseModel):
     error: str | None = None
     recovery_required: bool = False
     applied_actions: list[str] = Field(default_factory=list)
+    # Model/effort chosen for this session; replaces config.slots.strong for its teaching turns.
+    slot_override: ModelSlotConfig | None = None
+    usage: SessionUsage = Field(default_factory=SessionUsage)
     created_at: str = ""
     updated_at: str = ""
+
+    def teaching_slot(self, strong: ModelSlotConfig) -> ModelSlotConfig:
+        """The slot for this session's turns: the strong slot's engine, the override's model/effort."""
+        if self.slot_override is None:
+            return strong
+        return strong.model_copy(update={"model_id": self.slot_override.model_id,
+                                         "effort": self.slot_override.effort})
