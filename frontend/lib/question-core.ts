@@ -56,24 +56,18 @@ export function toOriginalIndices(order: number[], displayIndices: Iterable<numb
 
 // --- Confidence slider -------------------------------------------------------
 
-export const CONFIDENCE_STOPS = [0, 30, 50, 70, 90, 100] as const;
+/** Free choice: any whole value in 0..100, no snapping and no numbers shown. */
 export const DEFAULT_CONFIDENCE = 50;
+/** One arrow-key press moves the slider this much. */
+export const CONFIDENCE_KEY_STEP = 5;
 
-/** Snaps any value to the nearest stop (ties go to the higher stop). */
-export function snapConfidence(value: number): number {
+export function clampConfidence(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_CONFIDENCE;
-  let best: number = CONFIDENCE_STOPS[0];
-  for (const stop of CONFIDENCE_STOPS) {
-    if (Math.abs(stop - value) <= Math.abs(best - value)) best = stop;
-  }
-  return best;
+  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
-/** Moves one stop up (+1) or down (-1) from `value`, clamped to the ends. */
 export function stepConfidence(value: number, direction: 1 | -1): number {
-  const idx = CONFIDENCE_STOPS.indexOf(snapConfidence(value) as (typeof CONFIDENCE_STOPS)[number]);
-  const next = Math.min(CONFIDENCE_STOPS.length - 1, Math.max(0, idx + direction));
-  return CONFIDENCE_STOPS[next];
+  return clampConfidence(value + direction * CONFIDENCE_KEY_STEP);
 }
 
 // --- Submission ----------------------------------------------------------------
@@ -120,7 +114,7 @@ export function buildSubmission(
     session_id: quiz.session_id || sessionId,
     chosen_indices: dontKnow || kind === "explain" ? [] : toOriginalIndices(order, d.selected),
     is_dont_know: dontKnow,
-    confidence: usesConfidence(kind, dontKnow) ? snapConfidence(d.confidence) : null,
+    confidence: usesConfidence(kind, dontKnow) ? clampConfidence(d.confidence) : null,
     learner_thinking: d.thinking.trim(),
     reading_thinking: d.readingThinking.trim(),
     text: kind === "explain" && !dontKnow ? d.text.trim() : "",

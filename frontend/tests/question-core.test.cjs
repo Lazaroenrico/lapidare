@@ -22,17 +22,15 @@ test('display positions map back to original indices', () => {
   for (let d = 0; d < 6; d++) assert.deepEqual(qc.toOriginalIndices(seeded, [d]), [seeded[d]]);
 });
 
-test('confidence snaps to [0,30,50,70,90,100] and steps between stops', () => {
-  assert.deepEqual([...qc.CONFIDENCE_STOPS], [0, 30, 50, 70, 90, 100]);
+test('confidence is a free choice in 0..100 (no snapping to fixed stops)', () => {
   assert.equal(qc.DEFAULT_CONFIDENCE, 50);
-  const cases = [[0, 0], [14, 0], [15, 30], [16, 30], [41, 50], [60, 70], [79, 70], [80, 90], [96, 100], [100, 100], [-5, 0], [130, 100]];
-  for (const [input, want] of cases) assert.equal(qc.snapConfidence(input), want, `snap(${input})`);
-  assert.equal(qc.snapConfidence(Number.NaN), 50);
-  assert.equal(qc.stepConfidence(50, 1), 70);
-  assert.equal(qc.stepConfidence(50, -1), 30);
-  assert.equal(qc.stepConfidence(100, 1), 100);
-  assert.equal(qc.stepConfidence(0, -1), 0);
-  assert.equal(qc.stepConfidence(44, 1), 70, 'off-stop values snap first');
+  const cases = [[0, 0], [14, 14], [41, 41], [63.4, 63], [100, 100], [-5, 0], [130, 100]];
+  for (const [input, want] of cases) assert.equal(qc.clampConfidence(input), want, `clamp(${input})`);
+  assert.equal(qc.clampConfidence(Number.NaN), 50);
+  assert.equal(qc.stepConfidence(50, 1), 55);
+  assert.equal(qc.stepConfidence(44, -1), 39);
+  assert.equal(qc.stepConfidence(98, 1), 100);
+  assert.equal(qc.stepConfidence(2, -1), 0);
 });
 
 const draft = (over = {}) => ({
@@ -44,7 +42,7 @@ test('quiz submission maps the shuffled pick and carries both thinking channels'
   const quiz = {quiz_id: 'q1', session_id: 's1', kind: 'quiz'};
   const sub = qc.buildSubmission(quiz, 's1', [2, 0, 1], draft({selected: [0], confidence: 77, thinking: ' because ', readingThinking: ' hmm '}));
   assert.deepEqual(sub, {
-    quiz_id: 'q1', session_id: 's1', chosen_indices: [2], is_dont_know: false, confidence: 70,
+    quiz_id: 'q1', session_id: 's1', chosen_indices: [2], is_dont_know: false, confidence: 77,
     learner_thinking: 'because', reading_thinking: 'hmm', text: '', other_text: '',
   });
 });

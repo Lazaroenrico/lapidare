@@ -10,7 +10,6 @@ import { submitQuizAnswer } from "@/lib/api";
 import { rememberQuiz } from "@/lib/quiz-memory";
 import { optionLetter } from "@/lib/session-wire";
 import {
-  CONFIDENCE_STOPS,
   DEFAULT_CONFIDENCE,
   allowsDontKnow,
   buildSubmission,
@@ -18,7 +17,7 @@ import {
   moveRow,
   shuffleOrder,
   shufflesOptions,
-  snapConfidence,
+  clampConfidence,
   stepConfidence,
   usesConfidence,
 } from "@/lib/question-core";
@@ -416,7 +415,7 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
                 {t.qConfidence}
               </label>
               <span className="font-ui text-[11px] text-foreground">
-                {confidenceOn ? `${confidence}% · ${band}` : t.qConfidenceOff}
+                {confidenceOn ? band : t.qConfidenceOff}
               </span>
             </div>
             <input
@@ -425,10 +424,9 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
               min={0}
               max={100}
               step={1}
-              list={`confidence-stops-${quiz.quiz_id}`}
               value={confidence}
               disabled={!confidenceOn}
-              onChange={(e) => setConfidence(snapConfidence(Number(e.target.value)))}
+              onChange={(e) => setConfidence(clampConfidence(Number(e.target.value)))}
               onKeyDown={(e) => {
                 const up = e.key === "ArrowRight" || e.key === "ArrowUp";
                 const down = e.key === "ArrowLeft" || e.key === "ArrowDown";
@@ -438,25 +436,9 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
                   setConfidence((c) => stepConfidence(c, up ? 1 : -1));
                 }
               }}
-              aria-valuetext={`${confidence}%`}
+              aria-valuetext={band}
               className="w-full accent-foreground h-1.5 cursor-pointer disabled:cursor-not-allowed"
             />
-            <datalist id={`confidence-stops-${quiz.quiz_id}`}>
-              {CONFIDENCE_STOPS.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-            <div className="relative h-4 font-ui text-[10px] text-muted-foreground">
-              {CONFIDENCE_STOPS.map((s) => (
-                <span
-                  key={s}
-                  className={`absolute -translate-x-1/2 ${s === confidence && confidenceOn ? "text-foreground" : ""}`}
-                  style={{ left: `${s}%` }}
-                >
-                  {s}
-                </span>
-              ))}
-            </div>
           </div>
         )}
 
