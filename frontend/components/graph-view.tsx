@@ -61,6 +61,7 @@ import { tracksText } from "@/lib/tracks-i18n";
 import { RoadmapLegend, RoadmapStepCard } from "./roadmap-ui";
 import { useStartLeveling } from "./leveling-ui";
 import { NavDrawerButton } from "@/components/nav-drawer";
+import { useRoadmapRequest } from "./roadmap-request";
 
 const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
 const GRAPH_EVENTS: SseEventType[] = ["graph:updated", "vault:changed"];
@@ -344,6 +345,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   }, [snapshot.roadmap]);
 
   const hasRoadmap = snapshot.roadmap.length > 0;
+  useRoadmapRequest(hasRoadmap, roadmapOn && hasRoadmap, () => setRoadmapOn(true));
   useEffect(() => {
     engineRef.current?.setRoadmap(
       roadmapOn && hasRoadmap ? visibleRoadmap : null,
