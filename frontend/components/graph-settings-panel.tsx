@@ -4,10 +4,12 @@ import React from "react";
 import { RotateCcw, X } from "lucide-react";
 import {
   DEFAULT_GRAPH_SETTINGS,
+  GRAPH_SETTING_GROUPS,
   GRAPH_SETTING_KEYS,
   GRAPH_SETTING_RANGES,
   isDefaultSettings,
   withSetting,
+  type GraphSettingGroup,
   type GraphSettingKey,
   type GraphSettings,
 } from "@/lib/graph-settings";
@@ -21,32 +23,62 @@ interface GraphSettingsPanelProps {
 
 const decimals = (step: number) => (String(step).split(".")[1] ?? "").length;
 
-/** ⚙ panel: display + physics sliders (values clamped by lib/graph-settings). */
-export function GraphSettingsPanel({ settings, onChange, onClose }: GraphSettingsPanelProps) {
-  const { t } = useLocale();
+/** Keys of one settings group, in declaration order. */
+export const graphSettingKeys = (group: GraphSettingGroup) =>
+  GRAPH_SETTING_KEYS.filter((k) => GRAPH_SETTING_RANGES[k].group === group);
 
-  const row = (key: GraphSettingKey) => {
-    const r = GRAPH_SETTING_RANGES[key];
-    const id = `graph-setting-${key}`;
+/** One setting: a slider with its value, or a checkbox for toggles. */
+export function GraphSettingControl({
+  settingKey,
+  settings,
+  onChange,
+  idPrefix,
+}: {
+  settingKey: GraphSettingKey;
+  settings: GraphSettings;
+  onChange: (next: GraphSettings) => void;
+  idPrefix: string;
+}) {
+  const { t } = useLocale();
+  const r = GRAPH_SETTING_RANGES[settingKey];
+  const id = `${idPrefix}-${settingKey}`;
+  if (r.toggle) {
     return (
-      <div key={key} className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <label htmlFor={id}>{t.gsLabels[key]}</label>
-          <span className="text-foreground tabular-nums">{settings[key].toFixed(decimals(r.step))}</span>
-        </div>
+      <label htmlFor={id} className="flex items-center justify-between cursor-pointer">
+        <span>{t.gsLabels[settingKey]}</span>
         <input
           id={id}
-          type="range"
-          min={r.min}
-          max={r.max}
-          step={r.step}
-          value={settings[key]}
-          onChange={(e) => onChange(withSetting(settings, key, Number(e.target.value)))}
-          className="w-full accent-foreground cursor-pointer"
+          type="checkbox"
+          checked={settings[settingKey] >= 1}
+          onChange={(e) => onChange(withSetting(settings, settingKey, e.target.checked ? 1 : 0))}
+          className="accent-foreground cursor-pointer"
         />
-      </div>
+      </label>
     );
-  };
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <label htmlFor={id}>{t.gsLabels[settingKey]}</label>
+        <span className="text-foreground tabular-nums">{settings[settingKey].toFixed(decimals(r.step))}</span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={r.min}
+        max={r.max}
+        step={r.step}
+        value={settings[settingKey]}
+        onChange={(e) => onChange(withSetting(settings, settingKey, Number(e.target.value)))}
+        className="w-full accent-foreground cursor-pointer"
+      />
+    </div>
+  );
+}
+
+/** ⚙ panel: display, regions, radial layout and physics (values clamped by lib/graph-settings). */
+export function GraphSettingsPanel({ settings, onChange, onClose }: GraphSettingsPanelProps) {
+  const { t } = useLocale();
 
   return (
     <div
@@ -66,11 +98,13 @@ export function GraphSettingsPanel({ settings, onChange, onClose }: GraphSetting
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
-      {(["display", "physics"] as const).map((group) => (
+      {GRAPH_SETTING_GROUPS.map((group) => (
         <section key={group} className="mb-3">
-          <h4 className="uppercase tracking-wider text-[10px] mb-2">{group === "display" ? t.gsDisplay : t.gsPhysics}</h4>
+          <h4 className="uppercase tracking-wider text-[10px] mb-2">{t.gsGroups[group]}</h4>
           <div className="flex flex-col gap-2.5">
-            {GRAPH_SETTING_KEYS.filter((k) => GRAPH_SETTING_RANGES[k].group === group).map(row)}
+            {graphSettingKeys(group).map((key) => (
+              <GraphSettingControl key={key} settingKey={key} settings={settings} onChange={onChange} idPrefix="graph-setting" />
+            ))}
           </div>
         </section>
       ))}

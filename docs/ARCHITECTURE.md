@@ -767,6 +767,9 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 ### 13.2 Componentes-chave
 
 - **`graph-view.tsx` / `graph-canvas.ts`:** Canvas 2D em estilo constelação (pontos, fios finos, junções de implicação, nebulosas por sessão), pan/zoom, arrastar (persiste as posições), seleção múltipla, cartão do nó (sessões, Abrir nota, Selecionar, Excluir), constelações do ⇶ Roteiro (`roadmap-canvas.ts`, `roadmap-ui.tsx`), `graph-settings-panel.tsx` e `chain-table.tsx`.
+- **Layout radial ("flor", `lib/radial-layout.ts`, puro e determinístico):** cada cluster (sessão de nascimento) ocupa um setor angular em torno de um centro vazio, com largura ∝ tamanho^0,75, em sentido horário a partir do topo na ordem dos clusters do snapshot. Dentro do setor, cada proposição fica num anel pela profundidade de inferência: quem nunca é conclusão é profundidade 0 (anel interno, raio `ringRadius`) e cada passo de derivação vai `depthSpacing` para fora; junções ficam no meio entre a premissa mais profunda e a conclusão. A profundidade é o caminho de derivação mais longo; ciclos não travam (quando só sobram ciclos, libera-se o menor id pendente). Proposições sem nenhuma chain vão para uma faixa externa espalhada (logo além do quantil 90 das profundidades), ainda no setor do seu cluster. A ordem angular dentro do setor percorre cada árvore a partir das conclusões mais externas, então cada árvore ocupa um arco contíguo (pétalas). O motor soma às forças radiais (anel, parede do setor, atração ao ângulo planejado, atração ao centro opcional) a repulsão e as molas das arestas; todas esfriam com `alpha`, então os anéis prevalecem em repouso. Nós já existentes mantêm a posição quando o grafo cresce (só os novos são semeados no plano), e nós arrastados/persistidos ficam fixos.
+- **Desenho:** nebulosa por cluster = nós e arestas do cluster dilatados (`regionDilation`) num buffer opaco, borrados (`regionBlur`) e tingidos uma única vez (`regionIntensity`), com tons misturados só de tokens da paleta, distintos entre setores vizinhos; rótulos dos nós sob cada ponto em unidades de mundo (micro na visão geral, legíveis no zoom; contraste total a partir de `labelZoom`; colisão evita sobreposição); nomes das sessões na ponta externa de cada pétala, em px de tela, somem ao aproximar e evitam sobreposição (do lado direito crescem para dentro quando o ⇶ Roteiro está ligado, que fica à direita da flor).
+- **Ajustes (⚙, `lib/graph-settings.ts`, chave `learnharness:graph-settings:v2`):** Exibição (tamanho do nó, espessura/opacidade da aresta, tamanho do rótulo, zoom para rótulos nítidos, nomes das sessões on/off + tamanho), Regiões (opacidade, dilatação, desfoque), Layout radial (raio do anel interno, espaço entre níveis, força dos níveis) e Física (repulsão, atração, comprimento da aresta, atração ao centro, coesão de cluster, atrito). O mesmo componente de controle serve o painel e Configurações → Grafo.
 - **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
 - **`question-dock.tsx` + `lib/question-core.ts`:**
   - opções embaralhadas de forma determinística por `quiz_id`;
@@ -794,7 +797,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 |---|---|
 | `session-wire.ts`, `graph-wire.ts`, `config-wire.ts`, `settings-wire.ts`, `import-wire.ts` | Decoders e encoders do *wire* da API |
 | `question-core.ts`, `quiz-memory.ts`, `plan-layout.ts` | QuestionDock e PlanWindow |
-| `graph-selection.ts`, `roadmap-layout.ts`, `graph-settings.ts`, `palette.ts` | Grafo (seleção, roteiro, ajustes com clamp, cores) |
+| `graph-selection.ts`, `radial-layout.ts`, `roadmap-layout.ts`, `graph-settings.ts`, `palette.ts` | Grafo (seleção, layout radial, roteiro, ajustes com clamp, cores) |
 | `practice.ts`, `job-steer.ts`, `session-ux.ts`, `usage.ts` | PRACTICE, cartões de job, busca difusa, ordem do Esc, fila de steer, formatação de uso |
 | `model-choice.ts`, `popover-position.ts` | Seletor de modelo |
 | `keyboard.ts`, `key-capture.ts`, `command-events.ts`, `appearance.ts` | Atalhos e aparência |
@@ -830,7 +833,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `toggleThinking` | `Mod+T` | sessão |
 | `continueTrack` | `Mod+Enter` | home |
 
-- **`localStorage`** (sempre em `try/catch`): `learnharness:graph-settings`, `learnharness:appearance`, `learnharness:keymap`, `learnharness:roadmap-scope`, `learnharness:sidebar-collapsed`, `learnharness:sidebar-track-filter`, `learnharness:quiz-memory`, `learnharness:visual-invert` e `learnharness:setup-dismissed`.
+- **`localStorage`** (sempre em `try/catch`): `learnharness:graph-settings:v2`, `learnharness:appearance`, `learnharness:keymap`, `learnharness:roadmap-scope`, `learnharness:sidebar-collapsed`, `learnharness:sidebar-track-filter`, `learnharness:quiz-memory`, `learnharness:visual-invert` e `learnharness:setup-dismissed`.
 
 ---
 
