@@ -185,6 +185,14 @@ export interface LevelingItemRef {
   title: string;
 }
 
+/** Live progress of a leveling session (GET /api/chats/{id}, additive). */
+export interface LevelingProgress {
+  questions_asked: number;
+  max_questions: number;
+  pending_steps: number;
+  done: boolean;
+}
+
 /** Result of `leveling_done` (Fase 15); `undone_at` is set once it was undone. */
 export interface LevelingResult {
   track_id: string;
@@ -275,6 +283,8 @@ export interface SessionRecord {
   assessment: ProbeAssessment | null;
   /** Fase 15: result of `leveling_done` (leveling sessions only). */
   leveling?: LevelingResult | null;
+  /** Progress of a running leveling (leveling sessions only); refetched on `session:updated`. */
+  leveling_progress?: LevelingProgress | null;
   /** Per-session model override (replaces `slots.strong`), Fase 8B. */
   slot_override?: ModelSlotConfig | null;
   /** Slot actually used by the session (override or strong slot). */

@@ -72,8 +72,11 @@ import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { PlanWindow } from "@/components/plan-window";
 import { AnsweredQuestionCard, PhaseChip, PhaseDivider, ProbeDoneCard } from "@/components/transcript-cards";
-import { LevelingDoneCard, LevelingPhaseChip } from "@/components/leveling-ui";
-import { isLevelingSession } from "@/lib/leveling";
+import { LevelingDoneCard, LevelingPhaseChip, LevelingProgressBand } from "@/components/leveling-ui";
+import { EngineErrorCard } from "@/components/engine-error-card";
+import { OPEN_MODEL_PICKER_EVENT, dispatchCommand } from "@/lib/command-events";
+import { showsEngineErrorCard } from "@/lib/engine-error";
+import { decodeLevelingProgress, isLevelingSession } from "@/lib/leveling";
 import { SourceCitationPane } from "@/components/source-citation-pane";
 import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
@@ -601,6 +604,9 @@ export function ChatView() {
   const execStatus = session.execution_status;
   const needsRecovery =
     session.recovery_required || execStatus === "failed" || execStatus === "interrupted";
+  const engineErrorCard = showsEngineErrorCard(session) && !session.recovery_required;
+  const levelingProgress =
+    isLevelingSession(session) && !session.leveling ? decodeLevelingProgress(session.leveling_progress) : null;
   const isTeaching = execStatus === "queued" || execStatus === "running";
   const isRunning = isRunningStatus(execStatus);
   const compactionAnchor = compactionAnchorId(session.messages, session.compaction);
@@ -855,6 +861,7 @@ export function ChatView() {
             onClose={() => setShowDemo(false)}
           />
         )}
+        {levelingProgress && !levelingProgress.done && <LevelingProgressBand progress={levelingProgress} />}
         {transcript.length === 0 ? (
           <div className="py-16 text-center text-muted-foreground font-prose text-base">
             {t.lessonStarting}
@@ -885,7 +892,16 @@ export function ChatView() {
       {(needsRecovery || isTeaching || actionError) && (
         <div className="px-4 pt-3 bg-background shrink-0 z-20">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
-            {needsRecovery && (
+            {engineErrorCard && session.error && (
+              <EngineErrorCard
+                error={session.error}
+                retrying={isResuming}
+                onRetry={() => void handleResume(false)}
+                onChangeModel={() => dispatchCommand(OPEN_MODEL_PICKER_EVENT)}
+              />
+            )}
+
+            {needsRecovery && !engineErrorCard && (
               <div
                 role="alert"
                 className="flex flex-wrap items-start gap-3 p-3 rounded border border-danger/50 bg-card"

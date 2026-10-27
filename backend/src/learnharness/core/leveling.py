@@ -7,6 +7,7 @@ apply it to a ``TrackConfig`` (recording an undo snapshot) and undo it. Zero I/O
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from learnharness.core.contracts.config import TrackConfig, TrackItem
@@ -29,6 +30,21 @@ def pending_queue(track: TrackConfig) -> list[TrackItem]:
 
 def can_level(track: TrackConfig) -> bool:
     return not track.archived and len(pending_queue(track)) >= MIN_PENDING_FOR_LEVELING
+
+
+def count_questions(kinds: Iterable[str]) -> int:
+    """Questions the learner answered: the budget counts quiz and explain answers only."""
+    return sum(1 for kind in kinds if kind in ("quiz", "explain"))
+
+
+def leveling_progress(track: TrackConfig | None, questions_asked: int, done: bool) -> dict[str, Any]:
+    """What the UI shows while leveling runs: answered questions, the budget and the steps assessed."""
+    return {
+        "questions_asked": questions_asked,
+        "max_questions": MAX_LEVELING_QUESTIONS,
+        "pending_steps": len(pending_queue(track)) if track is not None else 0,
+        "done": done,
+    }
 
 
 def leveling_context(track: TrackConfig, questions_asked: int = 0) -> dict[str, Any]:

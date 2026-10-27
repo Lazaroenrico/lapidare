@@ -11,7 +11,8 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ListChecks, Undo2 } from "lucide-react";
 import { startLeveling, undoLeveling } from "@/lib/tracks-api";
 import { tracksText } from "@/lib/tracks-i18n";
-import type { LevelingResult } from "@/lib/types";
+import { currentQuestionNumber, levelingPercent } from "@/lib/leveling";
+import type { LevelingProgress, LevelingResult } from "@/lib/types";
 import { useLocale } from "./locale-provider";
 import { ConfirmDialog } from "./session-ux";
 import { errMsg } from "./import-ui";
@@ -151,6 +152,40 @@ export function LevelingDoneCard({ leveling, sessionId }: { leveling: LevelingRe
         onCancel={() => setConfirming(false)}
         onConfirm={() => void undo()}
       />
+    </div>
+  );
+}
+
+/** Progress band at the top of a running leveling session: what it is, how far it got. */
+export function LevelingProgressBand({ progress }: { progress: LevelingProgress }) {
+  const { locale } = useLocale();
+  const tt = tracksText(locale);
+  const percent = levelingPercent(progress);
+  const started = progress.questions_asked > 0;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="sticky top-0 z-10 shrink-0 rounded-lg border border-border bg-card px-4 py-3 flex flex-col gap-2"
+    >
+      <span className="font-ui text-[11px] uppercase tracking-wider text-foreground font-semibold">
+        {tt.levelingBandLabel(currentQuestionNumber(progress), progress.max_questions)}
+      </span>
+      <div className="flex items-center gap-3">
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={progress.max_questions}
+          aria-valuenow={progress.questions_asked}
+          className="flex-1 h-1.5 rounded-full bg-accent overflow-hidden"
+        >
+          <div className="h-full rounded-full bg-muted-foreground transition-[width]" style={{ width: `${percent}%` }} />
+        </div>
+        <span className="font-ui text-[11px] text-muted-foreground shrink-0">{tt.levelingBandSteps(progress.pending_steps)}</span>
+      </div>
+      <p className="font-prose text-[14px] leading-snug text-muted-foreground">
+        {started ? tt.levelingBandReassure : tt.levelingBandIntro}
+      </p>
     </div>
   );
 }

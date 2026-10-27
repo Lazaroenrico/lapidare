@@ -988,10 +988,10 @@ class SessionService:
 
     @staticmethod
     def _leveling_context(session: SessionRecord, config) -> dict[str, Any] | None:
-        from learnharness.core.leveling import leveling_context
+        from learnharness.core.leveling import count_questions, leveling_context
 
         track = config.find_track(session.track_id)
-        asked = sum(1 for a in session.answers.values() if a.kind in ("quiz", "explain"))
+        asked = count_questions(a.kind for a in session.answers.values())
         return leveling_context(track, asked) if track is not None else None
 
     async def _compact_at_settle(self, session_id: str, follow_up: bool) -> bool:

@@ -18,7 +18,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_request
 
-from learnharness.core.leveling import MAX_LEVELING_QUESTIONS
+from learnharness.core.leveling import MAX_LEVELING_QUESTIONS, count_questions
 from learnharness.core.plan_mermaid import PlanSyntaxError
 from learnharness.mcp.tools.inputs import QuizChoiceIn, _normalize_choices  # noqa: F401 (re-export)
 from learnharness.services.sessions import SessionConflict
@@ -76,12 +76,16 @@ def _mode_guard(state, session_id, fn: Callable[..., Awaitable[Any]]) -> Callabl
                 "questions about items of the pending queue and close with leveling_done(known_item_ids, "
                 "start_item_id, summary)."
             )
-        if leveling and name in ("probe", "recall") and not session.pending_quiz and sum(
-                1 for a in session.answers.values() if a.kind in ("quiz", "explain")) >= MAX_LEVELING_QUESTIONS:
+        if leveling and name in ("probe", "recall") and not session.pending_quiz and count_questions(
+                a.kind for a in session.answers.values()) >= MAX_LEVELING_QUESTIONS:
             raise ToolError(f"The leveling budget of {MAX_LEVELING_QUESTIONS} questions is spent; call "
                             "leveling_done now with what the answers established.")
         if name == "leveling_done" and not leveling:
             raise ToolError("leveling_done only exists in a track leveling session.")
+        if (name == "leveling_done" and not session.pending_quiz
+                and count_questions(a.kind for a in session.answers.values()) == 0):
+            raise ToolError("No question was answered yet, so there is nothing to base the diagnosis on. Ask at "
+                            "least one probe/recall question about the pending queue, then call leveling_done.")
         return await fn(*args, **kwargs)
 
     return wrapper
