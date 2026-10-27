@@ -321,7 +321,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     () => fuzzyFilter(filterByTrack(filterByMode(sessions, filter), trackFilter), searchQuery, (s) => [s.title, s.topic]),
     [sessions, filter, trackFilter, searchQuery],
   );
-  const showTrackFilter = tracks.length > 0 || sessions.some((s) => s.track_id);
+  const showTrackFilter = tracks.length > 1;
 
   useEffect(() => setCursor(-1), [searchQuery, filter, trackFilter]);
 
@@ -491,20 +491,8 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
         />
       );
     }
-    if (session.status === "active") {
-      return (
-        <span
-          className="inline-block w-2 h-2 rounded-full bg-muted-foreground shrink-0"
-          title={t.statusIdle}
-        />
-      );
-    }
-    return (
-      <span
-        className="inline-block w-2 h-2 rounded-full bg-border shrink-0"
-        title={t.statusCompleted}
-      />
-    );
+    // Idle / completed rows carry no dot: only "needs you" (amber) and "broken" (red) stand out.
+    return null;
   };
 
   if (collapsed) {
@@ -605,8 +593,8 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
       aria-label={view.drawer ? "Lapidare" : undefined}
       className={`w-[260px] bg-background border-r border-border flex flex-col justify-between select-none shrink-0 h-screen h-dvh overflow-hidden text-xs font-ui transition-all duration-200 z-30 ${drawerClasses}`}
     >
-      {/* Top Header & Quick Actions */}
-      <div className="p-3 border-b border-border flex flex-col gap-2.5">
+      {/* Top: logo + collapse; quiet actions; SESSÕES label with inline search; segmented filter */}
+      <div className="px-3 pt-3 pb-2 flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
           <Link
             href="/"
@@ -637,69 +625,70 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           </button>
         </div>
 
-        {/* 3 Quick Action Buttons */}
-        <div className="grid grid-cols-3 gap-1 pt-1">
+        {/* Quiet actions: + ENSINAR · PRÁTICA · (desenho as a small icon) */}
+        <div className="flex items-center gap-1 -mx-1.5">
           <button
             type="button"
             onClick={() => handleStartSession("TEACH")}
             disabled={creatingMode !== null}
-            className="flex items-center justify-center gap-1 py-1.5 px-2 bg-card hover:bg-accent text-foreground border border-border rounded cursor-pointer transition-colors tracking-wider font-semibold active:scale-[0.98]"
-            title={t.newTeachTitle}
+            className="flex items-center gap-1.5 px-1.5 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer transition-colors tracking-wider text-[11px] uppercase disabled:opacity-60"
+            title={t.tipSidebarTeach}
           >
-            <Plus className="w-3 h-3 text-foreground" />
-            <span className="text-[10px]">TEACH</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>{t.navTeach}</span>
           </button>
-
           <button
             type="button"
             onClick={() => handleStartSession("PRACTICE")}
             disabled={creatingMode !== null}
-            className="flex items-center justify-center gap-1 py-1.5 px-2 bg-card hover:bg-accent text-foreground border border-border rounded cursor-pointer transition-colors tracking-wider font-semibold active:scale-[0.98]"
-            title={t.newPracticeTitle}
+            className="flex items-center gap-1.5 px-1.5 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer transition-colors tracking-wider text-[11px] uppercase disabled:opacity-60"
+            title={t.tipSidebarPractice}
           >
-            <Sparkles className="w-3 h-3 text-foreground" />
-            <span className="text-[10px]">PRACTICE</span>
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{t.navPractice}</span>
           </button>
-
           <Link
             href="/draw/new"
-            className="flex items-center justify-center gap-1 py-1.5 px-2 bg-card hover:bg-accent text-foreground border border-border rounded cursor-pointer transition-colors tracking-wider font-semibold active:scale-[0.98]"
+            className="ml-auto p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer transition-colors"
             title={t.newDrawTitle}
+            aria-label={t.newDrawTitle}
           >
-            <Edit3 className="w-3 h-3 text-foreground" />
-            <span className="text-[10px]">{t.drawShort}</span>
+            <Edit3 className="w-3.5 h-3.5" />
           </Link>
         </div>
 
-        {/* Search input */}
-        <div className="relative mt-1">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={searchRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={onSearchKeyDown}
-            placeholder={t.searchSessions}
-            aria-label={t.searchSessions}
-            title={searchCombo ? t.uxSearchSessions(searchCombo) : undefined}
-            className="w-full bg-card border border-border rounded pl-8 pr-2 py-1.5 text-[11px] text-foreground placeholder-muted-foreground focus:border-foreground transition-colors"
-          />
+        {/* SESSÕES + inline search */}
+        <div className="flex items-center gap-2 pt-1">
+          <span className="text-[11px] tracking-wider text-muted-foreground uppercase shrink-0">{t.sessionsLabel}</span>
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder={t.searchSessions.replace(/^⌕\s*/, "")}
+              aria-label={t.searchSessions}
+              title={searchCombo ? t.uxSearchSessions(searchCombo) : t.searchSessions}
+              className="w-full bg-card border border-border rounded-full pl-6 pr-2 py-1 text-[11px] text-foreground placeholder-muted-foreground focus:border-foreground transition-colors"
+            />
+          </div>
         </div>
 
-        {/* Segmented filter: Ensino | Todas | Prática */}
-        <div className="grid grid-cols-3 bg-card p-0.5 border border-border rounded mt-0.5 text-[10.5px]" role="group">
+        {/* Segmented filter: Ensino | Prática | Todas */}
+        <div className="grid grid-cols-3 bg-card p-0.5 border border-border rounded-full text-[10.5px] uppercase tracking-wider" role="group" aria-label={t.tipSidebarFilter} title={t.tipSidebarFilter}>
           {([
             ["TEACH", t.uxFilterTeach],
-            ["ALL", t.uxFilterAll],
             ["PRACTICE", t.uxFilterPractice],
+            ["ALL", t.uxFilterAll],
           ] as const).map(([value, label]) => (
             <button
               key={value}
               type="button"
               onClick={() => setFilter(value)}
               aria-pressed={filter === value}
-              className={`py-1 text-center rounded cursor-pointer transition-colors font-medium ${
+              className={`py-1 text-center rounded-full cursor-pointer transition-colors ${
                 filter === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -708,7 +697,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           ))}
         </div>
 
-        {/* Track filter: Todas / Sem trilha / each track */}
+        {/* Track filter: only with 2+ tracks */}
         {showTrackFilter && (
           <select
             value={trackFilter}
@@ -793,7 +782,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                     setMenuSessionId(session.id);
                   }}
                   aria-current={isActive ? "page" : undefined}
-                  className={`group flex items-start gap-2 p-2 rounded border border-transparent transition-all cursor-pointer ${
+                  className={`group flex items-start gap-2 px-2 py-1.5 rounded border border-transparent transition-all cursor-pointer ${
                     hasMenu ? "pr-7" : ""
                   } ${
                     isActive
@@ -803,14 +792,11 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                       : "hover:bg-card hover:border-accent text-foreground"
                   }`}
                 >
-                  <div className="mt-1">{getStatusIndicator(session)}</div>
+                  {getStatusIndicator(session) && <div className="mt-2">{getStatusIndicator(session)}</div>}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-medium text-[11.5px] truncate font-prose text-foreground group-hover:text-foreground">
+                      <span className="text-[15px] leading-snug truncate font-prose text-foreground group-hover:text-foreground">
                         {session.title || session.topic || t.untitledSession}
-                      </span>
-                      <span className="text-[9px] uppercase px-1 py-0.2 bg-background border border-border text-muted-foreground rounded shrink-0">
-                        {session.mode}
                       </span>
                     </div>
                     {trackRef.kind === "track" && (
@@ -825,17 +811,11 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                     {trackRef.kind === "removed" && tracksLoaded && !tracksError && (
                       <span className="mt-0.5 block text-[9.5px] italic text-muted-foreground">{tt.removedTrack}</span>
                     )}
-                    {session.topic && session.topic !== session.title && (
-                      <p className="text-[10px] text-muted-foreground truncate mt-0.5 font-prose">
-                        {session.topic}
-                      </p>
-                    )}
                     <p
-                      className={`text-[10px] truncate mt-0.5 ${
-                        status.kind === "failed" ? "text-danger" : status.kind === "idle" ? "text-muted-foreground" : "text-warning"
-                      }`}
+                      className={`text-[11px] truncate mt-0.5 ${status.kind === "failed" ? "text-danger" : "text-muted-foreground"}`}
                     >
                       {statusText(status, now)}
+                      {status.kind !== "idle" && relativeTime(session.updated_at, now, locale) ? ` · ${relativeTime(session.updated_at, now, locale)}` : ""}
                     </p>
                   </div>
                 </Link>
@@ -930,30 +910,26 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
       </div>
 
       {/* Footer: Background Agents Tray & Settings */}
-      <div className="border-t border-border bg-background p-2 flex flex-col gap-1.5">
-        {/* Collapsible Background Agents Tray */}
-        <div className="bg-card border border-border rounded overflow-hidden">
+      <div className="border-t border-border bg-background p-2 flex flex-col gap-0.5">
+        {/* Collapsible Background Agents Tray (quiet row; collapsed when empty) */}
+        <div className="overflow-hidden">
           <button
             type="button"
             onClick={() => setShowAgentsTray((prev) => !prev)}
-            className="w-full flex items-center justify-between p-2 text-left text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+            aria-expanded={showAgentsTray}
+            title={t.agentsTray}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer transition-colors"
           >
-            <div className="flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="font-semibold tracking-wider text-[10px]">
-                {t.agentsTray}
-              </span>
+            <div className="flex items-center gap-2">
+              <Cpu className="w-3.5 h-3.5" />
+              <span className="tracking-wider text-[10.5px]">{t.agentsTray}</span>
               {runningJobs.length > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 bg-warning/20 text-warning text-[9.5px] rounded-full border border-warning/40">
                   {runningJobs.length}
                 </span>
               )}
             </div>
-            {showAgentsTray ? (
-              <ChevronUp className="w-3 h-3 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="w-3 h-3 text-muted-foreground" />
-            )}
+            {showAgentsTray ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
 
           {showAgentsTray && (

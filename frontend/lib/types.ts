@@ -185,6 +185,14 @@ export interface LevelingItemRef {
   title: string;
 }
 
+/** Live progress of a leveling session (GET /api/chats/{id}, additive). */
+export interface LevelingProgress {
+  questions_asked: number;
+  max_questions: number;
+  pending_steps: number;
+  done: boolean;
+}
+
 /** Result of `leveling_done` (Fase 15); `undone_at` is set once it was undone. */
 export interface LevelingResult {
   track_id: string;
@@ -275,6 +283,8 @@ export interface SessionRecord {
   assessment: ProbeAssessment | null;
   /** Fase 15: result of `leveling_done` (leveling sessions only). */
   leveling?: LevelingResult | null;
+  /** Progress of a running leveling (leveling sessions only); refetched on `session:updated`. */
+  leveling_progress?: LevelingProgress | null;
   /** Per-session model override (replaces `slots.strong`), Fase 8B. */
   slot_override?: ModelSlotConfig | null;
   /** Slot actually used by the session (override or strong slot). */
@@ -622,9 +632,22 @@ export interface McpImportServer {
   args: string[];
   enabled: boolean;
   has_auth: boolean;
+  /** Como o servidor autentica; ausente em backends antigos (equivale a token/none via has_auth). */
+  auth_mode?: McpAuthMode;
+  oauth_scopes?: string[];
+  /** Presente só quando `auth_mode === "oauth"`. */
+  oauth?: McpOAuthState | null;
   catalog_tool?: string | null;
   content_tool?: string | null;
   content_id_argument?: string | null;
+}
+
+export type McpAuthMode = "none" | "token" | "oauth";
+export type McpOAuthStatus = "signed_out" | "pending" | "signed_in" | "error";
+
+export interface McpOAuthState {
+  status: McpOAuthStatus;
+  error?: string;
 }
 
 /** Corpo de `POST /api/import/mcp/servers` (cria ou substitui por `name`). */
@@ -636,6 +659,8 @@ export interface McpServerUpsert {
   args?: string[];
   enabled?: boolean;
   auth_token?: string;
+  auth_mode?: McpAuthMode;
+  oauth_scopes?: string[];
   catalog_tool?: string;
   content_tool?: string;
   content_id_argument?: string;

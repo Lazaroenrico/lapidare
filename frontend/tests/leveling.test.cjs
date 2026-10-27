@@ -63,3 +63,16 @@ test('leveling strings exist in both languages', () => {
   assert.equal(i18n.tracksText('pt-BR').levelingKnown(2), '2 passos marcados como já sabidos');
   assert.equal(i18n.tracksText('en').levelingPhase, 'Leveling');
 });
+
+test('leveling progress decoding, bar percent and question number', () => {
+  const p = lv.decodeLevelingProgress({questions_asked: 3, max_questions: 12, pending_steps: 13, done: false});
+  assert.deepEqual(p, {questions_asked: 3, max_questions: 12, pending_steps: 13, done: false});
+  assert.equal(lv.levelingPercent(p), 25);
+  assert.equal(lv.currentQuestionNumber(p), 4);
+  assert.equal(lv.currentQuestionNumber({questions_asked: 12, max_questions: 12}), 12);
+  assert.equal(lv.decodeLevelingProgress(null), null);
+  assert.equal(lv.decodeLevelingProgress({questions_asked: 1}), null);
+  assert.equal(lv.levelingPercent({questions_asked: 20, max_questions: 12}), 100);
+  assert.match(i18n.tracksText('pt-BR').levelingBandLabel(3, 12), /Pergunta 3 de até 12/);
+  assert.match(i18n.tracksText('en').levelingBandSteps(13), /13/);
+});

@@ -10,6 +10,7 @@ from learnharness.api.state import get_app_state
 from learnharness.core.contracts.config import EffortLevel
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import SessionMode, SessionRecord, slot_override_for
+from learnharness.core.leveling import count_questions, leveling_progress
 from learnharness.core.plan_mermaid import derive_plan_statuses
 from learnharness.services.practice import attempt_prefix, next_request, public_practice
 from learnharness.services.sessions import SessionConflict, now
@@ -133,7 +134,12 @@ def _summarize_session(session: SessionRecord) -> dict[str, Any]:
 def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
     """Session payload plus the slot its next teaching turn will use."""
     data = _serialize_session(session)
-    data["effective_slot"] = session.teaching_slot(state.get_config().slots.strong).model_dump(mode="json")
+    config = state.get_config()
+    data["effective_slot"] = session.teaching_slot(config.slots.strong).model_dump(mode="json")
+    if session.context_kind == "leveling":  # additive: progress band of a leveling session
+        data["leveling_progress"] = leveling_progress(
+            config.find_track(session.track_id), count_questions(a.kind for a in session.answers.values()),
+            session.leveling is not None)
     return data
 
 

@@ -46,6 +46,10 @@ import {
   buildImportMcpItems,
   buildListMcpItems,
   buildListMcpServers,
+  buildMcpOAuthLogin,
+  buildMcpOAuthLogout,
+  decodeAuthorizationUrl,
+  decodeMcpServer,
   buildLocalImport,
   buildTestMcpServer,
   buildUpsertMcpServer,
@@ -155,9 +159,14 @@ export function isAbortError(err: unknown): boolean {
 // --- Import multi-fonte (Fase 3B) ---
 // Todas silenciosas: os componentes de import mostram o erro inline.
 
-export const listMcpServers = () => send<McpImportServer[]>(buildListMcpServers());
-export const upsertMcpServer = (input: McpServerUpsert) =>
-  send<McpImportServer>(buildUpsertMcpServer(input));
+export const listMcpServers = async () =>
+  (await send<McpImportServer[]>(buildListMcpServers())).map(decodeMcpServer);
+export const upsertMcpServer = async (input: McpServerUpsert) =>
+  decodeMcpServer(await send<McpImportServer>(buildUpsertMcpServer(input)));
+/** Inicia o login OAuth; quem chama abre a URL devolvida (o backend nunca abre o navegador). */
+export const loginMcpOAuth = async (name: string) =>
+  decodeAuthorizationUrl(await send<unknown>(buildMcpOAuthLogin(name)));
+export const logoutMcpOAuth = (name: string) => send<unknown>(buildMcpOAuthLogout(name));
 export const deleteMcpServer = (name: string) => send<void>(buildDeleteMcpServer(name));
 export const testMcpServer = (name: string) => send<McpServerTestResult>(buildTestMcpServer(name));
 export const listMcpItems = (name: string, signal?: AbortSignal) =>

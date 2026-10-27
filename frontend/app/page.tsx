@@ -32,8 +32,6 @@ export default function HomePage() {
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  // The empty Home's "Importar notas para o grafo" opens straight on the graph tab.
-  const [importTab, setImportTab] = useState<"graph" | undefined>(undefined);
   const [pendingTopic, setPendingTopic] = useState("");
   const [selection, setSelection] = useState<Selection>([]);
   const [nodeNames, setNodeNames] = useState<Map<string, string>>(new Map());
@@ -96,24 +94,13 @@ export default function HomePage() {
           selection={selection}
           onSelectionChange={setSelection}
           onSnapshot={handleSnapshot}
-          onOpenImport={() => {
-            setImportTab(undefined);
-            setIsImportOpen(true);
-          }}
+          onOpenImport={() => setIsImportOpen(true)}
           focusId={focusId}
         />
       </div>
 
       {/* Fase 18: first steps over the empty canvas (gone once the first node arrives) */}
-      <HomeEmptyState
-        graphLoaded={graphInfo.loaded}
-        nodeCount={graphInfo.nodeCount}
-        roadmap={graphInfo.roadmap}
-        onOpenImport={() => {
-          setImportTab("graph");
-          setIsImportOpen(true);
-        }}
-      />
+      <HomeEmptyState graphLoaded={graphInfo.loaded} nodeCount={graphInfo.nodeCount} roadmap={graphInfo.roadmap} />
 
       {/* Floating composer dock (selection chip + track chip above it) */}
       <div className="absolute bottom-4 left-0 right-0 px-4 pointer-events-none z-20">
@@ -131,7 +118,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      <ImportDialog isOpen={isImportOpen} initialTab={importTab} onClose={() => setIsImportOpen(false)} />
+      <ImportDialog isOpen={isImportOpen} onClose={() => setIsImportOpen(false)} />
     </div>
   );
 }

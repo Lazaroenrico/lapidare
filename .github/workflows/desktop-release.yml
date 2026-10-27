@@ -1,0 +1,222 @@
+name: Desktop release
+
+# Tag v* → checks, Linux (AppImage/deb/rpm) and macOS (unsigned dmg arm64/x64), draft release, asset verification.
+# A human publishes the draft.
+# workflow_dispatch builds the same artifacts but never touches releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  quality:
+    name: Checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd frontend && npm ci
+      - run: cd desktop && npm ci
+      - name: Tag must match desktop/package.json
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p 'require("./desktop/package.json").version')
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
+      - run: make check
+      - run: cd desktop && npm test
+
+  package:
+    name: Linux (AppImage, deb, rpm)
+    needs: quality
+    # The oldest supported runner keeps the build-time glibc baseline low.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # rpm provides rpmbuild (electron-builder's rpm target). The AppImage needs no libfuse2 (static runtime).
+      - run: sudo apt-get update && sudo apt-get install -y xvfb rpm
+      - run: cd frontend && npm ci
+      # build-web → build-python → guard → smoke → electron-builder (no publish here).
+      - run: make desktop TARGETS="AppImage deb rpm" KEEP_UNPACKED=1
+      - name: Smoke the extracted AppImage backend
+        run: |
+          cd desktop/dist
+          ./Lapidare-*.AppImage --appimage-extract >/dev/null
+          node ../scripts/smoke.mjs --python squashfs-root/resources/python --web squashfs-root/resources/web
+          test -f squashfs-root/resources/icon.png
+      - name: GUI smoke (window loads the UI)
+        run: |
+          home=$(mktemp -d)
+          HOME="$home" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
+          for _ in $(seq 1 60); do
+            grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log" 2>/dev/null && break
+            sleep 1
+          done
+          cat "$home/.config/Lapidare/logs/main.log"
+          grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log"
+          pkill -f squashfs-root/lapidare || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lapidare-linux-x64
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.rpm
+            desktop/dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  package-mac:
+    name: macOS ${{ matrix.arch }} (unsigned dmg)
+    needs: quality
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x64
+            # Intel runner (macos-13 was retired by GitHub).
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd frontend && npm ci
+      # Same pipeline as Linux; on Darwin the Makefile builds the dmg for the runner's arch.
+      # The Python payload is installed ON the runner, so wheels match the target.
+      - run: make desktop
+      - run: ls -la desktop/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lapidare-mac-${{ matrix.arch }}
+          path: desktop/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  compat:
+    name: Backend on ${{ matrix.image }}
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "debian:12"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lapidare-linux-x64
+      - name: Start the bundled backend and probe it
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl >/dev/null
+          chmod +x Lapidare-*.AppImage
+          ./Lapidare-*.AppImage --appimage-extract >/dev/null
+          vault=$(mktemp -d)
+          LEARNHARNESS_PORT=8790 LEARNHARNESS_VAULT_PATH="$vault" LEARNHARNESS_DESKTOP_SECRET=ci \
+            LEARNHARNESS_STATIC_DIR=squashfs-root/resources/web \
+            squashfs-root/resources/python/bin/python3 -I -m learnharness.desktop &
+          for _ in $(seq 1 60); do
+            curl -sf -H "x-lapidare-desktop: ci" http://127.0.0.1:8790/api/health && break
+            sleep 1
+          done
+          curl -sf -H "x-lapidare-desktop: ci" http://127.0.0.1:8790/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/api/health)" = 403
+          curl -sf http://127.0.0.1:8790/chat/anything | grep -qi "<html"
+      - name: The .deb installs with its dependencies and registers the menu entry
+        run: |
+          apt-get install -y -qq ./Lapidare-*.deb >/dev/null
+          test -x /opt/Lapidare/lapidare
+          test -d /opt/Lapidare/resources/python
+          grep -q "StartupWMClass=lapidare" /usr/share/applications/lapidare.desktop
+          grep -q "^Categories=.*Education" /usr/share/applications/lapidare.desktop
+
+  compat-rpm:
+    name: Install the .rpm on Fedora
+    needs: package
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lapidare-linux-x64
+      - run: |
+          dnf install -y -q ./Lapidare-*.rpm
+          test -x /opt/Lapidare/lapidare
+          test -d /opt/Lapidare/resources/python
+          grep -q "StartupWMClass=lapidare" /usr/share/applications/lapidare.desktop
+
+  # One job owns the draft: build jobs only upload workflow artifacts, so there is no
+  # race between runners creating the same release.
+  publish:
+    name: Upload to the draft release
+    needs: [package, package-mac, compat, compat-rpm]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lapidare-*
+          path: assets
+          merge-multiple: true
+      - name: Create the draft (if needed) and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la assets
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber assets/*
+
+  verify:
+    name: Verify draft release
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      # electron-builder embeds the AppImage's blockmap in the file itself: no separate asset.
+      # There is no macOS update feed (no auto-update on Mac), so no latest-mac.yml or dmg blockmaps either.
+      - name: Draft holds exactly the Linux and macOS packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and (.tag_name == \"$GITHUB_REF_NAME\")) | .assets[].name" | sort)
+          expected=$(printf '%s\n' \
+            "Lapidare-$version-x86_64.AppImage" \
+            "Lapidare-$version-amd64.deb" \
+            "Lapidare-$version-x86_64.rpm" \
+            latest-linux.yml \
+            "Lapidare-$version-mac-arm64.dmg" \
+            "Lapidare-$version-mac-x64.dmg" | sort)
+          echo "$assets"
+          test "$assets" = "$expected" || { echo "::error::draft assets differ from expected"; echo "$expected"; exit 1; }

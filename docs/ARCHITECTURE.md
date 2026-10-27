@@ -742,7 +742,7 @@ O watcher (`vault/watcher.py`, `watchfiles`) ignora tudo em `.harness/` exceto `
 |---|---|
 | `configured`, `language` (`pt-BR`\|`en`), `vault_path`, `folders` | Básico |
 | `slots.{strong,fast,background}` | `{engine, model_id, effort}` (5.5) |
-| `content_mcps[]` | `McpServerConfig {name, transport: stdio\|http\|sse, url \| command+args, env, enabled, catalog_tool, content_tool, content_id_argument, auth_ref, auth_env_var}` |
+| `content_mcps[]` | `McpServerConfig {name, transport: stdio\|http\|sse, url \| command+args, env, enabled, catalog_tool, content_tool, content_id_argument, auth_ref, auth_env_var, auth_mode: none\|token\|oauth, oauth_scopes}` |
 | `tracks[]`, `active_track_id` | Seção 10 |
 | `prompt_overrides` | `{path: bool}` |
 | `graph.extraction_chunk_tokens` | Padrão 4096 (mínimo 500 na rota) |
@@ -762,6 +762,7 @@ A gravação usa só o formato novo.
 ### 11.5 Segredos (fora do Vault)
 
 - Tokens de MCP de conteúdo ficam em `$XDG_CONFIG_HOME/learnharness/secrets.json` (padrão `~/.config`, modo `0600`, `services/secrets.py`). O `config.json` guarda só o `auth_ref`: uma chave nesse arquivo ou `env:VAR`. O token nunca volta nas respostas da API, e em `stdio` chega ao processo só por variável de ambiente.
+- Login OAuth de MCP remoto (`auth_mode: "oauth"`, só `http`/`sse`): tokens e o registro dinâmico do cliente ficam em `$XDG_CONFIG_HOME/learnharness/mcp-oauth/<hash(nome,url)>.json` (diretório `0700`, arquivo `0600`, escrita atômica; `services/mcp_oauth_store.py`), nunca no Vault. `POST /api/import/mcp/servers/{name}/oauth/login` inicia o fluxo em segundo plano (`mcp/oauth_flow.py`) e devolve `authorization_url`; a UI a abre com `window.open` (no desktop o Electron a encaminha ao navegador do sistema). O redirect chega a um receptor só em `127.0.0.1:<porta efêmera>/callback` (timeout de 5 min, um fluxo por servidor, `state` e `Host` verificados). Ao terminar, `config:updated {kind:"mcp_oauth"}` faz a UI rebuscar `oauth.status` (`signed_out|pending|signed_in|error`) em `GET /api/import/mcp/servers`. `POST .../oauth/logout` apaga os tokens.
 - A chave do `google-genai` vem de `GEMINI_API_KEY` ou da memória do processo (`AppState.api_key`).
 - O token do GitHub vem de `GITHUB_TOKEN`/`GH_TOKEN` ou de `gh auth token`.
 - O token MCP do agy fica só no work dir da sessão (`0600`).
@@ -929,6 +930,77 @@ Na época desta revisão:
 | Frontend (`tests/*.test.cjs`, 15 arquivos) | ~112 |
 
 Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
+
+### 15.1 Distribuição desktop (Linux e macOS)
+
+`make desktop` gera os pacotes em `desktop/dist/`: Linux x64 em **AppImage** (padrão), **.deb** e **.rpm** (`TARGETS="AppImage deb rpm"`; o rpm exige `rpmbuild` na máquina), e macOS em **.dmg** da arquitetura da máquina (`Lapidare-<versão>-mac-arm64.dmg` ou `-mac-x64.dmg`). O Electron como casca e um CPython 3.12 relocável ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) rodando o backend, que também serve o `next export`. Ninguém precisa ter Python, Node ou `uv` instalado. A inferência continua nos conectores Google (`agy`/`gemini` detectados no sistema; `google-genai` embutido).
+
+```
+resources/
+├─ app.asar  → desktop/main.cjs, desktop/policy.cjs (casca; sem lógica do app)
+├─ python/   → CPython + dependências exatas do uv.lock + learnharness
+└─ web/      → frontend/out (LAPIDARE_EXPORT=1 next build) + fontes do Excalidraw
+```
+
+**Processo.** O `main.cjs`:
+
+1. pega o lock de instância única (a segunda abertura só foca a janela);
+2. resolve o `PATH` do login shell, porque um AppImage aberto pelo menu herda um `PATH` mínimo e a detecção de `agy`/`gemini`/`git` depende dele;
+3. escolhe uma porta livre em `127.0.0.1` e gera um segredo aleatório por execução;
+4. inicia `python3 -I -m learnharness.desktop` num grupo de processos próprio, com o log em `~/.config/Lapidare/logs/main.log`;
+5. espera `GET /api/health` e só então abre a janela (`sandbox`, `contextIsolation`, sem preload).
+
+Ao sair, manda `SIGTERM` ao grupo e `SIGKILL` 6 s depois.
+
+| Variável (definida pela casca) | Papel |
+|---|---|
+| `LEARNHARNESS_PORT` | Porta do uvicorn e da URL do MCP interno |
+| `LEARNHARNESS_STATIC_DIR` | Liga o `StaticSite` (`api/static_site.py`) em `/`, depois de todas as rotas |
+| `LEARNHARNESS_CORS_ORIGINS` | `http://127.0.0.1:<porta>`, a própria origem |
+| `LEARNHARNESS_DESKTOP_SECRET` | Exige o header `x-lapidare-desktop` em todo `/api` |
+| `LEARNHARNESS_APP_VERSION` | Dispara o snapshot do `.harness/` quando a versão muda |
+| `LEARNHARNESS_ORIG_LD_LIBRARY_PATH` | Valor original, restaurado só nos processos filhos |
+
+**Segredo por execução.** Só o processo main do Electron conhece o segredo. Ele o injeta (`session.webRequest`) apenas em requisições `/api` da própria origem, vindas do frame principal de uma janela do app (`desktop/policy.cjs`). Outro processo local que descubra a porta recebe `403`. `/internal/mcp` continua protegido pelo Bearer por execução.
+
+**Ambiente dos filhos.** Todo subprocesso do backend parte de `child_env()` (`learnharness/child_env.py`): sem `APPDIR`, `APPIMAGE`, `ELECTRON_*`, `PYTHONHOME`/`PYTHONPATH`, sem o `LD_LIBRARY_PATH` do AppImage e sem o segredo. O stdio de MCP de conteúdo continua com a sua allow-list própria.
+
+**Rotas dinâmicas.** `/chat/[id]` e `/draw/[slug]` são exportadas uma vez com o placeholder `_`. O `StaticSite` serve `chat/_.html` para qualquer `/chat/<id>`, e a página lê o id real da URL (`lib/route-param.ts`), nunca de `params`.
+
+**Dados e banco.** Nada do usuário vai no AppImage: `langgraph.sqlite`, `*.jsonl` e `config.json` ficam em `<vault>/.harness/`.
+
+- **Um processo por Vault.** `vault/ownership.py` mantém um `flock` em `$TMPDIR/learnharness-locks-<uid>/vault-<hash>` durante a vida do processo. Sem isso, o `recover` de um segundo backend marcaria como interrompido o trabalho vivo do primeiro.
+- **Barreira de schema.** `core/schema_gate.py` recusa um `config.json` com `schema_version` maior que o suportado.
+- **Snapshot por versão.** Quando `LEARNHARNESS_APP_VERSION` difere de `.harness/app-version`, o `langgraph.sqlite` (API de backup do SQLite, segura com WAL) e o `config.json` são copiados para `.harness/backups/<versão-anterior>/`, guardando os dois últimos. Voltar de versão = restaurar esse snapshot.
+- **Versões fixas.** O SQLite vem do próprio CPython embutido. O `langgraph-checkpoint-sqlite` vem do `uv.lock`, e `tests/integration/test_langgraph_compat.py` abre uma fixture gravada pela versão atual.
+- **Pasta sincronizada.** `GET /api/setup/status` devolve `vault_warning` quando o Vault está em Dropbox/Syncthing/rede, onde o WAL do SQLite não é seguro.
+
+| Código de saída de `learnharness.desktop` | Significado (diálogo da casca) |
+|---|---|
+| `75` | Vault já aberto em outra instância (app ou `make dev`) |
+| `76` | Dados gravados por uma versão mais nova |
+| `2` | `LEARNHARNESS_PORT` ausente ou inválida |
+| `3` | Outra falha de startup (código do uvicorn) |
+
+**Build.** `make desktop`:
+
+1. `desktop/scripts/build-web.sh`: export do frontend;
+2. `desktop/scripts/build-python.sh`: CPython com URL e sha256 fixos por plataforma (`x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`; escolhido por `uname`, ou `PY_TARGET` explícito), `uv export --frozen` + `pip install --require-hashes` (roda na própria máquina de build, então as wheels são as do alvo; não há build cruzado), `compileall`;
+3. `desktop/scripts/guard-payload.mjs`: falha se o bundle tiver `.env*`, `secrets.json`, `active-vault`, `.harness`/`.gemini`/`.agents`, `*.jsonl`, `*.sqlite` ou o `$HOME` do dev em texto;
+4. `desktop/scripts/smoke.mjs`: sobe o Python empacotado com um Vault descartável e testa as rotas;
+5. `electron-builder` (`desktop/electron-builder.yml`, fuses `runAsNode`/`NODE_OPTIONS`/inspect desligados, `onlyLoadAppFromAsar`).
+
+Ao final, o `make desktop` apaga a montagem intermediária (`dist/linux-unpacked`, `dist/__appImage-x64`, `dist/mac*`; ~1,4 GB) e deixa só os pacotes; a CI a mantém com `KEEP_UNPACKED=1` para o smoke. `make desktop-clean` apaga todas as saídas: `desktop/build`, `desktop/dist`, o CPython baixado (`desktop/.cache`), `frontend/out` e o cache do Next (`frontend/.next/cache`).
+
+**Formatos.**
+
+- **AppImage** usa o runtime estático novo (`toolsets.appimage: "1.0.3"`, runtime 20251108): monta com FUSE 3 e não exige `libfuse2`. Na primeira execução ele mesmo se integra ao menu de apps (lê `resources/icon.png`; ver `desktop/integration.cjs`). `make desktop-install` faz a mesma integração a partir do build local.
+- **.deb / .rpm** instalam em `/opt/Lapidare` com `lapidare.desktop` (`Categories=Education`, `StartupWMClass=lapidare`) e ícone em `hicolor`; o pacote se chama `lapidare`. Mantenedor e URL vêm do `author`/`homepage` do `desktop/package.json`.
+- **.dmg** (macOS arm64 e x64) **sem assinatura nem notarização** (`identity: null`, `hardenedRuntime: false`); o Gatekeeper avisa na primeira abertura. Sem auto-update no Mac. O ícone é gerado de `desktop/build-resources/icon-1024.png` (a partir de `docs/assets/lapidare_logo.svg`).
+
+**Portabilidade do backend.** O aviso de Vault em pasta sincronizada lê `/proc/self/mounts`; no macOS o arquivo não existe e a checagem de rede/FUSE simplesmente não avisa (`vault/sync_warning.py`, coberto em `tests/unit/test_sync_hint.py`). `flock` e `start_new_session` funcionam igual no macOS.
+
+**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em paralelo: Linux em `ubuntu-22.04` (AppImage, deb e rpm), macOS em `macos-14` (arm64) e `macos-15-intel` (x64). No Linux há ainda o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`), o backend em `ubuntu:22.04` e `debian:12`, a instalação do `.deb` nessas imagens e do `.rpm` no Fedora. Um único job `publish` cria o release **draft** e sobe os artefatos (sem corrida entre runners); `verify` confere a lista exata de assets (AppImage, deb, rpm, `latest-linux.yml`, dois dmg). Publicar o draft é manual. O auto-update (`electron-updater`, só Linux/AppImage, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
 
 ---
 

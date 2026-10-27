@@ -144,6 +144,16 @@ const ptBR = {
   levelingUndoing: "Desfazendo…",
   levelingUndone: "Nivelamento desfeito: os passos voltaram a ficar pendentes.",
   levelingUndoFailed: "Não foi possível desfazer o nivelamento.",
+  levelingBandLabel: (n: number, max: number) => `NIVELAMENTO · Pergunta ${n} de até ${max}`,
+  levelingBandSteps: (n: number) => `etapas da trilha: ${n}`,
+  levelingBandIntro:
+    "O Lapidare vai fazer algumas perguntas para descobrir quais etapas da sua trilha você já domina. As que você dominar ficam marcadas como Niveladas e a trilha começa no ponto certo.",
+  levelingBandReassure: "Erre à vontade: isso só decide por onde a trilha começa. Nada vira nota.",
+  engineErrorTitle: "O modelo não conseguiu responder",
+  engineErrorQuota: "Sua cota deste modelo acabou. Troque o modelo desta sessão para continuar.",
+  engineErrorChangeModel: "Trocar modelo",
+  engineErrorRetry: "Tentar de novo",
+  engineErrorRetrying: "Tentando…",
 };
 
 type TracksText = typeof ptBR;
@@ -279,6 +289,16 @@ const en: TracksText = {
   levelingUndoing: "Undoing…",
   levelingUndone: "Leveling undone: the steps are pending again.",
   levelingUndoFailed: "Could not undo the leveling.",
+  levelingBandLabel: (n: number, max: number) => `LEVELING · Question ${n} of up to ${max}`,
+  levelingBandSteps: (n: number) => `track steps: ${n}`,
+  levelingBandIntro:
+    "Lapidare will ask a few questions to find out which steps of your track you already master. The ones you master are marked as Leveled and the track starts at the right point.",
+  levelingBandReassure: "Feel free to get it wrong: this only decides where the track starts. Nothing becomes a grade.",
+  engineErrorTitle: "The model could not answer",
+  engineErrorQuota: "Your quota for this model is spent. Switch this session's model to continue.",
+  engineErrorChangeModel: "Change model",
+  engineErrorRetry: "Try again",
+  engineErrorRetrying: "Trying…",
 };
 
 export function tracksText(locale: string): TracksText {

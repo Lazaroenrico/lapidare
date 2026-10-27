@@ -20,7 +20,9 @@ from learnharness.core.leveling import (
     LEVELED_STATUS_DETAIL,
     LevelingError,
     apply_leveling,
+    count_questions,
     leveling_context,
+    leveling_progress,
     undo_blocker,
     undo_leveling,
 )
@@ -75,6 +77,13 @@ async def _answer_next(state: AppState, sid: str, **answer: Any):
     return await state.sessions.answer(QuizSubmission(quiz_id=pending.quiz_id, session_id=sid, **answer))
 
 
+async def _ask_one(state: AppState, sid: str, tools: dict[str, Any]) -> None:
+    """One answered probe, so ``leveling_done`` has something to stand on."""
+    task = asyncio.create_task(tools["probe"](**PROBE))
+    await _answer_next(state, sid, chosen_index=0, confidence=90)
+    await asyncio.wait_for(task, 3)
+
+
 # ----------------------------------------------------------------- pure rules
 
 
@@ -97,6 +106,13 @@ def test_context_lists_the_pending_queue_in_order_with_pending_prerequisites() -
 def test_invalid_leveling_calls_are_refused(known: list[str], start: str, match: str) -> None:
     with pytest.raises(LevelingError, match=match):
         apply_leveling(_track(), known, start)
+
+
+def test_progress_counts_answers_and_pending_steps() -> None:
+    assert leveling_progress(_track(), 3, False) == {
+        "questions_asked": 3, "max_questions": 12, "pending_steps": 5, "done": False}
+    assert leveling_progress(None, 0, True)["pending_steps"] == 0
+    assert count_questions(["quiz", "explain", "recall", "probe"]) == 2
 
 
 def test_apply_and_undo_restore_the_flags() -> None:
@@ -172,10 +188,8 @@ async def test_tool_refusals_in_a_leveling_session(leveled_vault: Path, app_stat
                            ("probe_done", ([{"strand": "x", "assessment": "y"}],))):
             with pytest.raises(ToolError, match="not available while leveling"):
                 await tools[name](*args)
-        with pytest.raises(ToolError, match="Unknown item id"):
-            await tools["leveling_done"](["s1", "zz"], "s3", "x")
-        with pytest.raises(ToolError, match="also in known_item_ids"):
-            await tools["leveling_done"](["s1", "s2"], "s2", "x")
+        with pytest.raises(ToolError, match="Ask at least one"):
+            await tools["leveling_done"](["s1"], "s2", "x")
 
         task = asyncio.create_task(tools["probe"](**PROBE))
         await wait_until(lambda: app_state.sessions.get(session.id).pending_quiz)
@@ -183,6 +197,11 @@ async def test_tool_refusals_in_a_leveling_session(leveled_vault: Path, app_stat
             await tools["leveling_done"](["s1"], "s2", "x")
         await _answer_next(app_state, session.id, chosen_index=0, confidence=90)
         await asyncio.wait_for(task, 3)
+
+        with pytest.raises(ToolError, match="Unknown item id"):
+            await tools["leveling_done"](["s1", "zz"], "s3", "x")
+        with pytest.raises(ToolError, match="also in known_item_ids"):
+            await tools["leveling_done"](["s1", "s2"], "s2", "x")
 
         result = await tools["leveling_done"]('["s1"]', "s2", "Sabe funções.")
         assert result["ok"] and result["known"] == 1
@@ -216,6 +235,7 @@ async def test_leveling_done_marks_snapshots_and_undo(leveled_vault: Path, app_s
     session = await app_state.leveling.start("trk-calc", start=False)
     tools = {t.__name__: t for t in session_tools(app_state, session.id)}
     try:
+        await _ask_one(app_state, session.id, tools)
         await tools["leveling_done"](["s1", "s2"], "s3", "Domina funções e limites.")
         record = app_state.sessions.get(session.id)
         assert record.phase == "completed" and record.execution_status == "completed"
@@ -246,6 +266,7 @@ async def test_undo_is_blocked_once_a_leveled_step_changed(leveled_vault: Path, 
     session = await app_state.leveling.start("trk-calc", start=False)
     tools = {t.__name__: t for t in session_tools(app_state, session.id)}
     try:
+        await _ask_one(app_state, session.id, tools)
         await tools["leveling_done"](["s1"], "s2", "Sabe funções.")
         await app_state.tracks.complete("trk-calc", "s2")  # the learner moved on
         async with _http(app_state) as client:
@@ -287,3 +308,22 @@ async def test_end_to_end_probe_probe_leveling_done(tmp_path: Path) -> None:
         assert "leveling_done" in prompt
     finally:
         await state.close()
+
+
+async def test_chat_payload_exposes_leveling_progress(leveled_vault: Path, app_state: AppState) -> None:
+    session = await app_state.leveling.start("trk-calc", start=False)
+    tools = {t.__name__: t for t in session_tools(app_state, session.id)}
+    try:
+        async with _http(app_state) as client:
+            first = (await client.get(f"/api/chats/{session.id}")).json()
+            assert first["leveling_progress"] == {
+                "questions_asked": 0, "max_questions": 12, "pending_steps": 5, "done": False}
+            await _ask_one(app_state, session.id, tools)
+            assert (await client.get(f"/api/chats/{session.id}")).json()["leveling_progress"]["questions_asked"] == 1
+            await tools["leveling_done"](["s1"], "s2", "Sabe funções.")
+            last = (await client.get(f"/api/chats/{session.id}")).json()["leveling_progress"]
+            assert last["done"] is True and last["pending_steps"] == 4
+            other = await app_state.sessions.create("TEACH", topic="Outro", start=False)
+            assert "leveling_progress" not in (await client.get(f"/api/chats/{other.id}")).json()
+    finally:
+        await app_state.close()

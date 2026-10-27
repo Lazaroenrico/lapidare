@@ -9,9 +9,17 @@
 
 import React, { useEffect, useState } from "react";
 import { Server, Plug, Trash2, Pencil, X } from "lucide-react";
-import { deleteMcpServer, listMcpServers, testMcpServer, upsertMcpServer } from "@/lib/api";
-import type { McpImportServer, McpServerTestResult, McpTransport } from "@/lib/types";
+import {
+  deleteMcpServer,
+  listMcpServers,
+  loginMcpOAuth,
+  logoutMcpOAuth,
+  testMcpServer,
+  upsertMcpServer,
+} from "@/lib/api";
+import type { McpAuthMode, McpImportServer, McpServerTestResult, McpTransport } from "@/lib/types";
 import { useLocale } from "./locale-provider";
+import { useEventSubscription } from "./server-events";
 import { Badge, Banner, Btn, Check, Field, cx, errMsg, handleListKeys, inputClass } from "./import-ui";
 
 interface Draft {
@@ -21,6 +29,8 @@ interface Draft {
   command: string;
   argsText: string;
   token: string;
+  authMode: McpAuthMode;
+  scopesText: string;
   enabled: boolean;
   catalog_tool: string;
   content_tool: string;
@@ -34,6 +44,8 @@ const EMPTY_DRAFT: Draft = {
   command: "",
   argsText: "",
   token: "",
+  authMode: "none",
+  scopesText: "",
   enabled: true,
   catalog_tool: "",
   content_tool: "",
@@ -47,6 +59,8 @@ const toDraft = (s: McpImportServer): Draft => ({
   command: s.command ?? "",
   argsText: (s.args ?? []).join("\n"),
   token: "",
+  authMode: s.auth_mode ?? (s.has_auth ? "token" : "none"),
+  scopesText: (s.oauth_scopes ?? []).join(" "),
   enabled: s.enabled,
   catalog_tool: s.catalog_tool ?? "",
   content_tool: s.content_tool ?? "",
@@ -86,6 +100,8 @@ export function McpServerManager({
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState<string | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   const commit = (next: McpImportServer[]) => {
     setServers(next);
@@ -104,6 +120,15 @@ export function McpServerManager({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Login/logout OAuth terminam no backend (callback loopback): ele avisa por SSE e refazemos o GET.
+  useEventSubscription("config:updated", (frame) => {
+    const data = frame.data as { kind?: unknown } | null;
+    if (data?.kind !== "mcp_oauth") return;
+    listMcpServers()
+      .then((list) => commit(list ?? []))
+      .catch(() => undefined);
+  });
 
   // Mantém uma seleção válida: o primeiro habilitado (ou o primeiro) quando a atual some.
   useEffect(() => {
@@ -159,6 +184,8 @@ export function McpServerManager({
         args: draft.argsText.split("\n"),
         enabled: draft.enabled,
         auth_token: draft.token,
+        auth_mode: draft.transport === "stdio" && draft.authMode === "oauth" ? "none" : draft.authMode,
+        oauth_scopes: draft.scopesText.split(/[\s,]+/),
         catalog_tool: draft.catalog_tool,
         content_tool: draft.content_tool,
         content_id_argument: draft.content_id_argument,
@@ -174,6 +201,34 @@ export function McpServerManager({
       setFormError(errMsg(err, t.mcpTestFail));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const oauthLogin = async (name: string) => {
+    setOauthBusy(name);
+    setOauthError(null);
+    try {
+      const url = await loginMcpOAuth(name);
+      // O backend nunca abre o navegador: no Electron o window.open vai para o navegador do sistema.
+      window.open(url, "_blank", "noopener");
+      commit(servers.map((s) => (s.name === name ? { ...s, oauth: { status: "pending" } } : s)));
+    } catch (err) {
+      setOauthError(errMsg(err, t.mcpOauthFail));
+    } finally {
+      setOauthBusy(null);
+    }
+  };
+
+  const oauthLogout = async (name: string) => {
+    setOauthBusy(name);
+    setOauthError(null);
+    try {
+      await logoutMcpOAuth(name);
+      commit(servers.map((s) => (s.name === name ? { ...s, oauth: { status: "signed_out" } } : s)));
+    } catch (err) {
+      setOauthError(errMsg(err, t.mcpOauthFail));
+    } finally {
+      setOauthBusy(null);
     }
   };
 
@@ -200,6 +255,9 @@ export function McpServerManager({
     if (st?.error || (st?.result && !st.result.ok)) return "bg-danger";
     return s.enabled ? "bg-muted-foreground" : "border border-border";
   };
+
+  const authHint = (mode: McpAuthMode) =>
+    mode === "oauth" ? t.mcpOauthHelp : mode === "token" ? undefined : t.mcpAuthNoneHint;
 
   const endpoint = (s: McpImportServer) =>
     s.transport === "stdio" ? [s.command, ...(s.args ?? [])].filter(Boolean).join(" ") : s.url ?? "";
@@ -244,6 +302,7 @@ export function McpServerManager({
                   <span className={cx("w-2 h-2 rounded-full shrink-0", statusDot(s))} aria-hidden />
                   <span className="text-[12.5px] truncate flex-1">{s.name}</span>
                   {s.has_auth && <Badge>{t.mcpHasAuth}</Badge>}
+                  {s.auth_mode === "oauth" && s.oauth?.status === "signed_in" && <Badge>OAUTH</Badge>}
                 </span>
                 <span className="block pl-4 text-[11px] text-muted-foreground truncate">
                   {s.transport}
@@ -337,21 +396,48 @@ export function McpServerManager({
               </Field>
             )}
 
-            <Field
-              label={t.mcpToken}
-              htmlFor="mcp-token"
-              hint={editing && current?.has_auth ? `${t.mcpTokenKeep}. ${t.mcpTokenHint}` : t.mcpTokenHint}
-            >
-              <input
-                id="mcp-token"
-                type="password"
-                autoComplete="off"
-                value={draft.token}
-                onChange={(e) => set("token", e.target.value)}
-                placeholder={editing && current?.has_auth ? "••••••••" : ""}
+            <Field label={t.mcpAuth} htmlFor="mcp-auth-mode" hint={authHint(draft.authMode)}>
+              <select
+                id="mcp-auth-mode"
+                value={draft.authMode}
+                onChange={(e) => set("authMode", e.target.value as McpAuthMode)}
                 className={inputClass}
-              />
+              >
+                <option value="none">{t.mcpAuthNone}</option>
+                <option value="token">{t.mcpAuthToken}</option>
+                {draft.transport !== "stdio" && <option value="oauth">{t.mcpAuthOauth}</option>}
+              </select>
             </Field>
+
+            {draft.authMode === "token" && (
+              <Field
+                label={t.mcpToken}
+                htmlFor="mcp-token"
+                hint={editing && current?.has_auth ? `${t.mcpTokenKeep}. ${t.mcpTokenHint}` : t.mcpTokenHint}
+              >
+                <input
+                  id="mcp-token"
+                  type="password"
+                  autoComplete="off"
+                  value={draft.token}
+                  onChange={(e) => set("token", e.target.value)}
+                  placeholder={editing && current?.has_auth ? "••••••••" : ""}
+                  className={inputClass}
+                />
+              </Field>
+            )}
+
+            {draft.authMode === "oauth" && draft.transport !== "stdio" && (
+              <Field label={t.mcpOauthScopes} htmlFor="mcp-oauth-scopes" hint={t.mcpOauthScopesHint}>
+                <input
+                  id="mcp-oauth-scopes"
+                  value={draft.scopesText}
+                  onChange={(e) => set("scopesText", e.target.value)}
+                  placeholder="read write"
+                  className={inputClass}
+                />
+              </Field>
+            )}
 
             <Check id="mcp-enabled" checked={draft.enabled} onChange={(v) => set("enabled", v)} label={t.mcpEnabled} />
 
@@ -456,6 +542,16 @@ export function McpServerManager({
               </Banner>
             )}
 
+            {current.auth_mode === "oauth" && (
+              <OAuthPanel
+                server={current}
+                busy={oauthBusy === current.name}
+                error={oauthError}
+                onLogin={() => oauthLogin(current.name)}
+                onLogout={() => oauthLogout(current.name)}
+              />
+            )}
+
             <TestLine state={tests[current.name]} />
             {renderDetail?.(current)}
           </div>
@@ -469,6 +565,54 @@ export function McpServerManager({
           )
         )}
       </section>
+    </div>
+  );
+}
+
+function OAuthPanel({
+  server,
+  busy,
+  error,
+  onLogin,
+  onLogout,
+}: {
+  server: McpImportServer;
+  busy: boolean;
+  error: string | null;
+  onLogin: () => void;
+  onLogout: () => void;
+}) {
+  const { t } = useLocale();
+  const status = server.oauth?.status ?? "signed_out";
+  const label =
+    status === "signed_in"
+      ? t.mcpOauthSignedIn
+      : status === "pending"
+        ? t.mcpOauthPending
+        : status === "error"
+          ? t.mcpOauthError
+          : t.mcpOauthSignedOut;
+  return (
+    <div className="rounded-md border border-accent bg-card p-3 space-y-2" aria-label={t.mcpAuthOauth}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[12.5px] text-foreground">
+          {t.mcpAuthOauth} · <span className="text-muted-foreground">{label}</span>
+        </span>
+        <div className="flex gap-2">
+          <Btn variant="primary" busy={busy || status === "pending"} onClick={onLogin}>
+            {status === "signed_in" ? t.mcpOauthRelogin : t.mcpOauthLogin}
+          </Btn>
+          {status === "signed_in" && (
+            <Btn variant="ghost" busy={busy} onClick={onLogout}>
+              {t.mcpOauthLogout}
+            </Btn>
+          )}
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">{t.mcpOauthHelp}</p>
+      {status === "pending" && <p className="text-[11px] text-muted-foreground">{t.mcpOauthWaiting}</p>}
+      {status === "error" && server.oauth?.error && <Banner tone="error">{server.oauth.error}</Banner>}
+      {error && <Banner tone="error">{error}</Banner>}
     </div>
   );
 }

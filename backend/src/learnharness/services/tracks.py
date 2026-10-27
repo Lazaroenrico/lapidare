@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -20,10 +21,20 @@ from learnharness.core.contracts.config import (
 from learnharness.core.events import SseEventType
 from learnharness.core.frontmatter import strip_frontmatter
 from learnharness.core.repo_paths import LANGUAGE_STEMS
-from learnharness.services.track_generation import GeneratedTrack, generate_track_items  # noqa: F401 (re-export)
+from learnharness.engines.cli_protocol import EngineError
+from learnharness.services.track_generation import (  # noqa: F401 (GeneratedTrack re-export)
+    GeneratedTrack,
+    explain_generation_failure,
+    generate_track_items,
+)
 from learnharness.vault.bootstrap import save_config
 from learnharness.vault.safety import atomic_write, locked_path, safe_path
 
+logger = logging.getLogger(__name__)
+
+# A whole-curriculum answer is one long structured reply: the CLI may emit nothing for minutes
+# while the model writes it, so the default 180 s idle timeout killed real runs.
+TRACK_GENERATION_IDLE_TIMEOUT = 600
 OUTLINE_CHAR_BUDGET = 60_000  # ~15k tokens of curriculum context for the strong slot
 STRUCTURE_SHARE = 0.35  # at most this fraction of the budget goes to structure documents
 STRUCTURE_DOC_CHARS = 4_000
@@ -309,6 +320,26 @@ def manual_queue(items: list[str]) -> list[TrackItem]:
             for n, title in enumerate((t for t in titles if t), start=1)]
 
 
+def _resolve_source_ref(root: Path, ref: str) -> str | None:
+    """Absolute path of a generated ``source_ref`` inside ``root``, or ``None``.
+
+    Models sometimes prefix the repository name or ``./``, or invent a path. One bad
+    reference used to fail the whole job after minutes of generation; now the item just
+    loses its link to the file (the lesson still exists, anchored on its title).
+    """
+    candidates = [ref.strip(), ref.strip().removeprefix("./")]
+    candidates.append(candidates[1].removeprefix(f"{root.name}/"))
+    for candidate in dict.fromkeys(c for c in candidates if c):
+        try:
+            path = safe_path(root, candidate)
+        except (PermissionError, ValueError):
+            continue
+        if path.is_file():
+            return str(path)
+    logger.warning("Generated track item points to a missing source: %s", ref)
+    return None
+
+
 class TrackService:
     """Several tracks side by side, one in focus (Fase 14). Every mutation goes through
     ``self.lock`` and ``_save`` (config + map note + ``config:updated``)."""
@@ -471,20 +502,22 @@ class TrackService:
             context += "\n" + await asyncio.to_thread(build_curriculum_outline, root)  # Walks the repo.
         if not context.strip():
             raise ValueError("Specify a goal or curriculum repository")
-        engine = self.state.engine(config.slots.strong)
-        result = await generate_track_items(engine, config.slots.strong, config.language, context,
-                                            syllabus=track.goal_description or "")
+        engine = self.state.engine(config.slots.strong, timeout=TRACK_GENERATION_IDLE_TIMEOUT)
+        try:
+            result = await generate_track_items(engine, config.slots.strong, config.language, context,
+                                                syllabus=track.goal_description or "")
+        except EngineError as exc:
+            raise EngineError(explain_generation_failure(str(exc), config.slots.strong.model_id)) from exc
         ids = {item.id for item in result.items}
         if len(ids) != len(result.items) or any(p not in ids for item in result.items for p in item.prerequisites):
             raise ValueError("Generated track contains duplicate or unknown prerequisites")
         from learnharness.core.contracts.session import PlanDag, PlanNode
         PlanDag(nodes=[PlanNode(id=i.id, label=i.title, depends_on=i.prerequisites) for i in result.items])
-        for item in result.items:
-            if item.source_ref and track.repo_path:
-                path = safe_path(Path(track.repo_path).expanduser().resolve(), item.source_ref)
-                if not path.is_file():
-                    raise ValueError("Generated curriculum source does not exist")
-                item.source_ref = str(path)
+        if track.repo_path:
+            root = Path(track.repo_path).expanduser().resolve()
+            for item in result.items:
+                if item.source_ref:
+                    item.source_ref = _resolve_source_ref(root, item.source_ref)
         async with self.lock:
             config = self.state.get_config()
             current = config.find_track(track.id)

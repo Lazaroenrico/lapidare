@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+from learnharness.child_env import child_env
 from learnharness.engines import agy_gate
 from learnharness.engines.cli_protocol import (
     EngineError,
@@ -304,9 +305,7 @@ class AgyStreamEngine(GeminiHeadlessEngine):
         return agy_usage(result)
 
     def _env(self):
-        env = dict(os.environ)
-        env.update(self.extra_env)
-        return env
+        return child_env(self.extra_env)
 
     # ----------------------------------------------------------------- persistent turns
 

@@ -3,13 +3,13 @@
 import { useLocale } from "@/components/locale-provider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Loader2, Mic, Send, Target, X } from "lucide-react";
+import { BookOpen, ChevronDown, CornerDownLeft, Loader2, Mic, Target, X } from "lucide-react";
 import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig } from "@/lib/types";
 import { createChat } from "@/lib/api";
 import { findActiveTrack } from "@/lib/tracks";
 import { TrackChip, type TrackStep } from "./track-chip";
 import { useTracks } from "./use-tracks";
-import { differsFromSlot, modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
+import { differsFromSlot, EFFORT_LEVELS, modelChoicePayload, pinnedEffort, type ModelChoice } from "@/lib/model-choice";
 import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
 import { appendDictation, useDictation } from "./use-dictation";
 import { ModelPicker } from "./model-picker";
@@ -194,12 +194,12 @@ export function Composer({
     }
   };
 
-  const placeholderText = mode === "TEACH" ? t.teachPrompt : t.practicePrompt;
+  const placeholderText = mode === "TEACH" ? t.composerPlaceholder : t.practicePrompt;
   const pill =
     "flex items-center gap-1 bg-accent hover:bg-border px-2 py-0.5 rounded-full text-[11px] text-foreground border border-border cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed";
 
   return (
-    <div className={`w-full max-w-[720px] mx-auto flex flex-col items-center gap-2 z-20 ${className}`}>
+    <div className={`w-full max-w-[860px] mx-auto flex flex-col items-center gap-2 z-20 ${className}`}>
       {/* Node selection chip */}
       {selectedNodes.length > 0 && (
         <div className="w-full flex justify-center">
@@ -236,89 +236,161 @@ export function Composer({
         onContinue={() => void handleContinueTrack()}
       />
 
-      <div className="w-full bg-card border border-border focus-within:border-muted-foreground rounded-2xl shadow-2xl transition-all duration-200 p-3">
-        {/* STRICTLY TWO MODES */}
-        <div className="flex items-center justify-between gap-2 pb-2 border-b border-accent mb-2 px-1">
-          <div className="flex items-center gap-1 bg-background p-1 rounded-lg border border-accent">
-            {(["TEACH", "PRACTICE"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                aria-pressed={mode === m}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-ui font-medium transition-colors cursor-pointer ${
-                  mode === m ? "bg-accent text-foreground border border-border shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {m === "TEACH" ? <BookOpen className="w-3.5 h-3.5 text-success" /> : <Target className="w-3.5 h-3.5 text-warning" />}
-                <span>{m}</span>
-              </button>
-            ))}
-          </div>
-          <span className="hidden sm:inline text-[11px] font-ui text-muted-foreground truncate">
-            {nextTrackStep ? t.composerHintTrack : t.composerHint}
-          </span>
+      {/* Large rounded input with the send button inside its right edge */}
+      <div className="w-full flex items-end gap-2 bg-card border border-border focus-within:border-muted-foreground rounded-2xl shadow-2xl transition-colors pl-5 pr-3 py-3">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholderText}
+          aria-label={placeholderText}
+          title={nextTrackStep ? t.composerHintTrack : t.composerHint}
+          className="flex-1 bg-transparent text-foreground placeholder-muted-foreground font-prose text-[18px] resize-none border-none leading-normal block py-1.5 max-h-40"
+        />
+        <button
+          type="button"
+          onClick={() => void handleSubmit()}
+          disabled={!text.trim() || submitting}
+          title={`${t.send} (↵)`}
+          aria-label={t.send}
+          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors cursor-pointer shrink-0 ${
+            text.trim() && !submitting
+              ? "bg-foreground text-background hover:bg-foreground/90"
+              : "bg-accent text-muted-foreground cursor-not-allowed"
+          }`}
+        >
+          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CornerDownLeft className="w-4 h-4" />}
+        </button>
+      </div>
+
+      {/* Controls below the input: mode · dictation (flexes) · model · effort */}
+      <div className="w-full flex items-center gap-2 flex-wrap sm:flex-nowrap">
+        <div className="flex items-center bg-card/85 border border-border rounded-full p-0.5 shrink-0" role="group" aria-label="TEACH / PRACTICE">
+          {(["TEACH", "PRACTICE"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              aria-pressed={mode === m}
+              title={m === "TEACH" ? t.tipTeach : t.tipPractice}
+              className={`px-3 py-1 rounded-full text-[11px] font-ui uppercase tracking-wider transition-colors cursor-pointer ${
+                mode === m ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
         </div>
 
-        <div className="px-1 flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholderText}
-            className="flex-1 bg-transparent text-foreground placeholder-muted-foreground font-prose text-[15px] resize-none border-none leading-relaxed block"
-          />
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={!text.trim() || submitting}
-            title={`${t.send} (↵)`}
-            aria-label={t.send}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-ui font-semibold transition-all cursor-pointer shrink-0 ${
-              text.trim() && !submitting
-                ? "bg-foreground text-background hover:bg-foreground/90 shadow-md"
-                : "bg-accent text-muted-foreground border border-border cursor-not-allowed"
-            }`}
-          >
-            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-            <span>{submitting ? t.starting : "↵"}</span>
-          </button>
-        </div>
-
-        {/* Wide dictation bar */}
         <button
           type="button"
           onClick={dictation.toggle}
           disabled={!dictation.supported}
           aria-pressed={dictation.listening}
           title={dictation.supported ? (dictation.listening ? t.micRecording : t.micDictate) : t.speechUnsupported}
-          className={`mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-lg border text-xs font-ui transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`flex-1 min-w-[96px] flex items-center justify-center gap-2 py-1.5 rounded-full border text-[12.5px] font-ui transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
             dictation.listening
               ? "bg-danger/15 border-danger text-danger"
-              : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+              : "bg-card/85 border-border text-muted-foreground hover:text-foreground hover:bg-accent"
           }`}
         >
           {dictation.listening ? <span className="w-2 h-2 rounded-full bg-danger animate-pulse" /> : <Mic className="w-3.5 h-3.5" />}
           <span>{dictation.listening ? t.dictateStop : t.dictateBar}</span>
         </button>
 
-        <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-accent px-1">
-          <ModelPicker
-            engine={strongSlot?.engine ?? "agy"}
-            value={choice}
-            defaultModel={strongSlot?.model}
-            placement="up"
-            inlineEffort
-            disabled={submitting}
-            onChange={(next) => {
-              setChoiceTouched(true);
-              setChoice(next);
-            }}
-          />
-        </div>
+        <ModelPicker
+          pill
+          engine={strongSlot?.engine ?? "agy"}
+          value={choice}
+          defaultModel={strongSlot?.model}
+          placement="up"
+          disabled={submitting}
+          className="shrink-0"
+          onChange={(next) => {
+            setChoiceTouched(true);
+            setChoice(next);
+          }}
+        />
+        <EffortMenu
+          value={choice.effort}
+          pinned={pinnedEffort(choice.model)}
+          disabled={submitting}
+          onChange={(effort) => {
+            setChoiceTouched(true);
+            setChoice((c) => ({ ...c, effort }));
+          }}
+        />
       </div>
+    </div>
+  );
+}
+
+/** [esforço ▾] pill: opens a tiny menu with the effort levels (replaces the always-visible segmented control). */
+function EffortMenu({
+  value,
+  pinned,
+  disabled,
+  onChange,
+}: {
+  value: EffortLevel;
+  pinned: string | null;
+  disabled: boolean;
+  onChange: (effort: EffortLevel) => void;
+}) {
+  const { t } = useLocale();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const shown = pinned ?? value;
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        disabled={disabled || pinned !== null}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={pinned ? t.slotEffortPinned : t.tipEffort}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card/85 hover:bg-accent text-[12.5px] font-ui text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span>{t.effortName(shown)}</span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div role="menu" aria-label={t.slotEffort} className="absolute bottom-full right-0 mb-2 min-w-32 bg-card border border-border rounded-lg shadow-2xl p-1 font-ui z-40">
+          {EFFORT_LEVELS.map((e) => (
+            <button
+              key={e}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === e}
+              onClick={() => {
+                onChange(e);
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3 py-1.5 rounded text-[12.5px] cursor-pointer hover:bg-accent ${value === e ? "bg-accent text-foreground" : "text-muted-foreground"}`}
+            >
+              {t.effortName(e)}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

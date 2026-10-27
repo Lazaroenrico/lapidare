@@ -10,9 +10,13 @@ from fastapi import FastAPI
 
 from learnharness.api.sse import SseHub
 from learnharness.core.contracts.config import HarnessConfig
+from learnharness.core.events import SseEventType
+from learnharness.core.schema_gate import check_schema
 from learnharness.mcp.content_client import ContentMcpClient
+from learnharness.mcp.oauth_flow import McpOAuthManager
 from learnharness.mcp.pending_dock import PendingDockRegistry
 from learnharness.vault.bootstrap import load_config
+from learnharness.vault.ownership import acquire_vault, release_vault, snapshot_on_version_change
 from learnharness.vault.watcher import VaultWatcher, affects_graph
 
 
@@ -40,7 +44,14 @@ class AppState:
         self.mcp_url = os.environ.get("LEARNHARNESS_MCP_URL", f"http://127.0.0.1:{port}/internal/mcp/")
         self.watcher = None
         self.started = False
+        self.held_vault: Path | None = None
+        self.startup_error: BaseException | None = None
         self.refresh_content_mcp_client()
+        self.mcp_oauth = McpOAuthManager(
+            notify=lambda name: self.sse_hub.broadcast(
+                SseEventType.CONFIG_UPDATED, {"kind": "mcp_oauth", "server": name}
+            )
+        )
         from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
         from learnharness.services.leveling import LevelingService
@@ -66,7 +77,8 @@ class AppState:
             return HarnessConfig(configured=False, vault_path=str(self.vault_path))
         return load_config(self.vault_path)
 
-    def engine(self, slot):
+    def engine(self, slot, **overrides):
+        """``overrides`` (e.g. ``timeout``) go to the real engine; injected factories ignore them."""
         if self.engine_factory:
             return self.engine_factory(slot)
         from learnharness.engines import get_engine
@@ -75,6 +87,7 @@ class AppState:
             slot,
             runtime_config={"api_key": self.api_key},
             is_waiting_on_learner=lambda sid: self.dock_registry.get_pending_quiz(sid) is not None,
+            **overrides,
         )
 
     def redact(self, text):
@@ -122,8 +135,26 @@ class AppState:
     async def start(self):
         if self.started:
             return
+        # One backend per Vault, even before setup: the lock is released in close().
+        try:
+            acquire_vault(self.vault_path)
+        except BaseException as exc:
+            self.startup_error = exc  # the desktop entry maps it to an exit code
+            raise
+        try:
+            config = self.get_config()
+            if config.configured:
+                check_schema(config.schema_version)
+                version = os.environ.get("LEARNHARNESS_APP_VERSION")
+                if version:
+                    snapshot_on_version_change(self.vault_path, version)
+        except BaseException as exc:
+            self.startup_error = exc
+            release_vault(self.vault_path)
+            raise
         self.started = True
-        if self.get_config().configured:
+        self.held_vault = self.vault_path
+        if config.configured:
             self.jobs.recover()
             await self.sessions.recover()
             await self.start_watcher()
@@ -148,6 +179,9 @@ class AppState:
             await self.watcher.stop()
         self.tokens.clear()
         self.api_key = None
+        if self.held_vault is not None:
+            release_vault(self.held_vault)
+            self.held_vault = None
         self.started = False
 
     async def switch_vault(self, path, api_key=None):

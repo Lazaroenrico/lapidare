@@ -12,6 +12,7 @@ import { palette, toneAlpha, type PaletteTone } from "@/lib/palette";
 import type { RoadmapLegendEntry, RoadmapScope, TrackSummary } from "@/lib/tracks";
 import { canLevelTrack, pendingSteps } from "@/lib/leveling";
 import { tracksText } from "@/lib/tracks-i18n";
+import { useLocale } from "./locale-provider";
 import { TrackDot } from "./tracks-ui";
 
 type TT = ReturnType<typeof tracksText>;
@@ -177,12 +178,13 @@ export interface RoadmapLegendProps {
 }
 
 export function RoadmapLegend({ tt, legend, activeTrackId, showScope, scope, onScope, onFrame, onFrameTrack }: RoadmapLegendProps) {
+  const { t } = useLocale();
   const neutral: PaletteTone = legend.find((e) => e.trackId === activeTrackId)?.tone ?? legend[0]?.tone ?? "mutedForeground";
   return (
     <div
       role="group"
       aria-label={tt.legend}
-      className="absolute top-20 left-4 z-10 w-72 max-w-[calc(100%-32px)] bg-card/90 backdrop-blur border border-border rounded-lg p-2.5 shadow-lg font-ui space-y-2"
+      className="absolute top-14 right-4 z-30 w-80 max-w-[calc(100%-32px)] bg-card/95 backdrop-blur border border-border rounded-xl p-3 shadow-2xl font-ui space-y-2"
     >
       {showScope && (
         <div role="group" aria-label={tt.roadmapScope} className="grid grid-cols-[3fr_2fr] bg-background p-0.5 border border-border rounded text-[10.5px]">
@@ -225,13 +227,13 @@ export function RoadmapLegend({ tt, legend, activeTrackId, showScope, scope, onS
       )}
       <div className="border-t border-accent pt-2">
         <span className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{tt.roadmapStates}</span>
-        <ul className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10.5px] text-muted-foreground">
-          <li className="flex items-center gap-1.5"><StepGlyph state="completed" tone={neutral} />{tt.stepStatus.completed}</li>
-          <li className="flex items-center gap-1.5"><StepGlyph state="leveled" tone={neutral} />{tt.stepStatus.leveled}</li>
-          <li className="flex items-center gap-1.5"><StepGlyph state="active" tone={neutral} />{tt.stepStatus.active}</li>
-          <li className="flex items-center gap-1.5"><StepGlyph state="pending" tone={neutral} />{tt.stepStatus.pending}</li>
-          <li className="flex items-center gap-1.5"><StepGlyph state="pending" tone={neutral} shape="diamond" />{tt.glyphFree}</li>
-          <li className="flex items-center gap-1.5"><StepGlyph state="pending" tone={neutral} shape="square" />{tt.glyphBase}</li>
+        <ul className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
+          <li className="flex items-center gap-2"><StepGlyph state="completed" tone={neutral} />{t.legendDone}</li>
+          <li className="flex items-center gap-2"><StepGlyph state="leveled" tone={neutral} />{t.legendLeveled}</li>
+          <li className="flex items-center gap-2"><StepGlyph state="active" tone={neutral} />{t.legendNext}</li>
+          <li className="flex items-center gap-2"><StepGlyph state="pending" tone={neutral} />{t.legendPending}</li>
+          <li className="flex items-center gap-2"><StepGlyph state="pending" tone={neutral} shape="diamond" />{t.legendFree}</li>
+          <li className="flex items-center gap-2"><StepGlyph state="pending" tone={neutral} shape="square" />{t.legendBase}</li>
         </ul>
       </div>
       <button

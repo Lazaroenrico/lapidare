@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from learnharness.core.schema_gate import SUPPORTED_SCHEMA_VERSION
+
 
 def wire_dict(value: object) -> dict[str, Any] | None:
     """A shallow copy of ``value`` when it is a JSON object, else None.
@@ -120,6 +122,11 @@ class McpServerConfig(BaseModel):
     auth_ref: str | None = None
     # stdio only: name of the env var through which the token is passed to the child process.
     auth_env_var: str | None = None
+    # How the server authenticates: nothing, a pasted/env Bearer token (``auth_ref``) or an OAuth
+    # login (tokens live outside the Vault, see services/mcp_oauth_store.py). Older configs have
+    # no field: "token" when an ``auth_ref`` exists, else "none".
+    auth_mode: Literal["none", "token", "oauth"] = "none"
+    oauth_scopes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -129,6 +136,8 @@ class McpServerConfig(BaseModel):
                 data["enabled"] = data["active"]
             if data.get("url") and "transport" not in data:
                 data["transport"] = "http"
+            if "auth_mode" not in data:
+                data["auth_mode"] = "token" if data.get("auth_ref") else "none"
             return data
         return values
 
@@ -136,6 +145,8 @@ class McpServerConfig(BaseModel):
     def valid_transport(self):
         if self.enabled and not (self.command if self.transport == "stdio" else self.url):
             raise ValueError("Enabled MCP requires a command or a URL matching its transport")
+        if self.auth_mode == "oauth" and self.transport == "stdio":
+            raise ValueError("OAuth login is only available for http and sse MCP servers")
         return self
 
 
@@ -323,7 +334,7 @@ class HarnessConfig(BaseModel):
     """Root configuration for LearnHarness persisted in .harness/config.json."""
     configured: bool = False
     language: Literal["pt-BR", "en"] = "pt-BR"
-    schema_version: int = 2
+    schema_version: int = SUPPORTED_SCHEMA_VERSION
     vault_path: str = "~/Documents/StudyVault"
     folders: VaultFolderMap = Field(default_factory=VaultFolderMap)
     slots: ModelSlots = Field(default_factory=ModelSlots)

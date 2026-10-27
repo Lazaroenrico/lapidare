@@ -39,6 +39,8 @@ function CanvasLoading() {
 // Dynamically import Excalidraw with ssr: false so Next.js SSR builds cleanly without "window is not defined"
 const ExcalidrawComponent = dynamic(
   async () => {
+    // Serve Excalidraw's fonts from this origin (scripts/copy-excalidraw-assets.mjs) instead of the CDN.
+    (window as unknown as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = "/excalidraw/";
     const mod = await import("@excalidraw/excalidraw");
     return mod.Excalidraw;
   },

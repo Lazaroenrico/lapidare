@@ -22,3 +22,9 @@ next-env.d.ts
 .idea/
 .vscode/
 .claude/worktrees/
+
+# Desktop (AppImage)
+desktop/build
+desktop/dist
+desktop/.cache
+desktop/node_modules
