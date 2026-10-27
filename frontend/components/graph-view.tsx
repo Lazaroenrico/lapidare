@@ -9,18 +9,12 @@ import {
   Edit3,
   ExternalLink,
   FileText,
-  Link2,
   Loader2,
-  Minus,
   NotebookText,
-  Plus,
-  RefreshCw,
-  Route,
   Search,
   Settings2,
   Square,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import type { ConceptNode, GraphSnapshot, RoadmapItem, SseEventType } from "@/lib/types";
@@ -109,7 +103,7 @@ function hoverCardStyle(x: number, y: number, container: HTMLElement | null): Re
 }
 
 const chromeButton =
-  "flex items-center gap-1.5 bg-card/90 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-foreground rounded-lg px-3 py-1.5 text-xs font-ui transition-colors shadow-lg cursor-pointer";
+  "flex items-center gap-1.5 bg-card/85 hover:bg-accent active:bg-border backdrop-blur border border-border hover:border-muted-foreground text-muted-foreground hover:text-foreground rounded-full px-3 py-1.5 text-[12.5px] font-ui transition-colors cursor-pointer";
 
 interface GraphViewProps {
   selection: Selection;
@@ -147,6 +141,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [roadmapOn, setRoadmapOn] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ConceptNode | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -374,11 +369,10 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   }, [roadmapOn, hasRoadmap, visibleRoadmap, tones, trackOrder, tt.roadmapDefaultModule]);
 
   // Turning the roadmap on frames the graph and the constellations side by side,
-  // keeping camera fits clear of the legend panel on wide screens.
+  // (the legend is now a click-only popover, so no camera inset is reserved).
   const roadmapFramedRef = useRef(false);
   useEffect(() => {
-    const wide = (containerRef.current?.clientWidth ?? 0) >= 900;
-    engineRef.current?.setInsetLeft(roadmapOn && hasRoadmap && wide ? 304 : 0);
+    engineRef.current?.setInsetLeft(0);
     if (!roadmapOn || !hasRoadmap) {
       roadmapFramedRef.current = false;
       return;
@@ -518,126 +512,124 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
     <div ref={containerRef} className={`relative w-full h-full overflow-hidden bg-background select-none ${className}`}>
       <canvas ref={canvasRef} className="w-full h-full block cursor-default" />
 
-      {/* Floating top chrome */}
-      <div className="absolute top-4 left-4 right-4 flex flex-wrap items-start justify-between gap-2 pointer-events-none z-10">
-        <div className="flex items-center gap-2 pointer-events-auto">
-          <NavDrawerButton className="bg-card/90 backdrop-blur border border-border shadow-lg" />
-          <div className="flex items-center gap-3 bg-card/90 backdrop-blur border border-border rounded-lg px-3.5 py-1.5 shadow-lg">
-            <span className="font-ui font-semibold text-xs text-foreground whitespace-nowrap">{t.graphTitle}</span>
-            <span className="text-border text-xs max-sm:hidden">|</span>
-            <span className="font-ui text-[11px] text-muted-foreground max-sm:hidden">
-              {t.graphStats(snapshot.nodes.length, snapshot.edges.length, snapshot.chains.length)}
-            </span>
-          </div>
-          <UsagePill />
+      {/* Floating top-right chrome: one calm row of pills + a tiny usage line below */}
+      <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2 pointer-events-none z-10">
+        <div className="pointer-events-auto">
+          <NavDrawerButton className="bg-card/85 backdrop-blur border border-border" />
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 pointer-events-auto">
-          <div className="relative">
-            <div className="flex items-center bg-card/90 backdrop-blur border border-border focus-within:border-muted-foreground rounded-lg px-2.5 py-1 shadow-lg transition-colors">
-              <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
-              <input
-                type="text"
-                placeholder={t.graphNodeSearch}
-                aria-label={t.graphNodeSearch}
-                value={nodeSearch}
-                onChange={(e) => setNodeSearch(e.target.value)}
-                className="bg-transparent text-foreground placeholder-muted-foreground text-xs font-ui w-36 sm:w-48 border-none"
-              />
-              {nodeSearch && (
-                <button
-                  type="button"
-                  onClick={() => setNodeSearch("")}
-                  className="text-muted-foreground hover:text-foreground p-0.5"
-                  title={t.clearSearch}
-                  aria-label={t.clearSearch}
-                >
-                  <X className="w-3 h-3" />
-                </button>
+        <div className="flex flex-col items-end gap-1.5 min-w-0">
+          <div className="flex flex-wrap items-center justify-end gap-2 pointer-events-auto">
+            <div className="relative">
+              <div className="flex items-center bg-card/85 backdrop-blur border border-border focus-within:border-muted-foreground rounded-full px-3 py-1.5 transition-colors">
+                <Search className="w-3.5 h-3.5 text-muted-foreground mr-2 shrink-0" />
+                <input
+                  type="text"
+                  placeholder={t.searchNodes}
+                  aria-label={t.searchNodes}
+                  title={t.tipSearch}
+                  value={nodeSearch}
+                  onChange={(e) => setNodeSearch(e.target.value)}
+                  className="bg-transparent text-foreground placeholder-muted-foreground text-[12.5px] font-ui w-32 sm:w-60 border-none"
+                />
+                {nodeSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setNodeSearch("")}
+                    className="text-muted-foreground hover:text-foreground p-0.5"
+                    title={t.clearSearch}
+                    aria-label={t.clearSearch}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              {searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-2xl py-1 z-30">
+                  {searchResults.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={(e) => {
+                        if (e.shiftKey || e.metaKey || e.ctrlKey) onSelectionChange(toggleId(selection, item.id));
+                        else focusNode(item.id);
+                        setNodeSearch("");
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center justify-between gap-2 text-xs font-ui text-foreground transition-colors"
+                    >
+                      <span className="truncate">{item.name}</span>
+                      {isSelected(selection, item.id) && <CheckSquare className="w-3 h-3 text-success shrink-0" />}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
-            {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-2xl py-1 z-30">
-                {searchResults.map((item) => (
+
+            <button type="button" onClick={() => setIsChainsOpen((o) => !o)} className={chromeButton} title={t.tipChains} aria-pressed={isChainsOpen}>
+              <span>☍ Chains</span>
+              {snapshot.chains.length > 0 && (
+                <span className="bg-accent text-muted-foreground text-[10px] px-1.5 rounded-full border border-border">
+                  {snapshot.chains.length}
+                </span>
+              )}
+            </button>
+
+            <button type="button" onClick={onOpenImport} className={chromeButton} title={t.tipImport}>
+              <span>{t.importPill}</span>
+            </button>
+
+            {hasRoadmap && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoadmapOn((o) => !o);
+                    setLegendOpen(false);
+                  }}
+                  aria-pressed={roadmapOn}
+                  data-roadmap-toggle
+                  title={t.tipRoadmap}
+                  className={`${chromeButton} ${roadmapOn ? "bg-accent border-muted-foreground text-foreground" : ""}`}
+                >
+                  <span>{t.roadmapToggle}</span>
+                </button>
+                {roadmapOn && (
                   <button
-                    key={item.id}
                     type="button"
-                    onClick={(e) => {
-                      if (e.shiftKey || e.metaKey || e.ctrlKey) onSelectionChange(toggleId(selection, item.id));
-                      else focusNode(item.id);
-                      setNodeSearch("");
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center justify-between gap-2 text-xs font-ui text-foreground transition-colors"
+                    onClick={() => setLegendOpen((o) => !o)}
+                    aria-expanded={legendOpen}
+                    aria-label={t.roadmapLegendOpen}
+                    title={t.roadmapLegendOpen}
+                    className={`${chromeButton} px-2.5 ${legendOpen ? "bg-accent border-muted-foreground text-foreground" : ""}`}
                   >
-                    <span className="truncate">{item.name}</span>
-                    {isSelected(selection, item.id) && <CheckSquare className="w-3 h-3 text-success shrink-0" />}
+                    <span>?</span>
                   </button>
-                ))}
+                )}
               </div>
             )}
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((o) => !o)}
+                aria-expanded={settingsOpen}
+                title={t.graphSettingsTitle}
+                aria-label={t.graphSettingsTitle}
+                className={`${chromeButton} px-2.5`}
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+              </button>
+              {settingsOpen && (
+                <GraphSettingsPanel settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
+              )}
+            </div>
           </div>
-
-          <button type="button" onClick={() => setIsChainsOpen((o) => !o)} className={chromeButton} title={t.chainsTitle} aria-pressed={isChainsOpen}>
-            <Link2 className="w-3.5 h-3.5 text-muted-foreground" />
-            <span>☍ Chains</span>
-            {snapshot.chains.length > 0 && (
-              <span className="bg-accent text-muted-foreground text-[10px] px-1.5 rounded-full border border-border">
-                {snapshot.chains.length}
-              </span>
-            )}
-          </button>
-
-          <button type="button" onClick={onOpenImport} className={chromeButton} title={t.importTitle}>
-            <Upload className="w-3.5 h-3.5 text-muted-foreground" />
-            <span>↑ Import</span>
-          </button>
-
-          {hasRoadmap && (
-            <button
-              type="button"
-              onClick={() => setRoadmapOn((o) => !o)}
-              aria-pressed={roadmapOn}
-              data-roadmap-toggle
-              title={t.roadmapTitle}
-              className={`${chromeButton} ${roadmapOn ? "bg-accent border-muted-foreground" : ""}`}
-            >
-              <Route className={`w-3.5 h-3.5 ${roadmapOn ? "text-success" : "text-muted-foreground"}`} />
-              <span>{t.roadmapToggle}</span>
-            </button>
-          )}
-
-          <div className="flex items-center bg-card/90 backdrop-blur border border-border rounded-lg p-0.5 shadow-lg">
-            <button type="button" onClick={() => engineRef.current?.zoomIn()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.zoomIn} aria-label={t.zoomIn}>
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-            <button type="button" onClick={() => engineRef.current?.zoomOut()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.zoomOut} aria-label={t.zoomOut}>
-              <Minus className="w-3.5 h-3.5" />
-            </button>
-            <button type="button" onClick={() => engineRef.current?.resetView()} className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors" title={t.resetView} aria-label={t.resetView}>
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          </div>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((o) => !o)}
-              aria-expanded={settingsOpen}
-              title={t.graphSettingsTitle}
-              aria-label={t.graphSettingsTitle}
-              className={`${chromeButton} px-2`}
-            >
-              <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-            {settingsOpen && (
-              <GraphSettingsPanel settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
-            )}
-          </div>
+          <UsagePill className="pointer-events-auto" />
         </div>
       </div>
 
       {/* ⇶ Roteiro legend + scope toggle */}
-      {roadmapOn && hasRoadmap && (
+      {roadmapOn && hasRoadmap && legendOpen && (
         <RoadmapLegend
           tt={tt}
           legend={legend}

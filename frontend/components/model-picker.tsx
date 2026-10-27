@@ -33,6 +33,8 @@ interface ModelPickerProps {
   busy?: boolean;
   /** Render the effort control inline next to the chip (composer dock) instead of inside the panel. */
   inlineEffort?: boolean;
+  /** Composer pill: quiet rounded trigger with only the model label (effort lives in its own menu). */
+  pill?: boolean;
   className?: string;
 }
 
@@ -101,6 +103,7 @@ export function ModelPicker({
   disabled = false,
   busy = false,
   inlineEffort = false,
+  pill = false,
   className = "",
 }: ModelPickerProps) {
   const { t } = useLocale();
@@ -170,7 +173,7 @@ export function ModelPicker({
   }, [visibleFamilies, isCustom, currentId, models, query]);
 
   const trigger = modelTriggerParts(currentId, options, "auto", value.effort);
-  const showTriggerEffort = !inlineEffort || pinned !== null;
+  const showTriggerEffort = !pill && (!inlineEffort || pinned !== null);
 
   const close = useCallback((returnFocus: boolean) => {
     setOpen(false);
@@ -551,9 +554,11 @@ export function ModelPicker({
         aria-expanded={open}
         data-model-picker-trigger=""
         title={`${t.modelPickerTitle}: ${currentId}`}
-        className="flex items-center gap-1.5 min-w-0 max-w-[260px] px-2 py-1 rounded-md border border-border bg-background hover:bg-accent text-[12px] font-ui text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 focus-visible:border-foreground"
+        className={`flex items-center gap-1.5 min-w-0 max-w-[260px] px-2 py-1 border border-border hover:bg-accent text-[12px] font-ui text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 focus-visible:border-foreground ${
+          pill ? "rounded-full bg-card/85 px-3 py-1.5 text-[12.5px]" : "rounded-md bg-background"
+        }`}
       >
-        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Cpu className="w-3.5 h-3.5 shrink-0" />}
+        {pill ? null : busy ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Cpu className="w-3.5 h-3.5 shrink-0" />}
         <span className="truncate text-foreground">{trigger.name}</span>
         {showTriggerEffort && (
           <span className="shrink-0 capitalize" title={pinned ? t.slotEffortPinned : undefined}>
@@ -562,7 +567,7 @@ export function ModelPicker({
         )}
         <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      {inlineEffort && !pinned && <EffortPicker compact value={value.effort} onChange={pickEffort} disabled={disabled} />}
+      {inlineEffort && !pill && !pinned && <EffortPicker compact value={value.effort} onChange={pickEffort} disabled={disabled} />}
       {panel && typeof document !== "undefined" ? createPortal(panel, document.body) : null}
     </div>
   );

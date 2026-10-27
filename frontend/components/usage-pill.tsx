@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Gauge } from "lucide-react";
 import type { SseEventType, UsageReport } from "@/lib/types";
 import { getUsage } from "@/lib/api";
 import { formatTokens } from "@/lib/usage";
@@ -15,7 +14,7 @@ const USAGE_EVENTS: SseEventType[] = ["usage:updated", "jobs:updated"];
 const REFETCH_DELAY_MS = 1000;
 
 /**
- * Discreet "12,4k tok hoje" pill; the popover shows total + top sessions.
+ * Discreet "12,4k tok hoje" text (no border); the popover shows total + top sessions.
  * Hidden when GET /api/usage is missing (404) or fails.
  */
 export function UsagePill({ className = "" }: { className?: string }) {
@@ -72,16 +71,15 @@ export function UsagePill({ className = "" }: { className?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         title={t.usageTitle}
-        className="flex items-center gap-1.5 bg-card/90 hover:bg-accent backdrop-blur border border-border rounded-full px-2.5 py-1 shadow-lg font-ui text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+        className="font-ui text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
       >
-        <Gauge className="w-3 h-3" />
         <span>{t.usagePill(fmt(report.today.total_tokens))}</span>
       </button>
       {open && (
         <div
           role="dialog"
           aria-label={t.usageTitle}
-          className="absolute top-full left-0 mt-2 w-72 bg-card border border-border rounded-lg shadow-2xl p-3 z-40 font-ui text-[11px] text-muted-foreground"
+          className="absolute top-full right-0 mt-2 w-72 text-left bg-card border border-border rounded-lg shadow-2xl p-3 z-40 font-ui text-[11px] text-muted-foreground"
         >
           <div className="text-foreground font-semibold mb-2">{t.usageTitle}</div>
           {[
