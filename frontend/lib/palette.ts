@@ -28,3 +28,17 @@ export function withAlpha(token: PaletteToken, alpha: number): string {
   const b = parseInt(hex.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/** A tone derived from the palette: one token, or a linear mix of two (`t` = share of `b`). */
+export type PaletteTone = PaletteToken | readonly [PaletteToken, PaletteToken, number];
+
+/** `rgba()` string for a palette tone at the given alpha (0..1). */
+export function toneAlpha(tone: PaletteTone, alpha: number): string {
+  if (typeof tone === "string") return withAlpha(tone, alpha);
+  const [a, b, t] = tone;
+  const rgb = (token: PaletteToken) => [0, 2, 4].map((i) => parseInt(palette[token].slice(1 + i, 3 + i), 16));
+  const ca = rgb(a);
+  const cb = rgb(b);
+  const [r, g, bl] = ca.map((x, i) => Math.round(x + (cb[i] - x) * t));
+  return `rgba(${r}, ${g}, ${bl}, ${alpha})`;
+}

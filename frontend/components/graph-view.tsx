@@ -247,7 +247,7 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    engine.setData(snapshot.nodes, snapshot.edges, snapshot.clusters);
+    engine.setData(snapshot.nodes, snapshot.edges, snapshot.clusters, snapshot.chains);
     if (!fittedRef.current && snapshot.nodes.length > 0) {
       fittedRef.current = true;
       // One-shot fit once the first layout has spread out (not polling); a `?focus=`
