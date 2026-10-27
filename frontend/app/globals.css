@@ -155,3 +155,25 @@ body {
   border-radius: 8px;
   animation: message-flash 1.8s ease-out;
 }
+
+/* Fase 12 · in-session find (⌘F): CSS Custom Highlight API, with <mark> as fallback */
+::highlight(session-find) {
+  background-color: var(--border);
+  color: var(--foreground);
+}
+
+::highlight(session-find-active) {
+  background-color: var(--muted-foreground);
+  color: var(--background);
+}
+
+mark.find-mark {
+  background-color: var(--border);
+  color: var(--foreground);
+  border-radius: 2px;
+}
+
+mark.find-mark.find-mark-active {
+  background-color: var(--muted-foreground);
+  color: var(--background);
+}

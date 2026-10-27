@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale } from "@/components/locale-provider";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -31,10 +31,30 @@ import {
   getChat,
   getGraphSnapshot,
   getSetupStatus,
+  abortChat,
+  dismissQuestion,
+  renameChat,
   resumeChat,
   sendChatMessage,
+  steerChat,
   updateChatSettings,
 } from "@/lib/api";
+import {
+  compactionAnchorId,
+  isRunningStatus,
+  resolveEsc,
+  steerReducer,
+  visibleLocalSteers,
+} from "@/lib/session-ux";
+import { useShortcut } from "@/components/use-shortcut";
+import { SessionFindBar } from "@/components/session-find-bar";
+import {
+  CompactingPlaceholder,
+  CompactionDivider,
+  ConfirmDialog,
+  LocalSteerBubble,
+  SessionTitle,
+} from "@/components/session-ux";
 import { modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
 import {
   activeProblem,
@@ -163,6 +183,17 @@ export default function ChatPage({ params }: ChatPageProps) {
   });
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  // Fase 12: steers typed while the agent runs, the Esc chain, ⌘F and inline rename.
+  const [localSteers, dispatchSteer] = useReducer(steerReducer, []);
+  const steerSeqRef = useRef(0);
+  const [escDialog, setEscDialog] = useState<"question" | "abort" | null>(null);
+  const [escBusy, setEscBusy] = useState(false);
+  const [escError, setEscError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findSignal, setFindSignal] = useState(0);
+  const [renaming, setRenaming] = useState(false);
 
   // Speech support check
   useEffect(() => {
@@ -350,6 +381,10 @@ export default function ChatPage({ params }: ChatPageProps) {
 
     const textToSend = inputMessage.trim();
     setInputMessage("");
+    if (isRunningStatus(session?.execution_status)) {
+      void sendSteer(textToSend);
+      return;
+    }
     setIsSending(true);
     setActionError(null);
 
@@ -370,8 +405,27 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   };
 
+  // While a turn runs, the message goes to /steer and shows "na fila" until delivered.
+  const sendSteer = async (content: string, localId = `steer-${++steerSeqRef.current}`) => {
+    if (!id) return;
+    dispatchSteer({ type: "send", localId, content, baseline: session?.messages.length ?? 0 });
+    try {
+      const updated = await steerChat(id, content);
+      dispatchSteer({ type: "accepted", localId });
+      if (updated) setSession(updated);
+      else await fetchSessionData();
+    } catch (err) {
+      dispatchSteer({ type: "failed", localId });
+      setActionError(`${t.sendFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    }
+  };
+
   // PRACTICE dock: attempt / next / free text (POST /messages with `kind`).
   const handlePracticeSubmit = async (submission: DockSubmission): Promise<boolean> => {
+    if (id && isRunningStatus(session?.execution_status) && submission.content) {
+      void sendSteer(submission.content);
+      return true;
+    }
     if (!id || isSending) return false;
     setIsSending(true);
     setActionError(null);
@@ -434,6 +488,58 @@ export default function ChatPage({ params }: ChatPageProps) {
     } finally {
       setIsResuming(false);
     }
+  };
+
+  // Esc (useShortcut "abort"): pending question → active problem → running turn.
+  useShortcut("abort", () => {
+    if (!session) return false;
+    const action = resolveEsc({
+      overlayOpen: Boolean(escDialog) || dismissOpen || findOpen || renaming || citationDrawerOpen,
+      pendingQuestion: Boolean(session.pending_quiz),
+      activeProblem: session.mode === "PRACTICE" && Boolean(activeProblem(session.practice)),
+      running: isRunningStatus(session.execution_status),
+    });
+    if (action === "none") return false;
+    if (action === "dismiss-problem") {
+      setDismissError(null);
+      setDismissOpen(true);
+      return;
+    }
+    setEscError(null);
+    setEscDialog(action === "dismiss-question" ? "question" : "abort");
+  });
+
+  const handleConfirmEsc = async () => {
+    if (!id || !escDialog || escBusy) return;
+    setEscBusy(true);
+    setEscError(null);
+    try {
+      const updated = escDialog === "question" ? await dismissQuestion(id) : await abortChat(id);
+      if (updated) setSession(updated);
+      else await fetchSessionData();
+      setEscDialog(null);
+    } catch (err) {
+      setEscError(`${t.uxActionFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setEscBusy(false);
+    }
+  };
+
+  useShortcut(
+    "find",
+    () => {
+      setFindOpen(true);
+      setFindSignal((n) => n + 1);
+    },
+    Boolean(session),
+  );
+
+  // Inline rename (F2 / click): PUT /api/chats/{id}; the sidebar refreshes via SSE.
+  const handleRename = async (title: string) => {
+    if (!id) return;
+    const updated = await renameChat(id, title);
+    if (updated) setSession(updated);
+    else await fetchSessionData();
   };
 
   // Handle navigate to memory retrieval drawing
@@ -550,6 +656,19 @@ export default function ChatPage({ params }: ChatPageProps) {
   const needsRecovery =
     session.recovery_required || execStatus === "failed" || execStatus === "interrupted";
   const isTeaching = execStatus === "queued" || execStatus === "running";
+  const isRunning = isRunningStatus(execStatus);
+  const compactionAnchor = compactionAnchorId(session.messages, session.compaction);
+  const pendingSteers = visibleLocalSteers(localSteers, session.messages);
+  const findVersion = `${session.updated_at}|${session.messages.length}|${execStatus}|${pendingSteers.length}`;
+  const renderLocalSteers = () =>
+    pendingSteers.map((steer) => (
+      <LocalSteerBubble
+        key={steer.localId}
+        steer={steer}
+        onDiscard={() => dispatchSteer({ type: "discard", localId: steer.localId })}
+        onRetry={() => void sendSteer(steer.content, steer.localId)}
+      />
+    ));
   const isPractice = session.mode === "PRACTICE";
   const practiceItems = isPractice
     ? buildPracticeTranscript({
@@ -567,7 +686,39 @@ export default function ChatPage({ params }: ChatPageProps) {
     pendingQuiz: isWaitingQuiz,
   });
 
-  const renderMessage = (message: SessionRecord["messages"][number], key: string) => {
+  const renderMessage = (message: SessionRecord["messages"][number], key: string): React.ReactNode => {
+    if (session.compaction && message.id === compactionAnchor) {
+      return (
+        <React.Fragment key={key}>
+          <CompactionDivider compaction={session.compaction} />
+          {renderBubble(message, `${key}-msg`)}
+        </React.Fragment>
+      );
+    }
+    return renderBubble(message, key);
+  };
+
+  const renderTeachItem = (item: ReturnType<typeof buildTranscript>[number]): React.ReactNode => {
+    if (item.type === "divider") return <PhaseDivider key={item.key} phase={item.phase} />;
+    if (item.type === "probe_done") return <ProbeDoneCard key={item.key} assessment={item.assessment} />;
+    if (item.type === "answer") return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
+    if (item.type === "job") return <JobCard key={item.key} job={item.job} message={item.message} />;
+    if (item.type === "pending") {
+      return (
+        <QuestionDock
+          key={item.key}
+          quiz={item.quiz}
+          sessionId={session.id}
+          onAnswerSubmitted={() => {
+            void fetchSessionData();
+          }}
+        />
+      );
+    }
+    return renderMessage(item.message, item.key);
+  };
+
+  const renderBubble = (message: SessionRecord["messages"][number], key: string) => {
     if (message.role === "user") {
       return (
         <div key={key} id={`message-${message.id}`} className="flex justify-end my-2 scroll-mt-24">
@@ -616,9 +767,11 @@ export default function ChatPage({ params }: ChatPageProps) {
 
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="font-title font-bold text-lg md:text-xl text-foreground truncate">
-                {session.title || session.topic}
-              </h1>
+              <SessionTitle
+                title={session.title || session.topic}
+                onRename={handleRename}
+                onEditingChange={setRenaming}
+              />
               {renderContextBadge()}
               {teachPhase && <PhaseChip phase={teachPhase} />}
             </div>
@@ -714,8 +867,20 @@ export default function ChatPage({ params }: ChatPageProps) {
         )}
       </header>
 
+      {/* ⌘F find bar, floating over the top of the transcript */}
+      <div className="relative shrink-0 z-30">
+        {findOpen && (
+          <SessionFindBar
+            containerRef={transcriptRef}
+            version={findVersion}
+            focusSignal={findSignal}
+            onClose={() => setFindOpen(false)}
+          />
+        )}
+      </div>
+
       {/* 2. Main Lesson Prose Stream (TEACH and PRACTICE share the prose rendering) */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
+      <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
         {isPractice ? (
           <PracticeTranscript
             items={practiceItems}
@@ -742,27 +907,22 @@ export default function ChatPage({ params }: ChatPageProps) {
           </div>
         ) : (
           transcript.map((item) => {
-            if (item.type === "divider") return <PhaseDivider key={item.key} phase={item.phase} />;
-            if (item.type === "probe_done") return <ProbeDoneCard key={item.key} assessment={item.assessment} />;
-            if (item.type === "answer") return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
-            if (item.type === "job") return <JobCard key={item.key} job={item.job} message={item.message} />;
-            if (item.type === "pending") {
+            if (item.type !== "message" && item.key === compactionAnchor && session.compaction) {
               return (
-                <QuestionDock
-                  key={item.key}
-                  quiz={item.quiz}
-                  sessionId={session.id}
-                  onAnswerSubmitted={() => {
-                    void fetchSessionData();
-                  }}
-                />
+                <React.Fragment key={`compaction-${item.key}`}>
+                  <CompactionDivider compaction={session.compaction} />
+                  {renderTeachItem(item)}
+                </React.Fragment>
               );
             }
-            return renderMessage(item.message, item.key);
+            return renderTeachItem(item);
           })
         )}
+        {renderLocalSteers()}
         </>
         )}
+        {isPractice && renderLocalSteers()}
+        {execStatus === "compacting" && <CompactingPlaceholder />}
 
         <div ref={messagesEndRef} />
       </div>
@@ -867,6 +1027,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         <PracticeDock
           state={practiceDock}
           pendingQuiz={isWaitingQuiz}
+          steerable={isRunning && !isWaitingQuiz}
           onSubmit={handlePracticeSubmit}
           onRequestDismiss={() => {
             setDismissError(null);
@@ -907,6 +1068,8 @@ export default function ChatPage({ params }: ChatPageProps) {
               placeholder={
                 isWaitingQuiz
                   ? t.answerQuizFirst
+                  : isRunning
+                  ? t.uxSteerPlaceholder
                   : t.followUpPlaceholder
               }
               disabled={isSending}
@@ -934,6 +1097,19 @@ export default function ChatPage({ params }: ChatPageProps) {
         </form>
       </footer>
       )}
+
+      <ConfirmDialog
+        open={escDialog !== null}
+        title={escDialog === "question" ? t.uxEscQuestionTitle : t.uxEscAbortTitle}
+        body={escDialog === "question" ? t.uxEscQuestionBody : t.uxEscAbortBody}
+        confirmLabel={escDialog === "question" ? t.uxEscQuestionConfirm : t.uxEscAbortConfirm}
+        busyLabel={escDialog === "question" ? t.uxEscQuestionBusy : t.uxEscAbortBusy}
+        busy={escBusy}
+        error={escError}
+        danger={escDialog === "abort"}
+        onCancel={() => setEscDialog(null)}
+        onConfirm={() => void handleConfirmEsc()}
+      />
 
       <DismissProblemDialog
         open={dismissOpen && Boolean(practiceActive)}

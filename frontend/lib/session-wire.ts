@@ -26,6 +26,7 @@ import type {
 import { decodeSlotOverride } from "./model-choice";
 import { decodeUsageCounters } from "./usage";
 import { decodePractice } from "./practice";
+import { decodeCompaction } from "./session-ux";
 import { decodeJobSteer, type JobSteer } from "./job-steer";
 
 type Raw = Record<string, unknown>;
@@ -126,6 +127,7 @@ export function decodeAnswer(raw: unknown, quizId = ""): CalibrationResult | nul
     grade_feedback: str(raw.grade_feedback),
     explanation: str(raw.explanation),
     timestamp: str(raw.timestamp),
+    dismissed: raw.dismissed === true,
   };
 }
 
@@ -210,6 +212,7 @@ export function decodeSession(raw: unknown): SessionRecord {
     usage: decodeUsageCounters(r.usage),
     graph_context: strList(r.graph_context),
     practice: decodePractice(r.practice),
+    compaction: decodeCompaction(r.compaction),
   };
 }
 

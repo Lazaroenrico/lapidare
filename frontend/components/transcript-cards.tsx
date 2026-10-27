@@ -30,6 +30,9 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
 
 function Verdict({ answer }: { answer: CalibrationResult }) {
   const { t } = useLocale();
+  if (answer.dismissed) {
+    return <span className={`${chip} border-border text-muted-foreground`}>{t.uxAnswerDismissed}</span>;
+  }
   if (answer.kind === "ask") return null;
   if (answer.is_dont_know) {
     return (
