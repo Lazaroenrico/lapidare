@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from learnharness.core.frontmatter import frontmatter_data
 from learnharness.vault.safety import (
     atomic_write,
     folder_map,
@@ -165,8 +166,7 @@ def import_transcript_text(
     with locked_path(target_file):
         if target_file.exists():
             old = target_file.read_text(encoding="utf-8")
-            old_fm = yaml.safe_load(old.split("---", 2)[1]) if old.startswith("---") else {}
-            if isinstance(old_fm, dict) and old_fm.get("content_sha256") == revision(raw_text):
+            if frontmatter_data(old).get("content_sha256") == revision(raw_text):
                 return target_file, len(numbered_paragraphs)
             if not force:
                 raise FileExistsError(
@@ -177,12 +177,7 @@ def import_transcript_text(
             target_file = safe_path(vault_path, versioned.relative_to(vault_path))
             if target_file.exists():
                 existing = target_file.read_text(encoding="utf-8")
-                meta = (
-                    yaml.safe_load(existing.split("---", 2)[1])
-                    if existing.startswith("---")
-                    else {}
-                )
-                if not isinstance(meta, dict) or meta.get("content_sha256") != revision(raw_text):
+                if frontmatter_data(existing).get("content_sha256") != revision(raw_text):
                     raise FileExistsError("Immutable version name already occupied")
                 return target_file, len(numbered_paragraphs)
         atomic_write(target_file, content, create_only=True)

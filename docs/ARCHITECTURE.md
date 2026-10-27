@@ -150,6 +150,7 @@ learnharness/
 │   │   │   ├── svg_validation.py · demo_validation.py · latex_heal.py · text_hygiene.py
 │   │   │   ├── lesson_layout.py      # layout gerenciado da nota de aula (render puro)
 │   │   │   ├── slug.py               # ascii_slug: regra congelada de ids legados
+│   │   │   ├── frontmatter.py        # regra única (Obsidian) de frontmatter: CRLF, BOM, `---` em valores
 │   │   │   ├── events.py             # SseEventType + SseFrame
 │   │   │   └── ports.py              # Protocols: AgentEnginePort, VaultPort, ContentMcpPort
 │   │   ├── engines/                  # adaptadores dos 3 caminhos Google

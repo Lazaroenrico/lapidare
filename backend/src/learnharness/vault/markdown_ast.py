@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from learnharness.core.contracts.graph import ConceptNode, ConceptStatus
+from learnharness.core.frontmatter import frontmatter_data, split_frontmatter, strip_frontmatter
 from learnharness.core.slug import ascii_slug
 from learnharness.vault.safety import (
     RevisionConflictError,
@@ -51,26 +52,12 @@ def _format_wikilinks(links: list[str]) -> str:
 
 
 def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
-    """Split markdown into frontmatter dict, raw frontmatter text, and body.
-
-    Returns:
-        (frontmatter_dict, raw_frontmatter_block, body_text)
-    """
-    if content.startswith("---\n"):
-        end_idx = content.find("\n---\n", 4)
-        if end_idx != -1:
-            raw_fm = content[4:end_idx]
-            body = content[end_idx + 5 :]
-            try:
-                fm_data = yaml.safe_load(raw_fm) or {}
-            except yaml.YAMLError as exc:
-                # User-authored frontmatter: tolerate it, but never silently.
-                logger.warning("Ignoring unparseable note frontmatter: %s", exc)
-                fm_data = {}
-            if not isinstance(fm_data, dict):
-                fm_data = {}
-            return fm_data, content[: end_idx + 5], body
-    return {}, "", content
+    """``(data, raw block, body)`` per ``core.frontmatter`` (``{}`` when unparseable, logged)."""
+    fm = split_frontmatter(content)
+    if fm.present and fm.data is None:
+        # User-authored frontmatter: tolerate it, but never silently.
+        logger.warning("Ignoring unparseable note frontmatter")
+    return fm.data or {}, fm.block, fm.body
 
 
 def _parse_sections(body: str) -> tuple[str, list[tuple[str, str]]]:
@@ -505,9 +492,6 @@ def merge_owned_blocks(
     return content
 
 
-_FRONTMATTER = re.compile(r"\A---(\r?\n)(?:(.*?)(\r?\n))?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
-
-
 def _dump_yaml_key(key: str, value: object, newline: str) -> str:
     dumped = yaml.safe_dump(
         {key: value}, allow_unicode=True, sort_keys=False, default_flow_style=False, width=10**6
@@ -523,19 +507,14 @@ def merge_frontmatter_keys(
     Unparseable user YAML is left untouched: the learner's note beats our metadata.
     """
     ensure_tags = ensure_tags or []
-    match = _FRONTMATTER.match(content)
-    if match is None:
+    split = split_frontmatter(content)
+    if not split.present:
         values = {"tags": list(ensure_tags), **managed} if ensure_tags else dict(managed)
         fm = "".join(_dump_yaml_key(k, v, "\n") for k, v in values.items())
-        return f"---\n{fm}---\n" + content
-    newline = match.group(1)
-    raw = match.group(2) or ""
-    try:
-        data = yaml.safe_load(raw) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("Leaving unparseable lesson frontmatter untouched: %s", exc)
-        return content
-    if not isinstance(data, dict):
+        return f"{split.bom}---\n{fm}---\n" + content.removeprefix(split.bom)
+    newline, raw, data = split.newline, split.yaml, split.data
+    if data is None:
+        logger.warning("Leaving unparseable lesson frontmatter untouched")
         return content
     updates: dict[str, object] = {}
     if ensure_tags:
@@ -563,7 +542,7 @@ def merge_frontmatter_keys(
         while end < len(lines) and (lines[end][:1] in (" ", "\t") or lines[end].startswith("-")):
             end += 1
         lines[start:end] = [rendered]
-    return f"---{newline}{''.join(lines)}---{newline}" + content[match.end() :]
+    return f"{split.bom}---{newline}{''.join(lines)}---{newline}" + split.body
 
 
 def _lesson_target(vault_path: Path, rel_path: str) -> Path:
@@ -624,19 +603,11 @@ def sync_lesson_note(
 
 def read_frontmatter(content: str) -> dict[str, object]:
     """Parsed YAML frontmatter, or ``{}`` when absent/unparseable (never raises)."""
-    match = _FRONTMATTER.match(content)
-    if match is None:
-        return {}
-    try:
-        data = yaml.safe_load(match.group(2) or "") or {}
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    return frontmatter_data(content)
 
 
 def body_without_frontmatter(content: str) -> str:
-    match = _FRONTMATTER.match(content)
-    return content[match.end():] if match else content
+    return strip_frontmatter(content)
 
 
 def remove_owned_block(content: str, key: str) -> str:

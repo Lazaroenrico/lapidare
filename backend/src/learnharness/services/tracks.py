@@ -18,6 +18,7 @@ from learnharness.core.contracts.config import (
     derive_track_title,
 )
 from learnharness.core.events import SseEventType
+from learnharness.core.frontmatter import strip_frontmatter
 from learnharness.core.repo_paths import LANGUAGE_STEMS
 from learnharness.services.track_generation import GeneratedTrack, generate_track_items  # noqa: F401 (re-export)
 from learnharness.vault.bootstrap import save_config
@@ -59,20 +60,12 @@ def _natural_key(path: str) -> list[tuple[int, int | str]]:
     return [(0, int(t)) if t.isdigit() else (1, t.casefold()) for t in re.split(r"(\d+)", path) if t]
 
 
-def _strip_frontmatter(lines: list[str]) -> list[str]:
-    if lines and lines[0].strip() == "---":
-        end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
-        if end is not None:
-            return lines[end + 1:]
-    return lines
-
-
 def markdown_title_and_summary(text: str) -> tuple[str | None, str]:
     """First ``#`` heading and first prose paragraph (no code, tables, images or HTML)."""
     title: str | None = None
     paragraph: list[str] = []
     in_fence = False
-    for line in _strip_frontmatter(text.splitlines()):
+    for line in strip_frontmatter(text).splitlines():
         stripped = line.strip()
         if stripped.startswith(("```", "~~~")):
             in_fence = not in_fence
@@ -128,7 +121,7 @@ def _describe_file(path: Path, relative: str) -> OutlineEntry:
     in_structure_dir = any(p.lower() in STRUCTURE_DIRS for p in parts[:-1])
     if (is_root_doc or in_structure_dir) and suffix != ".ipynb":
         entry.structure = True
-        entry.excerpt = _clean_excerpt("\n".join(_strip_frontmatter(text.splitlines())))[:STRUCTURE_DOC_CHARS]
+        entry.excerpt = _clean_excerpt(strip_frontmatter(text))[:STRUCTURE_DOC_CHARS]
     elif stem.lower() in {"readme", "index", "overview"}:
         entry.overview = True
     return entry

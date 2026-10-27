@@ -16,8 +16,9 @@ from typing import Any
 
 import yaml
 
+from learnharness.core.frontmatter import split_frontmatter
 from learnharness.core.slug import ascii_slug
-from learnharness.vault.markdown_ast import merge_managed_block
+from learnharness.vault.markdown_ast import merge_frontmatter_keys, merge_managed_block
 from learnharness.vault.safety import (
     RevisionConflictError,
     atomic_write,
@@ -37,27 +38,6 @@ try:
 except ImportError:
     _lz = None
 
-
-
-
-
-def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
-    """Extract YAML frontmatter from markdown file."""
-    if content.startswith("---\n"):
-        end_idx = content.find("\n---\n", 4)
-        if end_idx != -1:
-            raw_fm = content[4:end_idx]
-            body = content[end_idx + 5 :]
-            try:
-                fm_data = yaml.safe_load(raw_fm) or {}
-            except yaml.YAMLError as exc:
-                # User-authored frontmatter: tolerate it, but never silently.
-                logger.warning("Ignoring unparseable drawing frontmatter: %s", exc)
-                fm_data = {}
-            if not isinstance(fm_data, dict):
-                fm_data = {}
-            return fm_data, content[: end_idx + 5], body
-    return {}, "", content
 
 
 def create_retrieval_drawing(
@@ -241,7 +221,8 @@ def load_drawing(vault_path: Path, slug: str) -> dict[str, Any]:
     file_path = _find_drawing_file(vault_path, slug)
     content = file_path.read_bytes().decode("utf-8")
 
-    fm, _, body = _split_frontmatter(content)
+    split = split_frontmatter(content)
+    fm, body = split.data or {}, split.body
 
     # 1. Parse Text Elements
     text_elements: dict[str, str] = {}
@@ -388,13 +369,8 @@ def save_drawing(
             content = merge_managed_block(
                 content, "drawing:review", "## Revisão\n" + "\n\n---\n\n".join(entries)
             )
-            _fm, raw_fm, body = _split_frontmatter(content)
-            if raw_fm:
-                if re.search(r"^revisado:", raw_fm, re.MULTILINE):
-                    updated = re.sub(r"^(revisado:)[^\n]*", r"\1 true", raw_fm, flags=re.MULTILINE)
-                else:
-                    updated = raw_fm[:-4] + "revisado: true\n---\n"
-                content = updated + body
+            if split_frontmatter(content).present:
+                content = merge_frontmatter_keys(content, {"revisado": True})
         atomic_write(file_path, content, expected_revision=current_revision)
         if png_bytes is not None:
             base = file_path.name.removesuffix(".excalidraw.md")

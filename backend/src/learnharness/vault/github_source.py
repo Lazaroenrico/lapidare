@@ -27,8 +27,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 
-import yaml
-
+from learnharness.core.frontmatter import frontmatter_data, strip_frontmatter
 from learnharness.core.repo_paths import GENERIC_STEMS, LANGUAGE_STEMS
 from learnharness.vault.safety import folder_map, safe_component, safe_path
 from learnharness.vault.transcript_importer import import_transcript_text
@@ -488,12 +487,7 @@ async def ensure_clone(
 
 def _first_heading(text: str) -> str | None:
     in_fence = False
-    lines = text.splitlines()
-    if lines and lines[0].strip() == "---":
-        end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
-        if end is not None:
-            lines = lines[end + 1:]
-    for line in lines:
+    for line in strip_frontmatter(text).splitlines():
         if line.lstrip().startswith(("```", "~~~")):
             in_fence = not in_fence
             continue
@@ -611,14 +605,8 @@ def source_basename(relative: str) -> str:
 
 
 def _repo_path_of(note: Path) -> str | None:
-    text = note.read_text(encoding="utf-8", errors="replace")
-    if not text.startswith("---"):
-        return None
-    try:
-        meta = yaml.safe_load(text.split("---", 2)[1])
-    except yaml.YAMLError:
-        return None
-    return meta.get("repo_path") if isinstance(meta, dict) else None
+    value = frontmatter_data(note.read_text(encoding="utf-8", errors="replace")).get("repo_path")
+    return value if isinstance(value, str) else None
 
 
 def _source_index(vault: Path) -> dict[str, list[Path]]:

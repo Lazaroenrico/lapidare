@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-import yaml
 from fastmcp import Client
 from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 
 from learnharness.core.contracts.config import McpServerConfig
+from learnharness.core.frontmatter import frontmatter_data
 from learnharness.services.secrets import resolve_auth
 from learnharness.vault.safety import folder_map, safe_path
 
@@ -308,13 +308,4 @@ def _frontmatter(path: Path) -> dict[str, Any]:
             head = handle.read(8192)
     except OSError:
         return {}
-    if not head.startswith("---"):
-        return {}
-    parts = head.split("---", 2)
-    if len(parts) < 3:
-        return {}
-    try:
-        meta = yaml.safe_load(parts[1])
-    except yaml.YAMLError:
-        return {}
-    return meta if isinstance(meta, dict) else {}
+    return frontmatter_data(head)
