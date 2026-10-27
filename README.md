@@ -4,7 +4,7 @@
 
 Uma plataforma local-first de estudo ativo, retenção e construção de conhecimento projetada para o **ecossistema Google**, combinando a experiência visual e editorial do `amosblomqvist/learnharness` com **persistência bidirecional em um Vault Markdown/Obsidian (`UI ⇄ Vault`)** e execução direta via **assinatura Google** (`@google/gemini-cli` e Google Antigravity `agy`).
 
-![Visão Geral da Interface](docs/assets/mockup-lh-2-adaptado.png)
+
 
 ---
 
