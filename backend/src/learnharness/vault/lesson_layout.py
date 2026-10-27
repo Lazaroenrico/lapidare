@@ -45,6 +45,21 @@ _LABELS = {
         "track": "trilha",
         "drawing": "desenho",
         "untitled": "Sessão",
+        "practice": "Prática",
+        "practice_tag": "prática",
+        "problem": "Problema",
+        "attempts": "Tentativas",
+        "outcome": "Desfecho",
+        "rung": "Degrau",
+        "miss": "Erro",
+        "retest": "reteste",
+        "verdict": "Veredito",
+        "solution": "Solução-modelo",
+        "active": "em aberto",
+        "targets": "Alvos",
+        "modes": {"recall": "evocação", "discrimination": "discriminação", "composition": "composição"},
+        "outcomes": {"solved": "resolvido", "solvedWithHints": "resolvido com dicas", "movedOn": "seguiu adiante",
+                     "surrendered": "desistiu", "dismissed": "descartado"},
     },
     "en": {
         "objective": "Goal",
@@ -66,6 +81,21 @@ _LABELS = {
         "track": "track",
         "drawing": "drawing",
         "untitled": "Session",
+        "practice": "Practice",
+        "practice_tag": "practice",
+        "problem": "Problem",
+        "attempts": "Attempts",
+        "outcome": "Outcome",
+        "rung": "Rung",
+        "miss": "Miss",
+        "retest": "retest",
+        "verdict": "Verdict",
+        "solution": "Model solution",
+        "active": "open",
+        "targets": "Targets",
+        "modes": {"recall": "recall", "discrimination": "discrimination", "composition": "composition"},
+        "outcomes": {"solved": "solved", "solvedWithHints": "solved with hints", "movedOn": "moved on",
+                     "surrendered": "surrendered", "dismissed": "dismissed"},
     },
 }
 
@@ -91,9 +121,16 @@ def sanitize_note_title(title: str, max_length: int = 80) -> str:
     return text
 
 
-def lesson_note_stem(title: str, day: date, language: str = "pt-BR") -> str:
-    """``<YYYY-MM-DD> <Título legível>`` (collision suffixes are added by the caller)."""
-    return f"{day.isoformat()} {sanitize_note_title(title) or labels(language)['untitled']}"
+def lesson_note_stem(title: str, day: date, language: str = "pt-BR", mode: str = "TEACH") -> str:
+    """``<YYYY-MM-DD> <Título legível>`` (PRACTICE: ``<YYYY-MM-DD> Prática — <Título>``).
+
+    Collision suffixes are added by the caller.
+    """
+    lang = labels(language)
+    readable = sanitize_note_title(title) or lang["untitled"]
+    if mode == "PRACTICE":
+        return f"{day.isoformat()} {lang['practice']} — {readable}"
+    return f"{day.isoformat()} {readable}"
 
 
 def heading_text(label: str) -> str:
@@ -258,11 +295,13 @@ def frontmatter_for(session: SessionRecord, language: str) -> tuple[dict[str, ob
         fonte = lang["free"]
     status = lang["done"] if session.phase == "completed" else lang["in_progress"]
     managed = {"sessao": session.id, "topico": session.title, "fonte": fonte, "status": status}
-    return managed, [lang["tag"]]
+    return managed, [lang["practice_tag"] if session.mode == "PRACTICE" else lang["tag"]]
 
 
 def render_lesson_blocks(session: SessionRecord, language: str) -> list[tuple[str, str]]:
     """Ordered managed blocks ``(key, markdown)`` for the lesson note."""
+    if session.mode == "PRACTICE":
+        return render_practice_blocks(session, language)
     lang = labels(language)
     stem = source_stem(session)
     prose = prose_by_node(session)
@@ -281,6 +320,45 @@ def render_lesson_blocks(session: SessionRecord, language: str) -> list[tuple[st
             if prose.get(node.id):
                 body = balance_fences(normalize_citations(prose[node.id], stem))
                 blocks.append((f"lesson:v2:node:{node.id}", f"## {heading_text(node.label)}\n\n{body}"))
+    return blocks
+
+
+def _summary(text: str, limit: int = 280) -> str:
+    flat = re.sub(r"\s+", " ", text).strip()
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+def render_practice_blocks(session: SessionRecord, language: str) -> list[tuple[str, str]]:
+    """PRACTICE note: the objective plus one managed section per problem.
+
+    Each section holds the statement, summarized attempts and, once concluded, the
+    outcome, rung, miss class, verdict and the model solution (hidden while open).
+    """
+    lang = labels(language)
+    blocks: list[tuple[str, str]] = [("lesson:v2:objective", f"**{lang['objective']}:** {session.title}")]
+    for index, problem in enumerate(session.practice.problems, start=1):
+        mode = lang["modes"].get(problem.mode, problem.mode)
+        parts = [f"## {lang['problem']} {index} — {mode}", "", balance_fences(problem.statement.strip())]
+        if problem.target:
+            parts += ["", f"**{lang['targets']}:** " + ", ".join(f"`{t}`" for t in problem.target)]
+        if problem.attempts:
+            parts += ["", f"**{lang['attempts']}:**"]
+            parts += [f"- {_summary(a.text)}" for a in problem.attempts]
+        if problem.outcome is None:
+            parts += ["", f"**{lang['outcome']}:** *{lang['active']}*"]
+        else:
+            line = f"**{lang['outcome']}:** {lang['outcomes'].get(problem.outcome, problem.outcome)}"
+            if problem.rung:
+                line += f" · **{lang['rung']}:** {problem.rung}"
+            if problem.miss_class:
+                line += f" · **{lang['miss']}:** {problem.miss_class}"
+            if problem.retest:
+                line += f" · *{lang['retest']}*"
+            parts += ["", line]
+            if problem.verdict.strip():
+                parts += ["", f"**{lang['verdict']}:** {problem.verdict.strip()}"]
+            parts += ["", f"**{lang['solution']}:**", "", balance_fences(problem.model_solution.strip())]
+        blocks.append((f"practice:v1:problem:{problem.id}", "\n".join(parts)))
     return blocks
 
 

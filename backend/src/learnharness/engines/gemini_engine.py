@@ -206,7 +206,7 @@ class GeminiHeadlessEngine:
         become inline data), so the workspace tool exclusion does not block it. The path
         must live inside the workspace (cwd).
         """
-        from learnharness.core.contracts.practice import DrawingReviewResult
+        from learnharness.core.contracts.drawing import DrawingReviewResult
 
         if not png_bytes:
             raise ValueError("Drawing PNG is empty")

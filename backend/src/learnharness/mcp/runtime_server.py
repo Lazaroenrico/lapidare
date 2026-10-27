@@ -21,6 +21,13 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_request
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
+from learnharness.core.contracts.practice import (
+    AGENT_OUTCOMES,
+    AgentOutcome,
+    HintRung,
+    MissClass,
+    PracticeMode,
+)
 from learnharness.core.contracts.quiz import QuizMode, QuizOption, QuizPayload
 from learnharness.core.contracts.session import ProbeAssessment, ProbeStrand
 from learnharness.core.latex_heal import heal_latex
@@ -128,6 +135,72 @@ def _graded_options(options: Any, correct: Any, multi_select: bool) -> dict[str,
     if not 2 <= len(choices) <= 6:
         raise ToolError('A graded question needs 2 to 6 options; the UI adds "Don\'t know" itself.')
     return {"choices": choices, "multi_select": multi_select, "correct_indices": _correct_indices(correct, choices, multi_select)}
+
+
+def _optional_choice(value: Any) -> str | None:
+    """``None`` for the null spellings models send ("", "none", "null")."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text.casefold() in ("", "none", "null", "n/a") else text
+
+
+def _rung(value: Any) -> str | None:
+    text = _optional_choice(value)
+    if text is None:
+        return None
+    text = text.upper()
+    return f"R{text}" if text.isdigit() else text
+
+
+def _outcome(value: Any) -> str:
+    key = str(value).strip().replace("_", "").replace(" ", "").casefold()
+    return next((o for o in AGENT_OUTCOMES if o.casefold() == key), str(value))
+
+
+def _flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() in ("true", "1", "yes", "sim")
+    return bool(value)
+
+
+def _targets(value: Any) -> list[str]:
+    value = _heal_json(value)
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ToolError('target must be a list of graph node ids or names, e.g. ["n_0123456789ab"].')
+    return value
+
+
+# Which session mode each mode-specific tool belongs to (the rest work in both).
+TEACH_ONLY = frozenset({"probe", "recall", "quiz", "explain", "probe_done", "plan_init", "grade_recall",
+                        "plan_advance", "track_foundation", "spawn_demo"})
+PRACTICE_ONLY = frozenset({"problem", "conclude"})
+
+
+def _mode_guard(state, session_id, fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Refuse TEACH tools in PRACTICE sessions (and vice versa) with corrective text."""
+    name = fn.__name__
+    if name not in TEACH_ONLY and name not in PRACTICE_ONLY:
+        return fn
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        mode = state.sessions.get(session_id).mode
+        if mode == "PRACTICE" and name in TEACH_ONLY:
+            raise ToolError(
+                f"{name} is a TEACH tool and this is a PRACTICE session. Use problem to pose one problem, "
+                "conclude to close it, graph_search to look up propositions and ask_user_question for "
+                "anything ungraded; hints go in prose."
+            )
+        if mode != "PRACTICE" and name in PRACTICE_ONLY:
+            raise ToolError(f"{name} is a PRACTICE tool and this is a TEACH session; teach with quiz/explain.")
+        return await fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _refusals(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
@@ -288,9 +361,52 @@ def session_tools(state, session_id) -> list[Callable[..., Awaitable[Any]]]:
         record = submit_demo(state, title, topic, description, session_id=session_id)
         return {"job_id": record["job_id"], "status": record["status"]}
 
+    async def problem(statement: str, mode: PracticeMode, model_solution: str,
+                      target: list[str] | str | None = None) -> dict[str, Any]:
+        """PRACTICE: pose exactly one problem; it does not block.
+
+        statement: the problem as the learner sees it (never name the target idea).
+        mode: recall | discrimination | composition. model_solution: your complete worked
+        solution, written now; it stays hidden until conclude. target: graph proposition
+        ids (n_...) or their exact names (resolved to ids), [] when none apply. Refused while
+        another problem is active. After it succeeds, end your turn and wait for the attempt.
+        """
+        return await state.practice.pose(
+            session_id, heal_latex(statement), str(mode).strip().casefold(), heal_latex(model_solution),
+            _targets(target),
+        )
+
+    async def conclude(outcome: AgentOutcome, verdict: str, rung: HintRung | None = None,
+                       miss_class: MissClass | None = None, retest: bool = False) -> dict[str, Any]:
+        """PRACTICE: close the active problem and reveal its model solution.
+
+        outcome: solved (no hints) | solvedWithHints | movedOn | surrendered. verdict: one
+        sentence. rung: the highest hint rung used (R0..R5), null when none. miss_class:
+        cue | discrimination | execution | careless | structural, null when nothing went
+        wrong. retest: true to retest these targets later. Then write the closing words and
+        end your turn; the next problem waits for the learner.
+        """
+        miss = _optional_choice(miss_class)
+        return await state.practice.conclude(
+            session_id, _outcome(outcome), heal_latex(verdict), _rung(rung),
+            miss.casefold() if miss else None, _flag(retest),
+        )
+
+    async def graph_search(query: str, limit: int = 10) -> list[dict[str, str]]:
+        """Read-only search of the learner's knowledge graph (TEACH and PRACTICE).
+
+        Returns up to ``limit`` propositions as {id, name, statement, session_title},
+        ranked by word overlap with ``query`` in name, statement and aliases.
+        """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ToolError("limit must be an integer.") from None
+        return state.practice.search(query, limit)
+
     tools = [probe, recall, quiz, explain, ask_user_question, probe_done, plan_init,
-             grade_recall, plan_advance, track_foundation, spawn_demo]
-    return [_refusals(t) for t in tools]
+             grade_recall, plan_advance, track_foundation, spawn_demo, problem, conclude, graph_search]
+    return [_refusals(_mode_guard(state, session_id, t)) for t in tools]
 
 
 HARNESS_TOOL_NAMES = frozenset(t.__name__ for t in session_tools(None, None))

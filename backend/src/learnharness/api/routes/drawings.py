@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from learnharness.api.routes.chats import _serialize_quiz
 from learnharness.api.state import get_app_state
-from learnharness.core.contracts.practice import DrawingReviewResult
+from learnharness.core.contracts.drawing import DrawingReviewResult
 from learnharness.core.contracts.quiz import QuizOption, QuizPayload
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.core.events import SseEventType

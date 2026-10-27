@@ -78,7 +78,12 @@ class GraphService:
         return None
 
     def request_extraction(self, session: SessionRecord, reason: str = "manual") -> dict[str, Any]:
-        """Queue (or join the queued) extraction job of ``session``."""
+        """Queue (or join the queued) extraction job of ``session``.
+
+        PRACTICE sessions never feed the trace: the graph holds true ideas, not performance.
+        """
+        if session.mode == "PRACTICE":
+            raise ValueError("PRACTICE sessions are not extracted into the graph")
         payload = {"session_id": session.id, "topic": session.title, "reason": reason}
         return self.state.jobs.submit("extraction", payload, key=f"extract:{session.id}",
                                       dedup_statuses=("queued",))
@@ -93,6 +98,8 @@ class GraphService:
                                    "new_chain_ids": [], "notes_written": [], "note_errors": []}
         async with self.lock:
             session = self.state.sessions.get(session_id)
+            if session.mode == "PRACTICE":
+                return summary  # Old queued jobs of a PRACTICE session drain to nothing.
             for _ in range(max(len(session.messages), 1)):
                 batch = select_batch(self._uncovered(self.state.sessions.get(session_id)), budget)
                 if not batch:

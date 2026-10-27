@@ -13,6 +13,7 @@ from learnharness.core.contracts.config import (
     TrackMode,
     VaultFolderMap,
 )
+from learnharness.core.contracts.drawing import DrawingFollowUpQuiz, DrawingReviewResult
 from learnharness.core.contracts.graph import (
     ConceptNode,
     ConceptStatus,
@@ -21,13 +22,14 @@ from learnharness.core.contracts.graph import (
     LogicalChain,
 )
 from learnharness.core.contracts.practice import (
-    DrawingReviewResult,
-    HintLevel,
-    HintStep,
-    PracticeAttemptGrade,
+    HintRung,
+    MissClass,
+    PracticeAttempt,
+    PracticeLogEntry,
+    PracticeMode,
+    PracticeOutcome,
     PracticeProblem,
-    PracticeSet,
-    RubricCriterion,
+    PracticeState,
 )
 from learnharness.core.contracts.quiz import (
     CalibrationBand,
@@ -66,7 +68,8 @@ __all__ = [
     "ConnectorStatus",
     # Session
     "DenseBlockDimensions",
-    # Practice
+    # Drawing review
+    "DrawingFollowUpQuiz",
     "DrawingReviewResult",
     "EffortLevel",
     "EngineKind",
@@ -74,18 +77,22 @@ __all__ = [
     "GraphEdge",
     "GraphSnapshot",
     "HarnessConfig",
-    "HintLevel",
-    "HintStep",
+    "HintRung",
     "LogicalChain",
     "McpServerConfig",
+    "MissClass",
     "ModelSlotConfig",
     "ModelSlots",
     "PlanDag",
     "PlanNode",
     "PlanNodeStatus",
-    "PracticeAttemptGrade",
+    # Practice
+    "PracticeAttempt",
+    "PracticeLogEntry",
+    "PracticeMode",
+    "PracticeOutcome",
     "PracticeProblem",
-    "PracticeSet",
+    "PracticeState",
     "ProbeAssessment",
     "ProbeStrand",
     "QuestionKind",
@@ -93,7 +100,6 @@ __all__ = [
     "QuizOption",
     "QuizPayload",
     "QuizSubmission",
-    "RubricCriterion",
     "SessionMessage",
     "SessionMode",
     "SessionPhase",

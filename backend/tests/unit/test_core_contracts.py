@@ -176,14 +176,12 @@ def test_validate_quiz_options_evenness_detects_giveaways() -> None:
 
 
 def test_commit_before_pose_invariant() -> None:
-    """Ensure PracticeProblem requires a non-empty committed_solution before posing."""
+    """A practice problem needs its model solution written before it is posed."""
     with pytest.raises(ValidationError):
-        PracticeProblem(
-            problem_id="p1",
-            topic="Self-attention",
-            prompt="Calcule a matriz de atenção para Q, K, V.",
-            committed_solution="   ",
-        )
+        PracticeProblem(id="p1", statement="Calcule a matriz de atenção para Q, K, V.",
+                        mode="composition", model_solution="   ")
+    with pytest.raises(ValidationError):
+        PracticeProblem(id="p1", statement=" ", mode="recall", model_solution="softmax(QK^T/sqrt(d))V")
 
 
 def test_sse_frame_wire_format() -> None:

@@ -10,7 +10,6 @@ from fastapi import FastAPI
 
 from learnharness.api.sse import SseHub
 from learnharness.core.contracts.config import HarnessConfig
-from learnharness.core.contracts.practice import PracticeSet
 from learnharness.mcp.content_client import ContentMcpClient
 from learnharness.mcp.pending_dock import PendingDockRegistry
 from learnharness.vault.bootstrap import load_config
@@ -34,7 +33,6 @@ class AppState:
         self.sse_hub = sse_hub or SseHub()
         self.dock_registry = dock_registry or PendingDockRegistry()
         self.active_jobs: dict[str, dict[str, Any]] = {}
-        self.practice_sets: dict[str, PracticeSet] = {}
         self.tokens: dict[str, tuple[str, str]] = {}
         self.api_key: str | None = None
         self.engine_factory = engine_factory
@@ -45,6 +43,7 @@ class AppState:
         self.refresh_content_mcp_client()
         from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
+        from learnharness.services.practice import PracticeService
         from learnharness.services.sessions import SessionService
         from learnharness.services.tracks import TrackService
         from learnharness.services.usage import UsageService
@@ -53,6 +52,7 @@ class AppState:
         self.jobs = JobManager(self)
         self.tracks = TrackService(self)
         self.graph = GraphService(self)
+        self.practice = PracticeService(self)
 
     def refresh_content_mcp_client(self):
         servers = self.get_config().content_mcps
@@ -152,7 +152,6 @@ class AppState:
         self.vault_path = Path(path).expanduser().resolve()
         self.api_key = api_key
         self.active_jobs.clear()
-        self.practice_sets.clear()
         self.refresh_content_mcp_client()
         await self.start()
 

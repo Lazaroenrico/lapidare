@@ -45,7 +45,7 @@ HARNESS_SERVER = "harness"
 # Mirrors learnharness.mcp.runtime_server.HARNESS_TOOL_NAMES (asserted by tests).
 HARNESS_TOOLS = frozenset({
     "probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
-    "grade_recall", "plan_advance", "track_foundation", "spawn_demo",
+    "grade_recall", "plan_advance", "track_foundation", "spawn_demo", "problem", "conclude", "graph_search",
 })
 IDLE_CLOSE_SECONDS = 600
 CANCEL_GRACE_SECONDS = 2.0

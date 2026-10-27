@@ -68,9 +68,23 @@ TURN_RULES = (
     "the turn; then quiz/explain with type predict|check and a plan node_id; ask_user_question for "
     "anything ungraded. Grade every recall/explain answer with grade_recall before commenting on it. "
     "Use plan_advance (mastered | needs_review) after checks. Do not invent citations. If prior answers "
-    "exist, react to their calibration before advancing. PRACTICE gives one hint at a time, never the "
-    "solution."
+    "exist, react to their calibration before advancing."
 )
+
+PRACTICE_TURN_RULES = (
+    "PRACTICE tools: problem(statement, mode, model_solution, target) poses exactly one problem (write "
+    "the full model_solution first; it stays hidden until conclude) and then you end the turn and wait "
+    "for the learner's attempt. Read each attempt; give hints in prose, one rung (R0..R5) per request. "
+    "Close every problem with conclude(outcome, verdict, rung, miss_class, retest), then write the "
+    "closing words and end the turn: the next problem only comes when the learner asks for it. "
+    "graph_search(query) looks up propositions of the learner's graph; ask_user_question is for anything "
+    "ungraded. probe/recall/quiz/explain/plan tools do not exist in PRACTICE. Never reopen a problem the "
+    "learner dismissed."
+)
+
+
+def turn_rules(session: SessionRecord) -> str:
+    return PRACTICE_TURN_RULES if session.mode == "PRACTICE" else TURN_RULES
 
 
 def prompt_family(session: SessionRecord) -> str:
@@ -86,6 +100,11 @@ class SessionConflict(ValueError):
 
 def opening_request(session):
     """First-turn request: the session title IS what the learner asked for."""
+    if session.mode == "PRACTICE":
+        return (
+            f'Begin the practice session. The learner asked to practice: "{session.title}". '
+            "Open directly with the first problem (no warm-up)."
+        )
     return (
         f'Begin the session. The learner opened it with: "{session.title}". Treat that as '
         "their stated goal; ask to clarify only if two readings would lead to different lessons."
@@ -99,6 +118,16 @@ class SessionService:
         self.tasks: dict[str, asyncio.Task] = {}
         # In-flight assistant text per session: [message_id, text, flushed_length].
         self.streaming: dict[str, list] = {}
+
+    async def split_streaming(self, session_id: str) -> None:
+        """Persist the text streamed so far and route what follows into a new message.
+
+        PRACTICE cards (problem, conclude) sit between the prose before and after them.
+        """
+        await self.flush_streaming(session_id)
+        entry = self.streaming.get(session_id)
+        if entry and entry[1]:
+            entry[0], entry[1], entry[2] = f"msg-{uuid4().hex}", "", 0
 
     async def flush_streaming(self, session_id: str) -> None:
         """Persist text streamed so far before a tool changes the plan state.
@@ -126,7 +155,11 @@ class SessionService:
     @staticmethod
     def _normalize_phase(session: SessionRecord) -> None:
         """Map pre-Fase 8 phases onto probing -> planning -> teaching (waiting lives in execution_status)."""
-        if session.mode != "TEACH" or session.phase == "completed":
+        if session.mode == "PRACTICE":
+            if session.phase != "completed":
+                session.phase = "teaching"  # PRACTICE has no probing/planning (Fase 9).
+            return
+        if session.phase == "completed":
             return
         if session.phase in LEGACY_PHASES:
             session.phase = "teaching"
@@ -165,7 +198,7 @@ class SessionService:
             context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
             source_path=source_file, track_item_id=track_item_id, slot_override=slot_override,
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
-            graph_context=graph_context,
+            graph_context=graph_context, phase="teaching" if mode == "PRACTICE" else "probing",
         )
         session.lesson_vault_path = self._create_lesson_note(session, config)
         self.save(session)
@@ -183,7 +216,7 @@ class SessionService:
         lessons = config.folders.lessons_dir
         folder = safe_path(self.state.vault_path, lessons)
         taken = {p.name.casefold() for p in folder.iterdir()} if folder.is_dir() else set()
-        stem = lesson_note_stem(session.title, date.today(), config.language)
+        stem = lesson_note_stem(session.title, date.today(), config.language, session.mode)
         for attempt in range(1, 1000):
             name = f"{stem}.md" if attempt == 1 else f"{stem} ({attempt}).md"
             if name.casefold() in taken:
@@ -613,19 +646,26 @@ class SessionService:
             # CLI engines reach the tools through the bound MCP server; only in-process
             # engines receive callables directly.
             tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
-            context = json.dumps({
+            practice = session.mode == "PRACTICE"
+            rules = turn_rules(session)
+            context_data: dict[str, Any] = {
                 "topic": session.title, "phase": session.phase,
                 "assessment": session.assessment.model_dump(mode="json") if session.assessment else None,
                 "plan": session.plan.model_dump(),
                 "answers": [a.model_dump(mode="json") for a in session.answers.values()],
                 "track": config.track.model_dump(mode="json") if session.track_item_id else None,
-            }, ensure_ascii=False)
+            }
+            if practice:
+                context_data["practice"] = self.state.practice.state_context(session)
+            context = json.dumps(context_data, ensure_ascii=False)
             overrides = load_overrides(self.state.vault_path, config)
             system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
                                          extra_context=context, overrides=overrides)
             system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
             if graph_block := self.state.graph.context_for(session):  # Fase 8B graph_context
                 system += "\n\n" + graph_block
+            if practice and (material := self.state.practice.prompt_material(session)):  # Fase 9
+                system += "\n\n" + material
             handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
@@ -634,15 +674,15 @@ class SessionService:
                 if session.prompt_phase is not None and session.prompt_phase != family:
                     # A live process still holds the previous phase's rules (prober -> teacher).
                     prompt = ("UPDATED INSTRUCTIONS (they replace your previous system instructions):\n"
-                              + system + "\n" + TURN_RULES + "\n\n" + prompt)
+                              + system + "\n" + rules + "\n\n" + prompt)
                 if session.prompt_phase != family:
                     current = self.get(session_id)
                     current.prompt_phase = family
                     self.save(current)
-                stream = engine.stream_turn(prompt, session_id, history=history, slot=slot, tools=tools, system_instruction=system + "\n" + TURN_RULES)
+                stream = engine.stream_turn(prompt, session_id, history=history, slot=slot, tools=tools, system_instruction=system + "\n" + rules)
             else:
                 history = "\n\n".join(f"{m.role}: {m.content}" for m in session.messages)
-                prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + TURN_RULES
+                prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + rules
                 if not session.messages and not handoff:
                     prompt += "\n\nNOW:\n" + opening_request(session)
                 if handoff:
@@ -653,6 +693,8 @@ class SessionService:
             last_flush = 0.0
             streaming = self.streaming[session_id] = [message_id, "", 0]
             async for chunk in stream:
+                if streaming[0] != message_id:  # A PRACTICE tool split the message.
+                    message_id, text, last_flush = streaming[0], "", 0.0
                 text += chunk
                 streaming[1] = text
                 current_time = asyncio.get_running_loop().time()
@@ -710,7 +752,10 @@ class SessionService:
         messages = list(session.messages)
         last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
         history, new = messages[: last + 1], messages[last + 1:]
-        state = json.dumps({"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}, ensure_ascii=False)
+        current = {"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}
+        if session.mode == "PRACTICE":
+            current = {"phase": session.phase, "active_problem_id": session.practice.active_problem_id}
+        state = json.dumps(current, ensure_ascii=False)
         if handoff:
             body = handoff
         elif new:
@@ -749,6 +794,9 @@ class SessionService:
                 ))
             self.save(session)
             self._refresh_lesson_note(session)
+
+    def refresh_lesson_note(self, session: SessionRecord) -> None:
+        self._refresh_lesson_note(session)
 
     def _refresh_lesson_note(self, session: SessionRecord) -> None:
         """Mirror the session into its note; the JSONL session stays authoritative."""
