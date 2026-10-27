@@ -25,6 +25,12 @@ from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import safe_path
 
 
+@pytest.fixture(autouse=True)
+def _no_system_chromium(monkeypatch):
+    """Artifact jobs skip the headless-browser checks unless a test opts in (Fase 17)."""
+    monkeypatch.setenv("LEARNHARNESS_CHROMIUM", "off")
+
+
 @dataclass
 class ToolCall:
     """A scripted step: await the inline tool ``name`` with ``kwargs``."""

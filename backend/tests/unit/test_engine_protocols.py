@@ -154,6 +154,12 @@ async def test_sdk_history_tools_and_image(monkeypatch):
     assert calls[0]["config"].tools
     await engine.review_drawing_multimodal(b"PNG", "diagram")
     assert calls[1]["contents"][1].inline_data.data == b"PNG"
+    from learnharness.core.contracts.drawing import DrawingReviewResult
+
+    await engine.review_image(b"PNG2", "Judge.", DrawingReviewResult, None, context="brief",
+                              system_instruction="Be strict.", image_name="figure.png", subject="figure")
+    assert calls[2]["contents"][1].inline_data.data == b"PNG2"
+    assert calls[2]["config"].system_instruction == "Be strict."
 
 
 async def test_json_events_timeout_is_idle_not_total(tmp_path):

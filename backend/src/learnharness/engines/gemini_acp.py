@@ -755,6 +755,9 @@ class GeminiCliAcpEngine:
             png_bytes, drawing_title, context_notes
         )
 
+    async def review_image(self, png_bytes, instructions, schema, slot=None, **kwargs):
+        return await self._headless.review_image(png_bytes, instructions, schema, slot, **kwargs)
+
 
 # Compatibility: older imports expect this name; it now really is the ACP adapter.
 GeminiAcpEngine = GeminiCliAcpEngine

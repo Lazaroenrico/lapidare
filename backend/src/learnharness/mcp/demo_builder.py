@@ -7,6 +7,8 @@ Pipeline (driven by the ``demo_builder`` background job in ``services/demos.py``
    required style reference (``#1a1430`` skin, Canvas 2D, sliders, zero external resources);
 2. ``core.demo_validation.validate_demo_html`` rejects network/storage/escape attempts; an
    invalid answer gets exactly one repair attempt, then ``EngineError`` (no template fallback);
+   ``services/demos.py`` then runs it in headless Chromium (``services/browser_check``) and
+   asks for up to 3 runtime fixes (``runtime_errors``) before anything is saved;
 3. ``save_demo_html`` injects a strict CSP and writes ``<vault>/viz/demos/<slug>.html``;
 4. ``link_demo_in_lesson`` merges a link into the lesson note's agent-managed section.
 """
@@ -175,11 +177,29 @@ def _repair_prompt(prompt: str, html: str, errors: list[str]) -> str:
     )
 
 
+def runtime_fix_prompt(prompt: str, html: str, errors: list[str]) -> str:
+    """Ask for a fix of a simulator that passed the validator but failed in the browser."""
+    previous = html if len(html.encode("utf-8")) <= MAX_DEMO_HTML_BYTES else "(omitted: too large; regenerate smaller)"
+    return (
+        f"{prompt}\n\nYour previous simulator was run in a headless browser (loaded, every slider moved "
+        "to its min and max, every button clicked) and it FAILED with the errors below. Find the cause of "
+        "each one in the HTML, fix it and return the complete corrected simulator; keep everything that "
+        "works.\nBrowser errors:\n"
+        + "\n".join(f"- {e}" for e in errors)
+        + f"\n\nPrevious HTML:\n{previous}"
+    )
+
+
 async def generate_demo(engine: Any, slot: Any, *, title: str, topic: str, description: str,
-                        context: dict[str, Any]) -> GeneratedDemo:
-    """Ask the engine for a lesson-specific simulator; one repair attempt, then ``EngineError``."""
+                        context: dict[str, Any], runtime_errors: list[str] | None = None,
+                        previous_html: str | None = None) -> GeneratedDemo:
+    """Ask the engine for a lesson-specific simulator; one repair attempt, then ``EngineError``.
+
+    With ``runtime_errors`` + ``previous_html`` the request is a fix of a simulator that
+    failed in the browser check.
+    """
     prompt = build_demo_prompt(title, topic, description, context)
-    current = prompt
+    current = runtime_fix_prompt(prompt, previous_html, runtime_errors) if runtime_errors and previous_html else prompt
     errors: list[str] = []
     for attempt in range(2):
         try:

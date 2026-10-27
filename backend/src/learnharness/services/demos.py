@@ -2,16 +2,26 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
+from learnharness.core.contracts.demo import GeneratedDemo
 from learnharness.core.events import SseEventType
+from learnharness.engines.cli_protocol import EngineError
 from learnharness.mcp.demo_builder import generate_demo, link_demo_in_lesson, save_demo_html
+from learnharness.services.browser_check import BrowserUnavailable, run_html
 from learnharness.vault.lesson_layout import current_node_id
 from learnharness.vault.safety import safe_path
 
 logger = logging.getLogger(__name__)
 
 MAX_LESSON_CONTEXT_CHARS = 12_000
+# Fix rounds after the browser check finds runtime errors (Fase 17).
+MAX_RUNTIME_FIXES = 3
+
+
+class DemoRuntimeError(EngineError):
+    """The simulator still failed in the browser after every fix round."""
 
 
 def submit_demo(state, title: str, topic: str, description: str = "", lesson_rel_path: str | None = None,
@@ -56,16 +66,51 @@ def build_demo_context(state, *, topic: str, lesson_rel_path: str | None, sessio
     return context
 
 
-async def run_demo_job(state, payload: dict[str, Any]) -> dict[str, Any]:
-    """Job body: generate (engine ``background`` slot), validate, save, link into the lesson note."""
+async def build_verified_demo(engine, slot, *, title: str, topic: str, description: str,
+                              context: dict[str, Any], progress: Callable[[str], None]
+                              ) -> tuple[GeneratedDemo, bool, list[str]]:
+    """``(demo, verified, warnings)``: generate, run in headless Chromium, fix up to 3 times.
+
+    Only a simulator that ran clean is returned verified. Still failing after the last fix
+    raises ``DemoRuntimeError`` with the browser's errors. Without Chromium the validated
+    demo is returned unverified with a warning (the previous behaviour).
+    """
+    progress("gerando o simulador")
+    demo = await generate_demo(engine, slot, title=title, topic=topic, description=description, context=context)
+    for round_ in range(MAX_RUNTIME_FIXES + 1):
+        progress("testando no navegador" if round_ == 0 else f"testando no navegador ({round_}/{MAX_RUNTIME_FIXES})")
+        try:
+            report = await run_html(demo.html)
+        except BrowserUnavailable as exc:
+            logger.warning("Demo delivered without the browser check: %s", exc)
+            return demo, False, [f"simulador não testado no navegador: {exc}"]
+        if report.clean:
+            return demo, True, []
+        logger.warning("Demo failed in the browser (round %d): %s", round_, "; ".join(report.errors))
+        if round_ == MAX_RUNTIME_FIXES:
+            raise DemoRuntimeError(f"O simulador continuou com erros no navegador após {MAX_RUNTIME_FIXES} "
+                                   "correções: " + "; ".join(report.errors))
+        progress(f"corrigindo erros do navegador ({round_ + 1}/{MAX_RUNTIME_FIXES})")
+        demo = await generate_demo(engine, slot, title=title, topic=topic, description=description,
+                                   context=context, runtime_errors=report.errors, previous_html=demo.html)
+    raise AssertionError("unreachable")
+
+
+async def run_demo_job(state, payload: dict[str, Any],
+                       progress: Callable[[str], None] = lambda _activity: None) -> dict[str, Any]:
+    """Job body: generate (engine ``background`` slot), validate, test in the browser, save, link."""
     config = state.get_config()
     slot = config.slots.background
     context = build_demo_context(state, topic=payload["topic"], lesson_rel_path=payload.get("lesson_rel_path"),
                                  session_id=payload.get("session_id"))
-    demo = await generate_demo(state.engine(slot), slot, title=payload["title"], topic=payload["topic"],
-                               description=payload.get("description", ""), context=context)
+    demo, verified, warnings = await build_verified_demo(
+        state.engine(slot), slot, title=payload["title"], topic=payload["topic"],
+        description=payload.get("description", ""), context=context, progress=progress)
     result = save_demo_html(state.vault_path, demo, topic=payload["topic"],
                             description=payload.get("description") or demo.learning_goal)
+    result["verified"] = verified
+    if warnings:
+        result["warnings"] = warnings
     lesson = payload.get("lesson_rel_path")
     # A session demo reaches its lesson note through the job steer (rendered in the section
     # of the node current at dispatch); only a sessionless demo is linked directly.
