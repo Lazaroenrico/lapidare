@@ -24,7 +24,8 @@ export const SHORTCUTS = [
   { id: "toggleSidebar", combo: "Mod+B", scope: "global" },
   { id: "sessionSearch", combo: "Mod+Shift+F", scope: "global" },
   { id: "goGraph", combo: "Mod+G", scope: "global" },
-  { id: "dictate", combo: "Mod+D", scope: "global" },
+  // Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
+  // { id: "dictate", combo: "Mod+D", scope: "global" },
   { id: "modelPicker", combo: "Mod+K", scope: "global" },
   { id: "find", combo: "Mod+F", scope: "session" },
   { id: "rename", combo: "F2", scope: "session" },

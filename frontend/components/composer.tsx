@@ -3,7 +3,7 @@
 import { useLocale } from "@/components/locale-provider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, ChevronDown, CornerDownLeft, Loader2, Mic, Target, X } from "lucide-react";
+import { BookOpen, ChevronDown, CornerDownLeft, Loader2, /* Mic, */ Target, X } from "lucide-react";
 import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig } from "@/lib/types";
 import { createChat } from "@/lib/api";
 import { findActiveTrack } from "@/lib/tracks";
@@ -284,6 +284,7 @@ export function Composer({
           ))}
         </div>
 
+        {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
         <button
           type="button"
           onClick={dictation.toggle}
@@ -299,6 +300,8 @@ export function Composer({
           {dictation.listening ? <span className="w-2 h-2 rounded-full bg-danger animate-pulse" /> : <Mic className="w-3.5 h-3.5" />}
           <span>{dictation.listening ? t.dictateStop : t.dictateBar}</span>
         </button>
+        */}
+        <div className="flex-1" />
 
         <ModelPicker
           pill

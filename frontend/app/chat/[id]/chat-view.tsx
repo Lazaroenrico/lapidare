@@ -14,8 +14,8 @@ import {
   FileText,
   GitBranch,
   Loader2,
-  Mic,
-  MicOff,
+  // Mic,
+  // MicOff,
   RotateCcw,
   Send,
   Sparkles,
@@ -1011,6 +1011,7 @@ export function ChatView() {
           onSubmit={handleSendMessage}
           className="max-w-4xl mx-auto flex items-center gap-2"
         >
+          {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
           {dictation.supported && (
             <button
               type="button"
@@ -1031,6 +1032,7 @@ export function ChatView() {
               )}
             </button>
           )}
+          */}
 
           <div className="relative flex-1">
             <input

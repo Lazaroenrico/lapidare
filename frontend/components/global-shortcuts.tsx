@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Keyboard, X } from "lucide-react";
 import { comboFor, formatCombo, SHORTCUTS, type ShortcutScope } from "@/lib/keyboard";
-import { dispatchCommand, OPEN_MODEL_PICKER_EVENT, TOGGLE_DICTATION_EVENT } from "@/lib/command-events";
+import { dispatchCommand, OPEN_MODEL_PICKER_EVENT /* , TOGGLE_DICTATION_EVENT */ } from "@/lib/command-events";
 import { settingsText } from "@/lib/settings-i18n";
 import { useLocale } from "./locale-provider";
 import { useShortcut } from "./use-shortcut";
@@ -108,7 +108,8 @@ export function GlobalShortcuts() {
   useShortcut("help", () => setHelpOpen((open) => !open));
   useShortcut("settings", () => router.push("/settings"));
   useShortcut("modelPicker", () => dispatchCommand(OPEN_MODEL_PICKER_EVENT));
-  useShortcut("dictate", () => dispatchCommand(TOGGLE_DICTATION_EVENT));
+  // Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
+  // useShortcut("dictate", () => dispatchCommand(TOGGLE_DICTATION_EVENT));
 
   const closeHelp = useCallback(() => setHelpOpen(false), []);
 

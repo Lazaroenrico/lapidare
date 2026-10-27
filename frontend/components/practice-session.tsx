@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Loader2, Mic, MicOff, Send, SkipForward } from "lucide-react";
+import { ChevronRight, Loader2, /* Mic, MicOff, */ Send, SkipForward } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
@@ -269,6 +269,7 @@ export function PracticeDock({
           </label>
         )}
         <div className="flex items-end gap-2">
+          {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
           {dictation.supported && (
             <button
               type="button"
@@ -285,6 +286,7 @@ export function PracticeDock({
               {dictation.listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
           )}
+          */}
           <textarea
             id="practice-dock-input"
             ref={textareaRef}
