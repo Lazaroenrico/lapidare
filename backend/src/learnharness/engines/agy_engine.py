@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import shlex
-import signal
 import sys
 import tempfile
 from contextlib import aclosing
@@ -35,7 +34,13 @@ from pathlib import Path
 from typing import ClassVar
 
 from learnharness.engines import agy_gate
-from learnharness.engines.cli_protocol import EngineError, idle_wait, json_events
+from learnharness.engines.cli_protocol import (
+    EngineError,
+    drain_stderr,
+    idle_wait,
+    json_events,
+    terminate_group,
+)
 from learnharness.engines.detector import KNOWN_AGY_PATHS
 from learnharness.engines.gemini_acp import AcpProcessPool, compose_prompt
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine, pick_structured
@@ -183,13 +188,7 @@ class AgyProcess:
             start_new_session=True,
             limit=STDOUT_LIMIT,
         )
-        self._stderr_task = asyncio.create_task(self._drain_stderr())
-
-    async def _drain_stderr(self):
-        # Stderr may hold credentials or user data: kept for local debugging only.
-        while chunk := await self.process.stderr.read(8192):
-            self.stderr_tail.extend(chunk)
-            del self.stderr_tail[:-16384]
+        self._stderr_task = asyncio.create_task(drain_stderr(self.process.stderr, self.stderr_tail))
 
     async def send(self, payload):
         if not self.alive:
@@ -213,14 +212,7 @@ class AgyProcess:
             try:
                 await asyncio.wait_for(process.wait(), CLOSE_GRACE_SECONDS)
             except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
+                await terminate_group(process)
         if self._stderr_task:
             self._stderr_task.cancel()
             await asyncio.gather(self._stderr_task, return_exceptions=True)
@@ -447,14 +439,6 @@ class AgyStreamEngine(GeminiHeadlessEngine):
                 # Unknown agent state (timeout, crash, cancel, failed turn): next turn
                 # respawns and rehydrates from the persisted history.
                 await self.pool.close(session_id)
-
-    @classmethod
-    async def close_session(cls, session_id):
-        await cls.pool.close(session_id)
-
-    @classmethod
-    async def close_all(cls):
-        await cls.pool.close_all()
 
     # ----------------------------------------------------------------- one-shot calls
 

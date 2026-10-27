@@ -13,8 +13,8 @@ from typing import Any
 from uuid import uuid4
 
 from learnharness.core.events import SseEventType
+from learnharness.core.lesson_layout import current_node_id
 from learnharness.services.sessions import now
-from learnharness.vault.lesson_layout import current_node_id
 from learnharness.vault.safety import append_line, safe_path
 
 logger = logging.getLogger(__name__)

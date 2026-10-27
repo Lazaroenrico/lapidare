@@ -30,6 +30,14 @@ from learnharness.core.contracts.session import (
     SessionRecord,
 )
 from learnharness.core.events import SseEventType
+from learnharness.core.lesson_layout import (
+    current_node_id,
+    frontmatter_for,
+    legacy_message_blocks,
+    lesson_note_stem,
+    plan_paragraph_refs,
+    render_lesson_blocks,
+)
 from learnharness.core.plan_mermaid import (
     STICKY_STATUSES,
     PlanSyntaxError,
@@ -48,14 +56,6 @@ from learnharness.vault.jsonl_store import (
     load_session,
     load_session_file,
     trash_file_path,
-)
-from learnharness.vault.lesson_layout import (
-    current_node_id,
-    frontmatter_for,
-    legacy_message_blocks,
-    lesson_note_stem,
-    plan_paragraph_refs,
-    render_lesson_blocks,
 )
 from learnharness.vault.markdown_ast import sync_lesson_note
 from learnharness.vault.safety import RevisionConflictError, safe_component, safe_path

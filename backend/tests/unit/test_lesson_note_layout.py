@@ -15,7 +15,7 @@ from learnharness.core.contracts.session import (
     SessionMessage,
     SessionRecord,
 )
-from learnharness.vault.lesson_layout import (
+from learnharness.core.lesson_layout import (
     balance_fences,
     current_node_id,
     lesson_note_stem,
@@ -119,7 +119,7 @@ def test_legacy_msg_blocks_migrate_without_losing_user_edits(tmp_path):
         SessionMessage(id="msg-1", role="assistant", content="texto 1", created_at=""),
         SessionMessage(id="msg-2", role="assistant", content="texto 2", created_at=""),
     ])
-    from learnharness.vault.lesson_layout import frontmatter_for, legacy_message_blocks
+    from learnharness.core.lesson_layout import frontmatter_for, legacy_message_blocks
 
     managed, tags = frontmatter_for(session, "pt-BR")
     sync_lesson_note(vault, rel, "Velha", managed, render_lesson_blocks(session, "pt-BR"),

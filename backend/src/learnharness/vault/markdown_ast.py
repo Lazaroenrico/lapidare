@@ -18,9 +18,11 @@ from typing import Any
 import yaml
 
 from learnharness.core.contracts.graph import ConceptNode, ConceptStatus
+from learnharness.core.slug import ascii_slug
 from learnharness.vault.safety import (
     RevisionConflictError,
     atomic_write,
+    ensure_not_source,
     folder_map,
     locked_path,
     revision,
@@ -30,11 +32,6 @@ from learnharness.vault.safety import (
 
 logger = logging.getLogger(__name__)
 
-
-def _slugify(text: str) -> str:
-    """Helper to convert string into a clean identifier."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower())
-    return slug.strip("-")
 
 
 def _extract_wikilinks(text: str) -> list[str]:
@@ -114,13 +111,6 @@ def _parse_sections(body: str) -> tuple[str, list[tuple[str, str]]]:
     return preamble, sections
 
 
-def _is_empty_or_template_comment(text: str) -> bool:
-    """Check if section contains only whitespace or HTML comments like <!-- ... -->."""
-    cleaned = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
-    return len(cleaned) == 0
-
-
-_atomic_write = atomic_write
 
 
 def parse_concept_note(path: Path) -> ConceptNode:
@@ -180,7 +170,7 @@ def parse_concept_note(path: Path) -> ConceptNode:
         sources = []
 
     return ConceptNode(
-        id=_slugify(title),
+        id=ascii_slug(title),
         title=title,
         status=status,
         unconditional_truth=unconditional_truth,
@@ -310,15 +300,7 @@ def merge_lesson_note(
     status: str | None = None,
     expected_revision: str | None = None,
 ) -> Path:
-    folders = folder_map(vault_path)
-    target = safe_path(vault_path, rel_path)
-    for source in {folders.sources_dir, "Fontes", "Sources"}:
-        if target.is_relative_to(safe_path(vault_path, source)):
-            raise PermissionError("Fontes/ is strictly read-only")
-    if not target.is_relative_to(safe_path(vault_path, folders.lessons_dir)):
-        raise PermissionError("Lesson notes must be inside the configured lessons folder")
-    if target.suffix != ".md":
-        raise ValueError("Lesson notes must be Markdown files")
+    target = _lesson_target(vault_path, rel_path)
     fm = yaml.safe_dump(
         {
             "tags": ["aula"],
@@ -587,9 +569,7 @@ def merge_frontmatter_keys(
 def _lesson_target(vault_path: Path, rel_path: str) -> Path:
     folders = folder_map(vault_path)
     target = safe_path(vault_path, rel_path)
-    for source in {folders.sources_dir, "Fontes", "Sources"}:
-        if target.is_relative_to(safe_path(vault_path, source)):
-            raise PermissionError("Fontes/ is strictly read-only")
+    ensure_not_source(vault_path, target, folders)
     if not target.is_relative_to(safe_path(vault_path, folders.lessons_dir)):
         raise PermissionError("Lesson notes must be inside the configured lessons folder")
     if target.suffix != ".md":

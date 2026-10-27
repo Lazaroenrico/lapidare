@@ -10,12 +10,12 @@ from fastmcp.exceptions import ToolError
 from learnharness.core.contracts.config import EngineKind
 from learnharness.core.contracts.jobs import PdfAnswer, ResearchResult, VisualDraft
 from learnharness.core.contracts.session import PlanDag, PlanNode, SessionRecord
+from learnharness.core.lesson_layout import render_job_artifact
 from learnharness.core.svg_validation import MAX_SVG_BYTES, validate_svg
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.services.jobs import DISPATCH_NOTE
 from learnharness.services.pdf_reader import triage
 from learnharness.vault.bootstrap import load_config, save_config
-from learnharness.vault.lesson_layout import render_job_artifact
 from tests.conftest import FakeEngine, wait_until
 
 GOOD_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '

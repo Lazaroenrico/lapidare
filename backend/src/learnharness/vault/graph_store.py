@@ -25,9 +25,9 @@ from learnharness.core.contracts.graph import (
     SourceRecord,
 )
 from learnharness.core.graph_merge import fold_chains, fold_nodes
+from learnharness.core.lesson_layout import sanitize_note_title
 from learnharness.core.note_sources import fold_sources
 from learnharness.vault.jsonl_io import read_objects
-from learnharness.vault.lesson_layout import sanitize_note_title
 from learnharness.vault.markdown_ast import (
     body_without_frontmatter,
     merge_frontmatter_keys,
@@ -38,6 +38,7 @@ from learnharness.vault.markdown_ast import (
 from learnharness.vault.safety import (
     append_line,
     atomic_write,
+    ensure_not_source,
     folder_map,
     locked_path,
     revision,
@@ -175,9 +176,7 @@ def note_link(rel_path: str) -> str:
 def _concepts_folder(vault_path: Path) -> tuple[Path, str]:
     folders = folder_map(vault_path)
     folder = safe_path(vault_path, folders.concepts_dir)
-    for source in {folders.sources_dir, "Fontes", "Sources"}:
-        if folder.is_relative_to(safe_path(vault_path, source)):
-            raise PermissionError("Fontes/ is strictly read-only")
+    ensure_not_source(vault_path, folder, folders)
     return folder, folders.concepts_dir
 
 

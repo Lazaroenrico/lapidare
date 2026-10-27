@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from learnharness.core.slug import ascii_slug
 from learnharness.vault.markdown_ast import merge_managed_block
 from learnharness.vault.safety import (
     RevisionConflictError,
@@ -37,13 +38,7 @@ except ImportError:
     _lz = None
 
 
-def _slugify(text: str) -> str:
-    """Generate safe URL/filename slug."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower())
-    return slug.strip("-")
 
-
-_atomic_write = atomic_write
 
 
 def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
@@ -82,7 +77,7 @@ def create_retrieval_drawing(
     drawings_dir.mkdir(parents=True, exist_ok=True)
 
     today = datetime.now().strftime("%Y-%m-%d")
-    slug = f"{_slugify(title)}-{today}"
+    slug = f"{ascii_slug(title)}-{today}"
     target_file = drawings_dir / f"{slug}.excalidraw.md"
 
     # Excalidraw locked text elements

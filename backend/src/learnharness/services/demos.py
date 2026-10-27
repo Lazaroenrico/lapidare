@@ -7,10 +7,10 @@ from typing import Any
 
 from learnharness.core.contracts.demo import GeneratedDemo
 from learnharness.core.events import SseEventType
+from learnharness.core.lesson_layout import current_node_id
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.mcp.demo_builder import generate_demo, link_demo_in_lesson, save_demo_html
 from learnharness.services.browser_check import BrowserUnavailable, run_html
-from learnharness.vault.lesson_layout import current_node_id
 from learnharness.vault.safety import safe_path
 
 logger = logging.getLogger(__name__)

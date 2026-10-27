@@ -29,11 +29,10 @@ import json
 import logging
 import os
 import re
-import signal
 from dataclasses import dataclass
 from typing import ClassVar
 
-from learnharness.engines.cli_protocol import EngineError, idle_wait
+from learnharness.engines.cli_protocol import EngineError, drain_stderr, idle_wait, terminate_group
 from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine, write_workspace_settings
 from learnharness.engines.usage import acp_usage, report_usage
@@ -232,13 +231,8 @@ class AcpConnection:
             raise EngineError(f"Could not start {os.path.basename(self.command[0])} --acp") from exc
         self._tasks = [
             asyncio.create_task(self._read_loop()),
-            asyncio.create_task(self._drain_stderr()),
+            asyncio.create_task(drain_stderr(self.process.stderr)),
         ]
-
-    async def _drain_stderr(self):
-        # Stderr may contain credentials or user data; keep it out of errors and the UI.
-        while await self.process.stderr.read(8192):
-            pass
 
     async def _read_loop(self):
         try:
@@ -360,15 +354,7 @@ class AcpConnection:
         if process is not None:
             with contextlib.suppress(Exception):
                 process.stdin.close()
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
+            await terminate_group(process)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -618,14 +604,6 @@ class GeminiCliAcpEngine:
             raise
         self.pool.put(session_id, entry)
         return entry, True
-
-    @classmethod
-    async def close_session(cls, session_id):
-        await cls.pool.close(session_id)
-
-    @classmethod
-    async def close_all(cls):
-        await cls.pool.close_all()
 
     # ----------------------------------------------------------------- turns
 

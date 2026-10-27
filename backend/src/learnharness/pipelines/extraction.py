@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -409,7 +408,6 @@ async def run_extraction_pipeline(
     slot: Any = None,
     session_title: str = "",
     language: str = "pt-BR",
-    on_progress: Callable[[str, float], None] | None = None,
     origin: str = "session",
     merge_lock: asyncio.Lock | None = None,
 ) -> dict[str, Any]:
@@ -418,8 +416,6 @@ async def run_extraction_pipeline(
         raise ValueError("Extraction requires a configured engine")
     vault_path = Path(vault_path).resolve()
     run_id = f"extract-{uuid4().hex[:8]}"
-    if on_progress:
-        on_progress("Extracting propositions", 0.1)
     initial: ExtractionState = {
         "vault_path": str(vault_path), "session_id": session_id, "session_title": session_title,
         "language": language, "batch": [m.model_dump() for m in batch], "status": "running",
@@ -434,8 +430,6 @@ async def run_extraction_pipeline(
         }})
     if final.get("status") != "completed":
         raise RuntimeError("Extraction graph finished without completing the merge")
-    if on_progress:
-        on_progress("Knowledge persisted", 1.0)
     return {"run_id": run_id, "session_id": session_id, **final.get("result", {})}
 
 

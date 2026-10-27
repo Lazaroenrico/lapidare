@@ -93,8 +93,6 @@ class SseHub:
             await self.unsubscribe(queue)
 
 
-default_sse_hub = SseHub()
-
 
 @sse_router.get("/api/events")
 async def sse_events(request: Request) -> StreamingResponse:

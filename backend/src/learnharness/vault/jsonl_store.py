@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,17 +20,13 @@ from learnharness.core.contracts.graph import GraphEdge, GraphSnapshot, LogicalC
 from learnharness.core.contracts.practice import PracticeLogEntry
 from learnharness.core.contracts.quiz import CalibrationResult
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
+from learnharness.core.slug import ascii_slug
 from learnharness.vault.jsonl_io import cached_fold, lines_backward, parse_object, read_objects
 from learnharness.vault.markdown_ast import scan_all_concepts
 from learnharness.vault.safety import append_line, safe_component, safe_path
 
 logger = logging.getLogger(__name__)
 
-
-def _slugify(text: str) -> str:
-    """Generate clean node id from title."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower())
-    return slug.strip("-")
 
 
 def _ensure_harness_dir(vault_path: Path) -> tuple[Path, Path]:
@@ -368,7 +363,7 @@ def build_graph_snapshot(vault_path: Path) -> GraphSnapshot:
             if q.node_id:
                 mistakes_by_concept[q.node_id] = mistakes_by_concept.get(q.node_id, 0) + 1
             if q.topic:
-                t_slug = _slugify(q.topic)
+                t_slug = ascii_slug(q.topic)
                 mistakes_by_concept[t_slug] = mistakes_by_concept.get(t_slug, 0) + 1
 
     # 2. Assign deterministic coordinates and mistake counts
@@ -392,7 +387,7 @@ def build_graph_snapshot(vault_path: Path) -> GraphSnapshot:
     # Depende de edges
     for node in concepts:
         for dep in node.depends_on:
-            dep_id = _slugify(dep)
+            dep_id = ascii_slug(dep)
             key = (dep_id, node.id, "depends_on")
             if key not in seen_edges:
                 edges.append(GraphEdge(source=dep_id, target=node.id, kind="depends_on"))
@@ -400,9 +395,9 @@ def build_graph_snapshot(vault_path: Path) -> GraphSnapshot:
 
     # Chain edges (premises -> conclusion)
     for chain in chains:
-        target_id = _slugify(chain.conclusion)
+        target_id = ascii_slug(chain.conclusion)
         for premise in chain.premises:
-            source_id = _slugify(premise)
+            source_id = ascii_slug(premise)
             key = (source_id, target_id, "chain")
             if key not in seen_edges:
                 edges.append(GraphEdge(source=source_id, target=target_id, kind="chain"))

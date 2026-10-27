@@ -59,6 +59,13 @@ def validate_folders(root: Path, folders: VaultFolderMap) -> None:
                     raise PermissionError("Writable folders cannot overlap immutable sources")
 
 
+def ensure_not_source(root: Path, target: Path, folders: VaultFolderMap) -> None:
+    """Refuse any write under the immutable sources folder (configured, ``Fontes`` or ``Sources``)."""
+    for source in {folders.sources_dir, "Fontes", "Sources"}:
+        if target.is_relative_to(safe_path(root, source)):
+            raise PermissionError("Fontes/ is strictly read-only")
+
+
 _FOLDERS_CACHE: dict[Path, tuple[tuple[int, int, int], VaultFolderMap]] = {}
 
 

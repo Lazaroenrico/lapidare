@@ -104,6 +104,3 @@ class PendingDockRegistry:
             return True
         return False
 
-
-# Singleton default registry used across application lifecycle
-default_dock_registry = PendingDockRegistry()

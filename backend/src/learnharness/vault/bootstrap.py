@@ -22,6 +22,7 @@ from learnharness.core.contracts.config import (
     VaultFolderMap,
     derive_track_title,
 )
+from learnharness.core.slug import ascii_slug
 from learnharness.vault.safety import atomic_write, locked_path, safe_path, validate_folders
 
 logger = logging.getLogger(__name__)
@@ -198,11 +199,6 @@ Index of the vault. Lapidare updates this note after consolidating lessons.
 """
 
 
-def _slugify(text: str) -> str:
-    """Helper to generate clean identifiers from strings."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower())
-    return slug.strip("-")
-
 
 def parse_track_tables(mapa_content: str) -> list[TrackItem]:
     """Parse track tables from 00 Mapa.md (both Mentoria and Currículo)."""
@@ -248,7 +244,7 @@ def parse_track_tables(mapa_content: str) -> list[TrackItem]:
                     or "aguardando" in status_lower
                 )
 
-                item_id = f"mentoria-{_slugify(title)}"
+                item_id = f"mentoria-{ascii_slug(title)}"
                 items.append(
                     TrackItem(
                         id=item_id,
@@ -298,7 +294,7 @@ def parse_track_tables(mapa_content: str) -> list[TrackItem]:
                     or "in_progress" in status_lower
                 )
                 title = f"Etapa {etapa}" if not etapa.lower().startswith("etapa") else etapa
-                item_id = f"curriculo-{_slugify(etapa)}"
+                item_id = f"curriculo-{ascii_slug(etapa)}"
                 items.append(
                     TrackItem(
                         id=item_id,
@@ -337,7 +333,7 @@ def parse_learning_md(learning_content: str) -> list[TrackItem]:
         if item_match:
             is_checked = item_match.group(1).lower() == "x"
             item_text = item_match.group(2).strip()
-            item_id = f"queue-{_slugify(item_text[:30])}"
+            item_id = f"queue-{ascii_slug(item_text[:30])}"
             items.append(
                 TrackItem(
                     id=item_id,

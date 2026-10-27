@@ -16,6 +16,35 @@ class EngineError(RuntimeError):
     """Provider failed; callers must surface this instead of inventing an answer."""
 
 
+STDERR_TAIL_BYTES = 16384
+
+
+async def drain_stderr(stream: asyncio.StreamReader, tail: bytearray | None = None) -> None:
+    """Read a child's stderr to EOF so it never blocks on a full pipe.
+
+    Stderr may hold credentials or user data: at most the last bytes are kept (``tail``),
+    for local debugging only, never relayed to errors or the UI.
+    """
+    while chunk := await stream.read(8192):
+        if tail is not None:
+            tail.extend(chunk)
+            del tail[:-STDERR_TAIL_BYTES]
+
+
+async def terminate_group(process: asyncio.subprocess.Process, grace: float = 2) -> None:
+    """SIGTERM the child's process group, SIGKILL it after ``grace`` seconds (no-op once exited)."""
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(process.wait(), grace)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await process.wait()
+
+
 async def idle_wait[T](
     awaitable: Awaitable[T],
     *,
@@ -77,12 +106,6 @@ async def json_events(
         start_new_session=True,
         limit=4 * 1024 * 1024,
     )
-    stderr_tail = bytearray()
-
-    async def drain():
-        while chunk := await process.stderr.read(8192):
-            stderr_tail.extend(chunk)
-            del stderr_tail[:-16384]
 
     async def feed():
         try:
@@ -93,7 +116,7 @@ async def json_events(
         finally:
             process.stdin.close()
 
-    stderr_task = asyncio.create_task(drain())
+    stderr_task = asyncio.create_task(drain_stderr(process.stderr))
     input_task = asyncio.create_task(feed())
     try:
         while line := await idle_wait(
@@ -114,15 +137,7 @@ async def json_events(
             # Stderr may contain credentials or user data. Never relay it to the UI.
             raise EngineError(f"Provider process exited with code {process.returncode}")
     finally:
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), 2)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
+        await terminate_group(process)
         for task in (input_task, stderr_task):
             task.cancel()
         await asyncio.gather(input_task, stderr_task, return_exceptions=True)
