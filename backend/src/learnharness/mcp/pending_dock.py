@@ -83,6 +83,18 @@ class PendingDockRegistry:
         """Retrieve the active quiz payload currently open in the QuestionDock."""
         return self._pending_quizzes.get(session_id)
 
+    def dismiss_dock(self, session_id: str, result: CalibrationResult) -> bool:
+        """Resolve the open dock with a dismissed (ungraded) result; True when one was waiting."""
+        quiz = self._pending_quizzes.get(session_id)
+        if quiz is None or quiz.quiz_id != result.quiz_id:
+            return False
+        future = self._pending_futures.pop(session_id, None)
+        self._pending_quizzes.pop(session_id, None)
+        if future and not future.done():
+            future.set_result(result)
+            return True
+        return False
+
     def cancel_dock(self, session_id: str) -> bool:
         """Cancel an open dock without grading."""
         future = self._pending_futures.pop(session_id, None)

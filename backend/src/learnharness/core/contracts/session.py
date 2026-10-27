@@ -162,6 +162,22 @@ class SessionUsage(TokenUsage):
         self.turns += 1
 
 
+class SessionCompaction(BaseModel):
+    """Summary that replaces the history before ``first_kept_message_id`` in prompts (Fase 12).
+
+    The summarized messages stay persisted; only prompt assembly reads the summary instead.
+    """
+    summary: str
+    first_kept_message_id: str
+    tokens_before: int = Field(default=0, ge=0)
+    at: str = ""
+
+
+ExecutionStatus = Literal[
+    "idle", "queued", "running", "compacting", "waiting", "interrupted", "failed", "completed",
+]
+
+
 def slot_override_for(strong: ModelSlotConfig, model_id: str | None = None,
                       effort: EffortLevel | str | None = None) -> ModelSlotConfig | None:
     """Per-session override of the strong slot; ``None`` when neither field is chosen."""
@@ -198,7 +214,7 @@ class SessionRecord(BaseModel):
     handoff_pending: bool = False
     # Prompt family ("prober" | "teacher" | "practice") last sent to a persistent process.
     prompt_phase: str | None = None
-    execution_status: Literal["idle", "queued", "running", "waiting", "interrupted", "failed", "completed"] = "idle"
+    execution_status: ExecutionStatus = "idle"
     execution_id: str | None = None
     error: str | None = None
     recovery_required: bool = False
@@ -210,6 +226,8 @@ class SessionRecord(BaseModel):
     graph_context: list[str] = Field(default_factory=list)
     # PRACTICE sessions (Fase 9): the problems posed so far and the active one.
     practice: PracticeState = Field(default_factory=PracticeState)
+    # Latest context compaction (Fase 12); None until the history first outgrows the budget.
+    compaction: SessionCompaction | None = None
     created_at: str = ""
     updated_at: str = ""
 
