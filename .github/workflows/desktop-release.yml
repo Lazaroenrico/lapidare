@@ -55,7 +55,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y xvfb libfuse2
       - run: cd frontend && npm ci
       # build-web → build-python → guard → smoke → electron-builder (no publish yet).
-      - run: make desktop
+      - run: make desktop KEEP_UNPACKED=1
       - name: Smoke the extracted AppImage backend
         run: |
           cd desktop/dist

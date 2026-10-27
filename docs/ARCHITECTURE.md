@@ -990,7 +990,7 @@ Ao sair, manda `SIGTERM` ao grupo e `SIGKILL` 6 s depois.
 4. `desktop/scripts/smoke.mjs`: sobe o Python empacotado com um Vault descartável e testa as rotas;
 5. `electron-builder` (`desktop/electron-builder.yml`, fuses `runAsNode`/`NODE_OPTIONS`/inspect desligados, `onlyLoadAppFromAsar`).
 
-`make desktop-clean` apaga `desktop/build` e `desktop/dist`.
+Ao final, o `make desktop` apaga a montagem intermediária (`dist/linux-unpacked`, `dist/__appImage-x64`, ~1,4 GB) e deixa só o AppImage; a CI a mantém com `KEEP_UNPACKED=1`. `make desktop-clean` apaga todas as saídas: `desktop/build`, `desktop/dist`, o CPython baixado (`desktop/.cache`), `frontend/out` e o cache do Next (`frontend/.next/cache`).
 
 **Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em `ubuntu-22.04`. Depois faz o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`) e o backend em `ubuntu:22.04` e `debian:12`. Por fim sobe para um release **draft** e confere os assets. Publicar o draft é manual. O auto-update (`electron-updater`, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
 

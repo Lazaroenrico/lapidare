@@ -21,6 +21,12 @@ desktop:
 	node desktop/scripts/guard-payload.mjs
 	node desktop/scripts/smoke.mjs
 	cd desktop && npm ci && npm run dist
+# Staging dirs (~1.4 GB) are useless once the AppImage exists; CI keeps them (KEEP_UNPACKED=1)
+# because its publish step reuses dist/linux-unpacked.
+ifndef KEEP_UNPACKED
+	rm -rf desktop/dist/linux-unpacked desktop/dist/__appImage-x64 desktop/dist/builder-debug.yml
+endif
 
+# Removes every build output, including the downloaded CPython and the Next.js cache.
 desktop-clean:
-	rm -rf desktop/build desktop/dist
+	rm -rf desktop/build desktop/dist desktop/.cache frontend/out frontend/.next/cache
