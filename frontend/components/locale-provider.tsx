@@ -89,7 +89,7 @@ const messages = {
     chainPracticeTopic: (premises: string, conclusion: string) => `Implicação: ${premises} => ${conclusion}`,
     // Home híbrida (Fase 8B)
     graphNodeSearch: '⌕ Buscar nós...', roadmapToggle: '⇶ Roteiro',
-    roadmapTitle: 'Mostrar os itens pendentes da trilha como nós fantasmas',
+    roadmapTitle: 'Mostrar as trilhas como constelações de módulos, ao lado do grafo',
     graphSettingsTitle: 'Ajustes do grafo', gsDisplay: 'Exibição', gsPhysics: 'Física', gsReset: 'Restaurar padrão',
     gsLabels: {
       nodeSize: 'Tamanho do nó', edgeWidth: 'Espessura da aresta', labelSize: 'Tamanho do rótulo',
@@ -111,7 +111,7 @@ const messages = {
     deleteNodeTitle: 'Excluir esta proposição?',
     deleteNodeBody: (name: string) => `"${name}" e as cadeias que a usam saem do grafo. O texto livre da nota em Conceitos/ é preservado.`,
     deleteConfirm: 'Excluir', deleting: 'Excluindo…', cancel: 'Cancelar', deleteFailed: 'Não foi possível excluir o nó.',
-    ghostLabel: 'Item pendente da trilha', ghostStart: 'Ensinar este item', ghostLinked: (n: number) => `${n} nó(s) já nascidos deste item`,
+
     chainsSortLabel: 'Ordenar', chainsSortRecent: 'Mais recentes', chainsSortConclusion: 'Conclusão (A–Z)',
     chainsSortPremises: 'Nº de premissas', chainsColChain: 'Cadeia', chainsColSession: 'Sessão',
     chainsSelectRow: (expr: string) => `Selecionar os nós de ${expr}`,
@@ -455,7 +455,7 @@ const messages = {
     chainPracticeTopic: (premises: string, conclusion: string) => `Implication: ${premises} => ${conclusion}`,
     // Hybrid Home (Fase 8B)
     graphNodeSearch: '⌕ Search nodes...', roadmapToggle: '⇶ Roadmap',
-    roadmapTitle: 'Show pending track items as ghost nodes',
+    roadmapTitle: 'Show the tracks as constellations of modules, beside the graph',
     graphSettingsTitle: 'Graph settings', gsDisplay: 'Display', gsPhysics: 'Physics', gsReset: 'Restore defaults',
     gsLabels: {
       nodeSize: 'Node size', edgeWidth: 'Edge width', labelSize: 'Label size',
@@ -477,7 +477,7 @@ const messages = {
     deleteNodeTitle: 'Delete this proposition?',
     deleteNodeBody: (name: string) => `"${name}" and the chains that use it leave the graph. Free text in the Conceitos/ note is kept.`,
     deleteConfirm: 'Delete', deleting: 'Deleting…', cancel: 'Cancel', deleteFailed: 'Could not delete the node.',
-    ghostLabel: 'Pending track item', ghostStart: 'Teach this item', ghostLinked: (n: number) => `${n} node(s) already born from this item`,
+
     chainsSortLabel: 'Sort', chainsSortRecent: 'Most recent', chainsSortConclusion: 'Conclusion (A–Z)',
     chainsSortPremises: 'Premise count', chainsColChain: 'Chain', chainsColSession: 'Session',
     chainsSelectRow: (expr: string) => `Select the nodes of ${expr}`,

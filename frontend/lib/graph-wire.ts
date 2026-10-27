@@ -166,26 +166,47 @@ export function deriveClusters(rawClusters: unknown, nodes: ConceptNode[]): Grap
   return out;
 }
 
+/** Every step of every track (done ones too: the ⇶ Roteiro draws the whole constellation). */
 function decodeRoadmap(raw: unknown): RoadmapItem[] {
   if (!Array.isArray(raw)) return [];
   const out: RoadmapItem[] = [];
+  const seen = new Set<string>();
+  const queueIndex = new Map<string, number>();
   for (const r of raw) {
     if (!isObj(r)) continue;
     const id = str(r.id);
-    const status = str(r.status, "pending");
-    if (!id || DONE_STATUSES.has(status) || r.completed === true) continue;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const rawStatus = str(r.status, "pending");
+    const status = DONE_STATUSES.has(rawStatus) || r.completed === true ? "completed" : rawStatus === "active" ? "active" : "pending";
+    const trackId = str(r.track_id) || null;
+    const nth = queueIndex.get(trackId ?? "") ?? 0;
+    queueIndex.set(trackId ?? "", nth + 1);
+    const mod = isObj(r.module) ? r.module : null;
+    const sub = isObj(r.submodule) && str(r.submodule.id) ? r.submodule : null;
     out.push({
       id,
       title: str(r.title) || id,
       status,
       linked_node_ids: strList(r.linked_node_ids),
       depends_on: strList(r.depends_on),
-      track_id: str(r.track_id) || null,
+      track_id: trackId,
       track_title: str(r.track_title) || null,
+      order: num(r.order) ?? nth,
+      kind: str(r.kind, "mentoria"),
+      status_detail: str(r.status_detail),
+      stage_label: str(r.stage_label),
+      source_ref: str(r.source_ref) || null,
+      module: mod && str(mod.id)
+        ? { id: str(mod.id), title: str(mod.title), order: num(mod.order) ?? 0 }
+        : { id: "track", title: "", order: 0 },
+      submodule: sub ? { id: str(sub.id), title: str(sub.title) || str(sub.id) } : null,
     });
   }
   return out;
 }
+
+export const isRoadmapDone = (item: Pick<RoadmapItem, "status">) => item.status === "completed";
 
 export function decodeGraph(raw: unknown): GraphSnapshot {
   if (!isObj(raw)) return EMPTY_GRAPH;

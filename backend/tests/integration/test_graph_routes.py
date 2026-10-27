@@ -104,13 +104,15 @@ def test_roadmap_links_track_items_to_session_nodes(client_vault) -> None:
     save_config(vault, config)
     _seed(vault)  # sess-1 predates Fase 14 (no track_id): it belongs to the active track
     roadmap = client.get("/api/graph").json()["roadmap"]
+    default = {"kind": "mentoria", "status_detail": "", "stage_label": "", "source_ref": None,
+               "module": {"id": "track", "title": "", "order": 0}, "submodule": None}
     assert roadmap == [
         {"id": "track:trk-a:t1", "title": "Álgebra", "status": "completed", "track_id": "trk-a",
-         "track_title": "IA", "linked_node_ids": [A, B], "depends_on": []},
+         "track_title": "IA", "linked_node_ids": [A, B], "depends_on": [], "order": 0, **default},
         {"id": "track:trk-a:t2", "title": "Atenção", "status": "active", "track_id": "trk-a",
-         "track_title": "IA", "linked_node_ids": [], "depends_on": ["track:trk-a:t1"]},
+         "track_title": "IA", "linked_node_ids": [], "depends_on": ["track:trk-a:t1"], "order": 1, **default},
         {"id": "track:trk-b:t1", "title": "Limites", "status": "active", "track_id": "trk-b",
-         "track_title": "Cálculo", "linked_node_ids": [], "depends_on": []},
+         "track_title": "Cálculo", "linked_node_ids": [], "depends_on": [], "order": 0, **default},
     ]
 
     # A session explicitly on (trk-b, t1) links its nodes there, not to (trk-a, t1).

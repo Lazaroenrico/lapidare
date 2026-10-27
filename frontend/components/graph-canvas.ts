@@ -11,13 +11,15 @@
  * - hover brightens a node and its threads, the rest dims slightly;
  * - multi-selection ring (Shift/⌘-click toggles, plain click focuses);
  * - dragging pins a node and reports its position (persisted by the caller);
- * - optional roadmap ghost nodes (hollow, dashed) linked to real nodes.
+ * - optional ⇶ Roteiro region beside the graph: each track a constellation of
+ *   modules (components/roadmap-canvas.ts), linked to the real nodes it produced.
  *
  * Colours come only from lib/palette (purple skin).
  */
 
 import { palette, toneAlpha, withAlpha, type PaletteTone } from "@/lib/palette";
-import { layoutGhosts, type Point } from "@/lib/ghost-layout";
+import type { Point } from "@/lib/roadmap-layout";
+import { RoadmapLayer } from "./roadmap-canvas";
 import { DEFAULT_GRAPH_SETTINGS, type GraphSettings } from "@/lib/graph-settings";
 import { buildConstellation, type ConstellationLink } from "@/lib/graph-wire";
 import type { ConceptNode, GraphCluster, GraphEdge, LogicalChain, RoadmapItem } from "@/lib/types";
@@ -64,6 +66,8 @@ export interface GraphCanvasCallbacks {
   /** Plain click (additive=false) or Shift/⌘/Ctrl-click (additive=true) on a node. */
   onNodeClick?: (node: ConceptNode, additive: boolean) => void;
   onGhostClick?: (item: RoadmapItem) => void;
+  /** Hovered roadmap step and its screen position (null when the pointer leaves it). */
+  onRoadmapHover?: (item: RoadmapItem | null, screen: Point | null) => void;
   onCanvasClick?: () => void;
   /** Fired on drag end with the final position of the dragged node. */
   onNodeMoved?: (id: string, pos: Point) => void;
@@ -114,10 +118,13 @@ export class GraphCanvasEngine {
   private clusterLabels = new Map<string, string>();
   private clusterOrder: string[] = [];
   private clusters: ClusterGroup[] = [];
-  private ghosts: RoadmapItem[] = [];
-  /** Per-track tone of each ghost (⇶ Roteiro, Fase 14); null = neutral. */
-  private ghostTone: (item: RoadmapItem) => PaletteTone | null = () => null;
-  private ghostPos = new Map<string, Point>();
+  /** ⇶ Roteiro constellations (empty = off). */
+  private roadmap = new RoadmapLayer();
+  private pinnedRoadmapId: string | null = null;
+  private insetLeft = 0;
+  private pulseFrame: number | null = null;
+  private pulseLast = 0;
+  private pulsePhase = 0.35;
 
   private nebula: HTMLCanvasElement | null = null;
 
@@ -235,11 +242,100 @@ export class GraphCanvasEngine {
     this.start();
   }
 
-  public setGhosts(items: RoadmapItem[] | null, tone?: (item: RoadmapItem) => PaletteTone | null) {
-    this.ghosts = items ?? [];
-    this.ghostTone = tone ?? (() => null);
-    this.updateGhostLayout();
+  /** ⇶ Roteiro: the steps to draw (null/empty = off), their track tone and the galaxy order. */
+  public setRoadmap(
+    items: RoadmapItem[] | null,
+    tone?: (item: RoadmapItem) => PaletteTone | null,
+    opts: { trackOrder?: readonly string[]; defaultModuleTitle?: string } = {},
+  ) {
+    this.roadmap.setItems(items, tone ?? (() => null), opts);
+    if (this.hoveredId && !this.nodeMap.has(this.hoveredId) && !this.roadmap.item(this.hoveredId)) this.hoveredId = null;
+    this.updateRoadmapPlacement();
+    this.syncPulse();
     this.requestRender();
+  }
+
+  /** Step whose card is pinned (drawn highlighted). */
+  public setPinnedRoadmap(id: string | null) {
+    this.pinnedRoadmapId = id;
+    this.requestRender();
+  }
+
+  /** Frames the whole ⇶ Roteiro region. */
+  public frameRoadmap() {
+    const b = this.roadmap.layout?.bounds;
+    if (!b) return;
+    this.frameBox(b.x0, b.y0, b.x1, b.y1, 1.4);
+  }
+
+  /** Zooms into one module (labels of its steps become visible). */
+  public frameModule(key: string) {
+    const m = this.roadmap.module(key);
+    if (!m) return;
+    this.frameBox(m.x - m.r, m.y - m.r - 24, m.x + m.r, m.y + m.r + 24, Math.max(this.settings.labelZoom * 1.2, 2.4));
+  }
+
+  public frameTrack(trackId: string) {
+    const g = this.roadmap.galaxyBounds(trackId);
+    if (!g) return;
+    this.frameBox(g.x0, g.y0, g.x1, g.y1, 2);
+  }
+
+  /** Screen px on the left covered by an overlay (the ⇶ Roteiro legend): fits avoid it. */
+  public setInsetLeft(px: number) {
+    this.insetLeft = Math.max(0, px);
+  }
+
+  private availW(width: number) {
+    return Math.max(160, width - this.insetLeft);
+  }
+
+  private frameBox(x0: number, y0: number, x1: number, y1: number, maxZoom: number) {
+    const { width, height } = this.viewport();
+    const top = Math.min(FIT_TOP, height * 0.15);
+    const bottom = Math.min(FIT_BOTTOM, height * 0.3);
+    const availH = Math.max(120, height - top - bottom);
+    const w = Math.max(x1 - x0 + 60, 120);
+    const h = Math.max(y1 - y0 + 40, 100);
+    this.following = false;
+    this.zoom = Math.max(this.minZoom, Math.min(maxZoom, this.maxZoom, Math.min(this.availW(width) / w, availH / h)));
+    this.panX = this.insetLeft + this.availW(width) / 2 - ((x0 + x1) / 2) * this.zoom;
+    this.panY = top + availH / 2 - ((y0 + y1) / 2) * this.zoom;
+    this.requestRender();
+  }
+
+  /** Screen position of a roadmap step (for the hover card). */
+  public roadmapScreenPoint(id: string): Point | null {
+    const p = this.roadmap.position(id);
+    return p ? { x: p.x * this.zoom + this.panX, y: p.y * this.zoom + this.panY } : null;
+  }
+
+  private reducedMotion() {
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Gentle pulse of the active steps: a throttled animation frame loop only while one is drawn. */
+  private syncPulse() {
+    const want = this.roadmap.enabled && this.roadmap.hasActive() && !this.reducedMotion();
+    if (!want) {
+      if (this.pulseFrame !== null) cancelAnimationFrame(this.pulseFrame);
+      this.pulseFrame = null;
+      this.pulsePhase = 0.35;
+      return;
+    }
+    if (this.pulseFrame !== null) return;
+    const tick = (now: number) => {
+      this.pulseFrame = requestAnimationFrame(tick);
+      if (now - this.pulseLast < 45) return;
+      this.pulseLast = now;
+      this.pulsePhase = (now % 2400) / 2400;
+      if (!this.running) this.render();
+    };
+    this.pulseFrame = requestAnimationFrame(tick);
   }
 
   public setSettings(settings: GraphSettings) {
@@ -290,7 +386,11 @@ export class GraphCanvasEngine {
 
   private fitCamera() {
     const { width, height } = this.viewport();
-    const points: Point[] = [...this.nodes, ...this.ghostPos.values()];
+    const rb = this.roadmap.layout?.bounds;
+    const points: Point[] = [
+      ...this.nodes,
+      ...(rb ? [{ x: rb.x0, y: rb.y0 }, { x: rb.x1, y: rb.y1 }] : []),
+    ];
     if (points.length === 0) {
       this.zoom = 1;
       this.panX = width / 2;
@@ -315,8 +415,8 @@ export class GraphCanvasEngine {
     const h = Math.max(maxY - minY + 60, 120);
     // Capped below the label zoom: the overview reads as a star map, labels come on zoom/hover.
     const cap = Math.min(FIT_MAX_ZOOM, this.settings.labelZoom * 0.9);
-    this.zoom = Math.max(this.minZoom, Math.min(cap, Math.min(width / w, availH / h)));
-    this.panX = width / 2 - ((minX + maxX) / 2) * this.zoom;
+    this.zoom = Math.max(this.minZoom, Math.min(cap, Math.min(this.availW(width) / w, availH / h)));
+    this.panX = this.insetLeft + this.availW(width) / 2 - ((minX + maxX) / 2) * this.zoom;
     this.panY = top + availH / 2 - ((minY + maxY) / 2) * this.zoom;
   }
 
@@ -338,6 +438,8 @@ export class GraphCanvasEngine {
 
   public destroy() {
     this.stop();
+    if (this.pulseFrame !== null) cancelAnimationFrame(this.pulseFrame);
+    this.pulseFrame = null;
     this.unbindEvents();
   }
 
@@ -483,19 +585,27 @@ export class GraphCanvasEngine {
       });
     }
     this.clusters = clusters;
-    this.updateGhostLayout();
+    this.updateRoadmapPlacement();
   }
 
-  private updateGhostLayout() {
-    if (this.ghosts.length === 0) {
-      this.ghostPos = new Map();
+  /** Keeps the roadmap region beside the (settling) graph. */
+  private updateRoadmapPlacement() {
+    if (!this.roadmap.enabled) return;
+    if (this.nodes.length === 0) {
+      this.roadmap.place(null);
       return;
     }
-    this.ghostPos = layoutGhosts(this.ghosts, this.nodeMap, {
-      offset: 60,
-      columnGap: 120,
-      rowGap: 36,
-    });
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const n of this.nodes) {
+      x0 = Math.min(x0, n.x);
+      y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x);
+      y1 = Math.max(y1, n.y);
+    }
+    this.roadmap.place({ x0, y0, x1, y1 });
   }
 
   // --- Rendering -------------------------------------------------------------
@@ -529,16 +639,29 @@ export class GraphCanvasEngine {
     ctx.scale(this.zoom, this.zoom);
     const hot = this.hotState();
     this.renderClusterLabels(ctx);
-    this.renderGhostEdges(ctx);
+    if (this.roadmap.enabled) {
+      const s = this.settings;
+      this.roadmap.draw(ctx, {
+        zoom: this.zoom,
+        nodeSize: s.nodeSize,
+        edgeWidth: s.edgeWidth,
+        labelSize: s.labelSize,
+        labelZoom: s.labelZoom,
+        regionIntensity: s.regionIntensity,
+        hoveredId: this.hoveredId,
+        pinnedId: this.pinnedRoadmapId,
+        pulse: this.pulsePhase,
+        nodePos: (id) => this.nodeMap.get(id) ?? null,
+      });
+    }
     this.renderLinks(ctx, hot);
-    this.renderGhosts(ctx);
     this.renderNodes(ctx, hot);
   }
 
   /** Soft blurred colour cloud per cluster, drawn in screen space from a low-res buffer. */
   private renderNebulae(ctx: CanvasRenderingContext2D) {
     const intensity = this.settings.regionIntensity;
-    if (intensity <= 0 || this.clusters.length === 0) return;
+    if (intensity <= 0 || (this.clusters.length === 0 && !this.roadmap.enabled)) return;
     const { width, height } = this.viewport();
     const bw = Math.max(1, Math.ceil(width * NEBULA_SCALE));
     const bh = Math.max(1, Math.ceil(height * NEBULA_SCALE));
@@ -587,6 +710,7 @@ export class GraphCanvasEngine {
         }
       }
     }
+    this.roadmap.drawNebulae(o, intensity, blurPx, supportsFilter);
     o.filter = "none";
     ctx.save();
     ctx.imageSmoothingEnabled = true;
@@ -661,52 +785,6 @@ export class GraphCanvasEngine {
       ctx.stroke();
     }
     ctx.restore();
-  }
-
-  private renderGhostEdges(ctx: CanvasRenderingContext2D) {
-    if (this.ghosts.length === 0) return;
-    ctx.save();
-    ctx.setLineDash([3 / this.zoom, 3 / this.zoom]);
-    ctx.lineWidth = this.lineWidth(0.9);
-    for (const g of this.ghosts) {
-      const gp = this.ghostPos.get(g.id);
-      if (!gp) continue;
-      const targets: Point[] = [
-        ...g.linked_node_ids.map((id) => this.nodeMap.get(id)).filter((p): p is CanvasNode => !!p),
-        ...g.depends_on.map((id) => this.ghostPos.get(id)).filter((p): p is Point => !!p),
-      ];
-      if (targets.length === 0) continue;
-      const tone = this.ghostTone(g);
-      ctx.strokeStyle = tone ? toneAlpha(tone, 0.4) : withAlpha("mutedForeground", 0.45);
-      ctx.beginPath();
-      for (const t of targets) {
-        ctx.moveTo(gp.x, gp.y);
-        ctx.lineTo(t.x, t.y);
-      }
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  private renderGhosts(ctx: CanvasRenderingContext2D) {
-    const r = this.dotRadius() * 1.8;
-    for (const g of this.ghosts) {
-      const p = this.ghostPos.get(g.id);
-      if (!p) continue;
-      const hovered = this.hoveredId === g.id;
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = palette.background;
-      ctx.fill();
-      ctx.setLineDash([2 / this.zoom, 2 / this.zoom]);
-      ctx.lineWidth = 1 / this.zoom;
-      const tone = this.ghostTone(g);
-      ctx.strokeStyle = hovered ? palette.foreground : tone ? toneAlpha(tone, 0.85) : withAlpha("mutedForeground", 0.8);
-      ctx.stroke();
-      ctx.restore();
-      this.drawLabel(ctx, g.title, p.x, p.y + r, hovered, true);
-    }
   }
 
   private renderNodes(ctx: CanvasRenderingContext2D, hot: ReturnType<GraphCanvasEngine["hotState"]>) {
@@ -821,18 +899,23 @@ export class GraphCanvasEngine {
   }
 
   private pickGhost(sx: number, sy: number): RoadmapItem | null {
-    const w = this.screenToWorld(sx, sy);
-    const hit = this.hitRadius(1.8);
-    for (const g of this.ghosts) {
-      const p = this.ghostPos.get(g.id);
-      if (p && (w.x - p.x) ** 2 + (w.y - p.y) ** 2 <= hit * hit) return g;
-    }
-    return null;
+    if (!this.roadmap.enabled) return null;
+    return this.roadmap.pickItem(this.screenToWorld(sx, sy), this.hitRadius(2.2));
+  }
+
+  /** Hover state changed: tell the caller which roadmap step (if any) is under the pointer. */
+  private emitRoadmapHover() {
+    const item = this.hoveredId ? this.roadmap.item(this.hoveredId) : null;
+    this.callbacks.onRoadmapHover?.(item, item ? this.roadmapScreenPoint(item.id) : null);
   }
 
   private applyZoom(factor: number, ox: number, oy: number) {
     const z = Math.min(this.maxZoom, Math.max(this.minZoom, this.zoom * factor));
     if (z === this.zoom) return;
+    if (this.hoveredId && this.roadmap.item(this.hoveredId)) {
+      this.hoveredId = null;
+      this.emitRoadmapHover();
+    }
     this.following = false;
     this.panX = ox - (ox - this.panX) * (z / this.zoom);
     this.panY = oy - (oy - this.panY) * (z / this.zoom);
@@ -884,26 +967,34 @@ export class GraphCanvasEngine {
     }
     if (this.panning) {
       this.movedDistance += Math.abs(dx) + Math.abs(dy);
+      if (this.movedDistance < 4) return;
       this.following = false;
       this.panX += dx;
       this.panY += dy;
+      if (this.hoveredId !== null) {
+        this.hoveredId = null;
+        this.emitRoadmapHover();
+      }
       this.requestRender();
       return;
     }
     if (e.target !== this.canvas) {
       if (this.hoveredId !== null) {
         this.hoveredId = null;
+        this.emitRoadmapHover();
         this.requestRender();
       }
       return;
     }
     const node = this.pickNode(x, y);
     const hovered = node?.id ?? this.pickGhost(x, y)?.id ?? null;
+    const overLabel = !hovered && this.roadmap.enabled && this.roadmap.pickLabel(this.screenToWorld(x, y)) !== null;
     if (hovered !== this.hoveredId) {
       this.hoveredId = hovered;
-      this.canvas.style.cursor = hovered ? "pointer" : "default";
+      this.emitRoadmapHover();
       this.requestRender();
     }
+    this.canvas.style.cursor = hovered || overLabel ? "pointer" : "default";
   };
 
   private handleMouseUp = (e: MouseEvent) => {
@@ -929,6 +1020,12 @@ export class GraphCanvasEngine {
     const ghost = this.pickGhost(x, y);
     if (ghost) {
       this.callbacks.onGhostClick?.(ghost);
+      return;
+    }
+    const label = this.roadmap.enabled ? this.roadmap.pickLabel(this.screenToWorld(x, y)) : null;
+    if (label) {
+      if (label.kind === "module") this.frameModule(label.key);
+      else this.frameTrack(label.key);
       return;
     }
     this.focusedId = null;

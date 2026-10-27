@@ -558,7 +558,7 @@ flowchart LR
   - `chains[]`, com `expression` `A ∧ B ⟹ C`;
   - `edges[]` (premissa → conclusão);
   - `clusters[]` (`session | legacy`);
-  - `roadmap[]`, com um item por passo de cada trilha não arquivada: `{id: "track:<track_id>:<item_id>", title, status, track_id, track_title, linked_node_ids, depends_on}`. Os `linked_node_ids` são os nós nascidos em sessões daquele passo.
+  - `roadmap[]`, com um item por passo de cada trilha não arquivada (concluídos inclusive): `{id: "track:<track_id>:<item_id>", title, status (completed|active|pending), track_id, track_title, linked_node_ids, depends_on, order, kind, status_detail, stage_label, source_ref, module: {id, title, order}, submodule: {id, title} | null}`. Os `linked_node_ids` são os nós nascidos em sessões daquele passo. `module`/`submodule` vêm de `core/roadmap.py` (puro): trilhas goal/manual agrupam por `stage_label`; trilhas repo/github/legacy usam o primeiro diretório significativo de `source_ref` como módulo e o seguinte como submódulo (`phases/03-deep-learning/02-attention/docs/en.md` → "Deep learning" › "Attention"), pulando segmentos genéricos (`core/repo_paths.py`); sem rótulo, o módulo padrão tem `id="track"` e título vazio (a UI o nomeia). A ordem do módulo é a da primeira aparição na fila.
 - **`graph_context`:** a sessão guarda até 64 ids, e `GraphService.context_for` injeta no prompt "[id] nome: afirmação" mais as cadeias entre eles. No TEACH isso significa "já sabido; não reensinar"; no PRACTICE, é o material da sessão.
 - **Exclusão:**
   - `DELETE /api/graph/nodes/{id}` grava tombstone no nó e nas cadeias que o citam e remove **só o bloco gerenciado** da nota. A nota só é apagada se ficar vazia **e** tiver sido criada pelo harness.
@@ -625,7 +625,7 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
 - **Chip** (`track-chip.tsx`, `use-tracks.ts`, `lib/tracks.ts`): `⇶ <trilha> · Próximo: <item> [Continuar ↵] ▾`. O menu tem progresso, troca de trilha, "＋ Nova trilha" e "Gerenciar trilhas" (`/settings#tracks`). `⌘↵` (`continueTrack`) continua a trilha.
 - **Configurações → Trilhas** (`settings/tracks-section.tsx`, `new-track-dialog.tsx`, `track-create-form.tsx`): ativar, renomear, arquivar, regenerar, excluir e o status do job. O diálogo de nova trilha tem as abas Objetivo/ementa, Lista de tópicos, Repositório local e GitHub.
 - **Sidebar:** filtro por trilha (Todas / Sem trilha / cada trilha) e uma tag curta da trilha em cada linha.
-- **⇶ Roteiro no grafo:** nós fantasmas tracejados (`lib/ghost-layout.ts`), com cor por trilha e legenda. A alternância "Só a trilha em foco / Todas" fica em `learnharness:roadmap-scope`.
+- **⇶ Roteiro no grafo:** uma região própria ao lado do grafo onde cada trilha é uma constelação (`lib/roadmap-layout.ts`, puro; desenho em `components/roadmap-canvas.ts`): título grande e tênue por trilha, módulos como subconstelações em ordem ao longo de um arco/espiral (rótulo em caixa alta, nebulosa borrada na cor da trilha, linha-espinha entre módulos consecutivos), submódulos de repositório como subaglomerados, e passos como estrelas (concluído = estrela cheia com brilho; `nivelado` = tom de sucesso esmaecido; ativo = anel com pulso, respeitando `prefers-reduced-motion`; pendente = vazado; `livre`/`lab` = losango, `base` = quadrado). Pré-requisitos sólidos nos caminhos concluídos e tracejados nos pendentes; entre módulos, arcos tênues; linhas pontilhadas ligam o passo aos nós reais nascidos dele. Hover abre o cartão do passo (Ensinar este passo, Nivelar trilha quando `canLevelTrack`); clique fixa o cartão; clicar no rótulo de um módulo dá zoom nele. Legenda (`components/roadmap-ui.tsx`): cores e progresso por trilha, glifos de estado e "Focar roteiro". A alternância "Só a trilha em foco / Todas" fica em `learnharness:roadmap-scope`.
 - **Status do setup:** `GET /api/setup/status` também devolve `track` (a trilha em foco no formato antigo), por compatibilidade.
 
 ### 10.4 Fase 15 — nivelamento por busca binária
@@ -763,7 +763,7 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 
 ### 13.2 Componentes-chave
 
-- **`graph-view.tsx` / `graph-canvas.ts`:** Canvas 2D em estilo constelação (pontos, fios finos, junções de implicação, nebulosas por sessão), pan/zoom, arrastar (persiste as posições), seleção múltipla, cartão do nó (sessões, Abrir nota, Selecionar, Excluir), fantasmas do roteiro, `graph-settings-panel.tsx` e `chain-table.tsx`.
+- **`graph-view.tsx` / `graph-canvas.ts`:** Canvas 2D em estilo constelação (pontos, fios finos, junções de implicação, nebulosas por sessão), pan/zoom, arrastar (persiste as posições), seleção múltipla, cartão do nó (sessões, Abrir nota, Selecionar, Excluir), constelações do ⇶ Roteiro (`roadmap-canvas.ts`, `roadmap-ui.tsx`), `graph-settings-panel.tsx` e `chain-table.tsx`.
 - **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
 - **`question-dock.tsx` + `lib/question-core.ts`:**
   - opções embaralhadas de forma determinística por `quiz_id`;
@@ -790,7 +790,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 |---|---|
 | `session-wire.ts`, `graph-wire.ts`, `config-wire.ts`, `settings-wire.ts`, `import-wire.ts` | Decoders e encoders do *wire* da API |
 | `question-core.ts`, `quiz-memory.ts`, `plan-layout.ts` | QuestionDock e PlanWindow |
-| `graph-selection.ts`, `ghost-layout.ts`, `graph-settings.ts`, `palette.ts` | Grafo (seleção, roteiro, ajustes com clamp, cores) |
+| `graph-selection.ts`, `roadmap-layout.ts`, `graph-settings.ts`, `palette.ts` | Grafo (seleção, roteiro, ajustes com clamp, cores) |
 | `practice.ts`, `job-steer.ts`, `session-ux.ts`, `usage.ts` | PRACTICE, cartões de job, busca difusa, ordem do Esc, fila de steer, formatação de uso |
 | `model-choice.ts`, `popover-position.ts` | Seletor de modelo |
 | `keyboard.ts`, `key-capture.ts`, `command-events.ts`, `appearance.ts` | Atalhos e aparência |
