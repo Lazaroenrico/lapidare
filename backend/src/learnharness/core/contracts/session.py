@@ -4,7 +4,7 @@ Pure Pydantic models with ZERO I/O.
 Product Invariant: ONLY two session modes exist: TEACH and PRACTICE.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -128,6 +128,11 @@ class SessionMessage(BaseModel):
     # PRACTICE learner inputs (Fase 9): what the message is and which problem it concerns.
     practice_kind: Literal["attempt", "next", "dismiss"] | None = None
     problem_id: str | None = None
+    # Steers: input that arrives outside the turn cycle (a learner message sent mid-turn, a
+    # background job's result). Delivered to the model at the next turn, then marked.
+    steer_kind: Literal["learner", "job"] | None = None
+    details: dict[str, Any] | None = None
+    delivered: bool = True
 
 
 class TokenUsage(BaseModel):

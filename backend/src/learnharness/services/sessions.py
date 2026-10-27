@@ -595,6 +595,34 @@ class SessionService:
             return
         self.tasks[session_id] = asyncio.create_task(self._drive(session_id))
 
+    async def deliver_steer(self, session_id: str, kind: str, content: str,
+                            details: dict[str, Any] | None = None) -> SessionMessage:
+        """Queue input for the model's next turn and wake the session if it is idle.
+
+        ``kind`` is ``learner`` (a message sent while a turn runs) or ``job`` (a background
+        job's result; ``content`` is the model-facing text, ``details`` what the UI renders).
+        A running turn picks the steer up as a follow-up turn; a pending question keeps it
+        waiting until the learner answers.
+        """
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            message = SessionMessage(id=f"msg-{uuid4().hex}", role="user", content=content, created_at=now(),
+                                     steer_kind=kind, details=details, delivered=False)
+            session.messages.append(message)
+            idle = not (self.is_running(session_id) or session.pending_quiz
+                        or session.recovery_required or session.phase == "completed")
+            if idle:
+                session.execution_status = "queued"
+            self.save(session)
+        if idle:
+            self.schedule(session_id)
+        return message
+
+    @staticmethod
+    def _steers_due(session: SessionRecord) -> bool:
+        return (any(not m.delivered for m in session.messages) and not session.pending_quiz
+                and not session.recovery_required and session.phase != "completed")
+
     async def _drive(self, session_id):
         """Run turns back to back while one asks for a follow-up (the post-diagnosis handoff)."""
         while await self.run(session_id):
@@ -621,6 +649,10 @@ class SessionService:
             session.execution_id = uuid4().hex
             session.execution_status = "running"
             session.error = None
+            # Steers queued so far ride this turn; later ones trigger a follow-up turn.
+            steers = [m for m in session.messages if not m.delivered]
+            for m in steers:
+                m.delivered = True
             self.save(session)
             config = self.state.get_config()
             if config.slots.strong.engine == EngineKind.AGY and self.state.engine_factory is None:
@@ -671,7 +703,7 @@ class SessionService:
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
                 # with a compact history) and per turn only what is new.
-                history, prompt = self._persistent_turn(session, handoff=handoff)
+                history, prompt = self._persistent_turn(session, handoff=handoff, steers=steers)
                 if session.prompt_phase is not None and session.prompt_phase != family:
                     # A live process still holds the previous phase's rules (prober -> teacher).
                     prompt = ("UPDATED INSTRUCTIONS (they replace your previous system instructions):\n"
@@ -709,7 +741,7 @@ class SessionService:
             session = self.get(session_id)
             if handoff_run:
                 session.handoff_pending = False  # One planning turn; a retry needs the learner.
-            follow_up = not handoff_run and self._handoff_due(session)
+            follow_up = (not handoff_run and self._handoff_due(session)) or self._steers_due(session)
             if session.phase != "completed":
                 session.execution_status = "waiting" if session.pending_quiz else ("queued" if follow_up else "idle")
             completed = session.phase == "completed"
@@ -743,7 +775,7 @@ class SessionService:
             logger.exception("Could not queue graph extraction for %s", session_id)
 
     @staticmethod
-    def _persistent_turn(session, handoff: str | None = None):
+    def _persistent_turn(session, handoff: str | None = None, steers=()):
         """Split persisted messages into ``(history, new-content prompt)``.
 
         New content is everything after the last assistant message (quiz answers, learner
@@ -753,6 +785,12 @@ class SessionService:
         messages = list(session.messages)
         last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
         history, new = messages[: last + 1], messages[last + 1:]
+        # A steer can land before the assistant message of the turn it interrupted; it is
+        # still new content for the model.
+        new_ids = {m.id for m in new}
+        late = [m for m in steers if m.id not in new_ids]
+        history = [m for m in history if m.id not in {s.id for s in late}]
+        new = late + new
         current = {"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}
         if session.mode == "PRACTICE":
             current = {"phase": session.phase, "active_problem_id": session.practice.active_problem_id}

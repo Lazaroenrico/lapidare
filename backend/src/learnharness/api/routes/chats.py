@@ -194,6 +194,22 @@ async def send_chat_message(chat_id: str, payload: SendMessagePayload, request: 
     return {"session": _serialize_session(session)}
 
 
+class SteerPayload(BaseModel):
+    content: str = Field(min_length=1, max_length=100000)
+
+
+@chats_router.post("/{chat_id}/steer")
+async def steer_chat(chat_id: str, payload: SteerPayload, request: Request):
+    """A learner message sent while a turn runs: delivered at the next turn boundary."""
+    state = get_app_state(request.app)
+    try:
+        state.sessions.get(chat_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown session") from None
+    await state.sessions.deliver_steer(chat_id, "learner", payload.content)
+    return {"session": _serialize_session(state.sessions.get(chat_id))}
+
+
 @chats_router.post("/{chat_id}/practice/dismiss")
 async def dismiss_practice_problem(chat_id: str, request: Request):
     """Dismiss the active PRACTICE problem (outcome ``dismissed``, no log line, no new turn)."""
