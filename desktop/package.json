@@ -1,0 +1,22 @@
+{
+  "name": "lapidare-desktop",
+  "productName": "Lapidare",
+  "desktopName": "lapidare.desktop",
+  "version": "0.1.0",
+  "description": "Lapidare - learning harness local-first",
+  "main": "main.cjs",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": "Lazaroenrico",
+  "scripts": {
+    "test": "node --test tests/",
+    "dist": "electron-builder --linux AppImage --x64"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  }
+}

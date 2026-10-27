@@ -1,0 +1,35 @@
+appId: ai.lapidare.app
+productName: Lapidare
+executableName: lapidare
+artifactName: "${productName}-${version}-${arch}.${ext}"
+directories:
+  output: dist
+  buildResources: build-resources
+files:
+  - main.cjs
+  - policy.cjs
+  - package.json
+  - build-resources/icon.png
+extraResources:
+  - from: build/python
+    to: python
+  - from: build/web
+    to: web
+asar: true
+electronFuses:
+  runAsNode: false
+  enableNodeCliInspectArguments: false
+  enableNodeOptionsEnvironmentVariable: false
+  onlyLoadAppFromAsar: true
+linux:
+  target:
+    - target: AppImage
+      arch: x64
+  category: Education
+  icon: icon.png
+  syncDesktopName: true
+publish:
+  provider: github
+  owner: Lazaroenrico
+  repo: lapidare
+  releaseType: draft

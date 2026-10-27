@@ -11,3 +11,16 @@ check-backend:
 
 check-frontend:
 	cd frontend && npm run typecheck && npm run lint && npm test && npm run build
+
+.PHONY: desktop desktop-clean
+
+# AppImage Linux x64: UI estatica + python embutido + casca Electron.
+desktop:
+	bash desktop/scripts/build-web.sh
+	bash desktop/scripts/build-python.sh
+	node desktop/scripts/guard-payload.mjs
+	node desktop/scripts/smoke.mjs
+	cd desktop && npm ci && npm run dist
+
+desktop-clean:
+	rm -rf desktop/build desktop/dist

@@ -410,7 +410,7 @@ def bootstrap_vault(
 
     Case A (New/Empty vault):
         Creates full directory tree, faithful templates, index file, and initializes .harness/config.json.
-    Case B (Existing vault, e.g. /home/lazarodiza/Documents/AI Engineering):
+    Case B (Existing vault, e.g. ~/Documents/My Vault):
         Preserves all existing markdown files.
         Detects folders, parses 00 Mapa.md and LEARNING.md, detects active track item,
         and creates .harness/config.json.
