@@ -142,10 +142,12 @@ class SessionService:
         append_session_event(self.state.vault_path, session.id, session)
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session.id, "sequence": session.sequence})
 
-    async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True):
+    async def create(self, mode="TEACH", topic=None, source_file=None, track_item_id=None, *, start=True,
+                     graph_context=None):
         config = self.state.get_config()
         if not config.configured:
             raise SessionConflict("Complete setup before starting a session")
+        graph_context = self.state.graph.validate_context(graph_context or [])  # Fase 8B
         if track_item_id:
             item = next((i for i in config.track.queue if i.id == track_item_id), None)
             if item is None:
@@ -163,6 +165,7 @@ class SessionService:
             context_kind="track_step" if track_item_id else ("dense_source" if source_file else "free_topic"),
             source_path=source_file, track_item_id=track_item_id,
             created_at=now(), updated_at=now(), execution_status="queued" if start else "idle",
+            graph_context=graph_context,
         )
         session.lesson_vault_path = self._create_lesson_note(session, config)
         self.save(session)
@@ -491,8 +494,8 @@ class SessionService:
             self.save(session)
             self._refresh_lesson_note(session)
             self.state.sse_hub.broadcast(SseEventType.PLAN_UPDATED, {"session_id": session_id})
-        if status == "mastered":
-            self.state.jobs.extraction(session, node_id)
+        if status == "mastered":  # Fase 8B: mastery is one case of the general graph trigger.
+            self.state.graph.maybe_extract(session)
         if completed and session.track_item_id:
             await self.state.tracks.complete(session.track_item_id)
         return {
@@ -619,6 +622,8 @@ class SessionService:
             system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
                                          extra_context=context, overrides=overrides)
             system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
+            if graph_block := self.state.graph.context_for(session):  # Fase 8B graph_context
+                system += "\n\n" + graph_block
             handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
             if persistent:
                 # The engine keeps the conversation: send rules once (on a fresh process,
@@ -664,6 +669,7 @@ class SessionService:
                 session.execution_status = "waiting" if session.pending_quiz else ("queued" if follow_up else "idle")
             completed = session.phase == "completed"
             self.save(session)
+            self._trigger_extraction(session_id)  # Fase 8B: end-of-run graph trigger
         except asyncio.CancelledError:
             session = self.get(session_id)
             if session.phase != "completed":
@@ -681,6 +687,14 @@ class SessionService:
             if completed:
                 await self._release_runtime(session_id)
         return follow_up
+
+    def _trigger_extraction(self, session_id: str) -> None:
+        """Queue graph extraction when enough prose is uncovered or the session completed."""
+        try:
+            self.state.graph.maybe_extract(self.get(session_id))
+        except Exception:
+            # The trigger never fails a finished teaching turn; the job carries its own errors.
+            logger.exception("Could not queue graph extraction for %s", session_id)
 
     @staticmethod
     def _persistent_turn(session, handoff: str | None = None):

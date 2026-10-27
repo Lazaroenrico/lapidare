@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,9 +37,10 @@ class CreateDemoPayload(BaseModel):
 
 
 class TriggerExtractionPayload(BaseModel):
+    """Legacy body; extraction now reads the session's own uncovered teacher prose."""
     session_id: str
-    topic: str
-    messages_text: str
+    topic: str | None = None
+    messages_text: str | None = None
     source_ref: str | None = None
 
 
@@ -175,10 +175,9 @@ async def get_demo_endpoint(slug: str, request: Request, raw: bool = False) -> A
 
 @practice_router.post("/api/jobs/extract", status_code=202)
 async def trigger_extraction_job(payload: TriggerExtractionPayload, request: Request) -> dict[str, Any]:
-    """Queue an `extraction` background job (Extractor -> Auditor -> Merger); returns the job record."""
+    """Legacy alias of ``POST /api/graph/extract/{session_id}`` (Fase 8B)."""
     state = get_app_state(request.app)
-    digest = hashlib.sha256(payload.messages_text.encode("utf-8")).hexdigest()[:16]
-    return state.jobs.submit("extraction", payload.model_dump(), key=f"extract:{payload.session_id}:{digest}")
+    return state.graph.request_extraction(state.graph.session_or_404(payload.session_id), "manual")
 
 
 @practice_router.get("/api/jobs")

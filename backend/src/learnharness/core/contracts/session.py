@@ -153,5 +153,7 @@ class SessionRecord(BaseModel):
     error: str | None = None
     recovery_required: bool = False
     applied_actions: list[str] = Field(default_factory=list)
+    # Graph node ids the learner picked as context (Fase 8B; at most 64).
+    graph_context: list[str] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""

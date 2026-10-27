@@ -634,3 +634,36 @@ def sync_lesson_note(
             create_only=not exists,
         )
     return True
+
+
+# ============================================================================
+# Concept notes v2 (Fase 8B): one managed proposition block per note
+# ============================================================================
+
+
+def read_frontmatter(content: str) -> dict[str, object]:
+    """Parsed YAML frontmatter, or ``{}`` when absent/unparseable (never raises)."""
+    match = _FRONTMATTER.match(content)
+    if match is None:
+        return {}
+    try:
+        data = yaml.safe_load(match.group(2) or "") or {}
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def body_without_frontmatter(content: str) -> str:
+    match = _FRONTMATTER.match(content)
+    return content[match.end():] if match else content
+
+
+def remove_owned_block(content: str, key: str) -> str:
+    """Drop the managed block ``key``; a block the learner edited is unwrapped instead."""
+    span = _scan_owned_blocks(content).get(_block_token(key))
+    if span is None:
+        return content
+    _begin, inner_begin, inner_end, _finish, sha = span
+    inner = content[inner_begin:inner_end]
+    untouched = sha is not None and _block_digest(inner) == sha
+    return merge_owned_blocks(content, [], retire={key: inner if untouched else None})

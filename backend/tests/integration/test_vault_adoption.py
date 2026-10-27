@@ -13,8 +13,8 @@ from datetime import date
 from pathlib import Path
 
 from learnharness.api.state import AppState
+from learnharness.core.contracts.graph import ExtractionPayload
 from learnharness.core.contracts.quiz import QuizSubmission
-from learnharness.pipelines.extraction import _ExtractionStructuredPayload
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from tests.conftest import FakeEngine, tool, wait_until
 
@@ -78,13 +78,16 @@ async def test_adoption_and_teach_flow_leave_user_bytes_identical(tmp_path: Path
     config = bootstrap_vault(vault, language="pt-BR")
     assert config.folders.lessons_dir == "Aulas" and config.folders.sources_dir == "Fontes"
     config.configured = True
+    # Extract at the end of every run, so the mid-lesson trace reaches Conceitos/.
+    config.graph.extraction_chunk_tokens = 1
     save_config(vault, config)
     assert _snapshot(vault) == before, "adoption must only create .harness/"
 
     engine = FakeEngine()
-    engine.program(_ExtractionStructuredPayload, {
-        "concepts": [{"title": "Produto Escalar", "unconditional_truth": "Soma dos produtos coordenada a coordenada."}],
-        "chains": [],
+    engine.program(ExtractionPayload, lambda prompt: {
+        "propositions": [{"key": "p1", "name": "Produto Escalar",
+                          "statement": "O produto escalar soma os produtos coordenada a coordenada."}]
+        if "TEACHER" in prompt else [],
     })
     node_details = {
         "b1": {
@@ -130,8 +133,8 @@ async def test_adoption_and_teach_flow_leave_user_bytes_identical(tmp_path: Path
         state.sessions.schedule(sid)
         await wait_until(lambda: not state.sessions.is_running(sid)
                          and any(m.content.startswith("A atenção") for m in state.sessions.get(sid).messages))
-        await wait_until(lambda: any(j["kind"] == "extraction" and j["status"] in ("completed", "failed")
-                                     for j in state.active_jobs.values()))
+        await wait_until(lambda: state.active_jobs and all(
+            j["kind"] == "extraction" and j["status"] in ("completed", "failed") for j in state.active_jobs.values()))
         assert all(j["status"] == "completed" for j in state.active_jobs.values()), state.active_jobs
     finally:
         await state.close()
