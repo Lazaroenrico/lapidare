@@ -30,7 +30,7 @@ from tests.conftest import FakeEngine, poll_until, wait_until
 
 VALID_HTML = """<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><title>Produto Escalar</title>
-<style>body{background:#141414;color:#e6e6e6}</style></head>
+<style>body{background:#1a1430;color:#efeaff}</style></head>
 <body><h1>Produto Escalar</h1><canvas id="c"></canvas>
 <input type="range" id="theta" min="0" max="3.14" step="0.01" value="1">
 <script>var r = document.getElementById("c").getBoundingClientRect(); var y = r.top + 1;</script>
@@ -116,7 +116,7 @@ async def test_generate_demo_sends_lesson_context_as_data_with_few_shot() -> Non
     assert call["schema"] is GeneratedDemo and call["slot"] == "slot"
     assert json.loads(call["prompt"])["lesson_context"]["lesson_note"].startswith("# Produto Escalar")
     assert call["system_instruction"] == DEMO_SYSTEM_INSTRUCTION
-    assert "#141414" in DEMO_SYSTEM_INSTRUCTION and FEW_SHOT_EXAMPLE in DEMO_SYSTEM_INSTRUCTION
+    assert "#1a1430" in DEMO_SYSTEM_INSTRUCTION and FEW_SHOT_EXAMPLE in DEMO_SYSTEM_INSTRUCTION
 
 
 async def test_invalid_html_gets_one_repair_attempt_with_errors() -> None:

@@ -4,7 +4,7 @@ Pipeline (driven by the ``demo_builder`` background job in ``services/demos.py``
 
 1. ``generate_demo`` asks the engine (``run_structured``) for a ``GeneratedDemo`` grounded in
    the lesson context (note text, current plan node, topic), with ``FEW_SHOT_EXAMPLE`` as the
-   required style reference (``#141414`` skin, Canvas 2D, sliders, zero external resources);
+   required style reference (``#1a1430`` skin, Canvas 2D, sliders, zero external resources);
 2. ``core.demo_validation.validate_demo_html`` rejects network/storage/escape attempts; an
    invalid answer gets exactly one repair attempt, then ``EngineError`` (no template fallback);
 3. ``save_demo_html`` injects a strict CSP and writes ``<vault>/viz/demos/<slug>.html``;
@@ -44,8 +44,8 @@ FEW_SHOT_EXAMPLE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Temperatura no Softmax</title>
 <style>
-  :root { --background:#141414; --card:#1c1c1c; --accent:#2a2a2a; --border:#434343;
-          --foreground:#e6e6e6; --muted:#8d8d8d; --emerald:#34d399; --amber:#fbbf24; --coral:#f87171;
+  :root { --background:#1a1430; --card:#231b3e; --accent:#30255a; --border:#54458a;
+          --foreground:#efeaff; --muted:#a99cd0; --emerald:#34d399; --amber:#fbbf24; --coral:#f87171;
           --font-title:"CMU Serif","Computer Modern Serif",Georgia,serif;
           --font-ui:"JetBrains Mono",Consolas,monospace;
           --font-prose:"Source Sans 3",system-ui,sans-serif; }
@@ -111,11 +111,11 @@ FEW_SHOT_EXAMPLE = """<!DOCTYPE html>
     var bw = (w - 32) / p.length;
     p.forEach(function (v, i) {
       var bh = v * (h - 48);
-      ctx.fillStyle = v === Math.max.apply(null, p) ? "#34d399" : "#434343";
+      ctx.fillStyle = v === Math.max.apply(null, p) ? "#34d399" : "#54458a";
       ctx.fillRect(16 + i * bw + 4, h - 28 - bh, bw - 8, bh);
-      ctx.fillStyle = "#8d8d8d"; ctx.font = "11px 'JetBrains Mono', monospace"; ctx.textAlign = "center";
+      ctx.fillStyle = "#a99cd0"; ctx.font = "11px 'JetBrains Mono', monospace"; ctx.textAlign = "center";
       ctx.fillText(TOKENS[i], 16 + i * bw + bw / 2, h - 10);
-      ctx.fillStyle = "#e6e6e6"; ctx.fillText(v.toFixed(2), 16 + i * bw + bw / 2, h - 34 - bh);
+      ctx.fillStyle = "#efeaff"; ctx.fillText(v.toFixed(2), 16 + i * bw + bw / 2, h - 34 - bh);
     });
   }
   tau.addEventListener("input", draw); k.addEventListener("input", draw);
@@ -136,7 +136,7 @@ Hard requirements (the output is machine-validated and rejected otherwise):
   localStorage, sessionStorage, indexedDB, document.cookie. No <iframe>, <form action>, <base>, meta refresh.
 - Never touch window.parent, window.top or window.opener; it runs in a sandboxed iframe.
 - Must contain a <canvas> plus <input type="range"> controls wired to the parameters you return.
-- Skin: background #141414, cards #1c1c1c, accent #2a2a2a, borders #434343, text #e6e6e6, muted #8d8d8d;
+- Skin: background #1a1430, cards #231b3e, accent #30255a, borders #54458a, text #efeaff, muted #a99cd0;
   semantic accents only #34d399 / #fbbf24 / #f87171. Titles in "CMU Serif" (Georgia fallback), prose in
   "Source Sans 3" 16px/1.5, controls and readouts in "JetBrains Mono" 11px/12.5px. Spacing in multiples of 4px.
   No blue/slate corporate palette, no native focus outline.

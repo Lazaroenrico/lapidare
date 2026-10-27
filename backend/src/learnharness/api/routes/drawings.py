@@ -116,7 +116,7 @@ async def save_drawing_endpoint(slug: str, payload: SaveDrawingPayload, request:
         "type": "excalidraw",
         "version": 2,
         "elements": payload.elements,
-        "appState": payload.appState or {"viewBackgroundColor": "#141414"},
+        "appState": payload.appState or {"viewBackgroundColor": "#1a1430"},
         "files": {},
     }
 

@@ -60,7 +60,7 @@ function preprocessCitations(raw: string, defaultSource?: string): string {
 }
 
 /**
- * Code block with copy button and graphite styling
+ * Code block with copy button and themed styling
  */
 function CodeBlock({
   children,

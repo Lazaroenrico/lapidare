@@ -61,8 +61,8 @@ test('palette literals live only in globals.css and lib/palette.ts', () => {
 test('globals.css declares every palette token and exposes it to Tailwind', () => {
   const css = fs.readFileSync(path.join(ROOT, 'app/globals.css'), 'utf8');
   const tokens = {
-    background: '#141414', card: '#1c1c1c', accent: '#2a2a2a', border: '#434343',
-    foreground: '#e6e6e6', 'muted-foreground': '#8d8d8d',
+    background: '#1a1430', card: '#231b3e', accent: '#30255a', border: '#54458a',
+    foreground: '#efeaff', 'muted-foreground': '#a99cd0',
     success: '#34d399', warning: '#e0a030', danger: '#f87171',
   };
   for (const [name, value] of Object.entries(tokens)) {

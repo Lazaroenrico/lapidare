@@ -20,9 +20,9 @@ from tests.conftest import FakeEngine, wait_until
 
 GOOD_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
             'viewBox="0 0 100 50"><defs><linearGradient id="g"/></defs>'
-            '<rect width="100" height="50" fill="url(#g)" style="fill:#1c1c1c"/>'
+            '<rect width="100" height="50" fill="url(#g)" style="fill:#231b3e"/>'
             '<use xlink:href="#g"/><image href="data:image/png;base64,AAAA"/>'
-            '<text x="10" y="30" fill="#e6e6e6">A → B</text></svg>')
+            '<text x="10" y="30" fill="#efeaff">A → B</text></svg>')
 
 
 class ResearchEngine(FakeEngine):

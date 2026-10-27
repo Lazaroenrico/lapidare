@@ -3,7 +3,7 @@
 A lesson figure is shown as an ``<img>`` data URI in the UI and embedded in the Obsidian
 note, so it must be one self-contained, inert document: well-formed XML whose root is an
 ``<svg>`` with a ``viewBox``, no scripting, no foreign HTML and no reference that leaves
-the file. Colors are never judged here; the prompt only suggests the graphite palette.
+the file. Colors are never judged here; the prompt only suggests the purple palette.
 """
 
 from __future__ import annotations

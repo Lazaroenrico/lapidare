@@ -18,7 +18,7 @@ No entanto, cada sistema evoluiu metade da solução ideal:
 
 ### 1.2 A Proposta da Nossa Plataforma
 Construir uma plataforma **local-first, bilíngue (`PT-BR` / `EN`) e pensada para a comunidade de usuários do ecossistema Google**, onde:
-1. **O UX/UI segue o Design System do `learnharness`** (`#141414` / `#1c1c1c` / `#434343`, `CMU Serif Bold`, `Source Sans 3` + KaTeX, `JetBrains Mono`), mas **sem proliferação de modos** (`TEACH` e `PRACTICE` apenas).
+1. **O UX/UI segue o Design System do `learnharness`** (`#1a1430` / `#231b3e` / `#54458a`, `CMU Serif Bold`, `Source Sans 3` + KaTeX, `JetBrains Mono`), mas **sem proliferação de modos** (`TEACH` e `PRACTICE` apenas).
 2. **Tudo roda utilizando a assinatura Google do próprio usuário** (`@google/gemini-cli` via ACP ou Google Antigravity `agy` via `stream-json`, com fallback opcional para API Key do Google AI Studio / Vertex AI).
 3. **Tudo vive simultaneamente na UI e no Vault Markdown/Obsidian (`UI ⇄ Vault`)**: quem já usa Obsidian continua lendo/editando suas notas e desenhos normalmente; quem baixa a plataforma sem nunca ter usado Obsidian ganha um Vault estruturado automaticamente no disco e faz tudo pela UI Web (incluindo desenhar no `@excalidraw/excalidraw` embutido).
 
@@ -28,12 +28,12 @@ Construir uma plataforma **local-first, bilíngue (`PT-BR` / `EN`) e pensada par
 
 ### 2.1 Tokens Visuais Obrigatórios
 - **Superfícies Acromáticas:**
-  - Fundo principal (`--background`): `#141414`
-  - Cards e docks elevados (`--card`): `#1c1c1c`
-  - Hover / item selecionado (`--accent`): `#2a2a2a`
-  - Bordas de `1px` (`--border`): `#434343`
-  - Texto principal (`--foreground`): `#e6e6e6`
-  - Rótulos e metadados silenciosos (`--muted-foreground`): `#8d8d8d`
+  - Fundo principal (`--background`): `#1a1430`
+  - Cards e docks elevados (`--card`): `#231b3e`
+  - Hover / item selecionado (`--accent`): `#30255a`
+  - Bordas de `1px` (`--border`): `#54458a`
+  - Texto principal (`--foreground`): `#efeaff`
+  - Rótulos e metadados silenciosos (`--muted-foreground`): `#a99cd0`
 - **Tipografia:**
   - **Títulos (`--font-title`):** `CMU Serif Bold` (*Computer Modern*)
   - **Prosa Pedagógica (`--font-prose`):** `Source Sans 3` (`16px`, `line-height: 1.5`) + **KaTeX**
@@ -108,8 +108,8 @@ A trilha é configurada aqui no início para que o **próprio Harness conduza o 
 ### 3.2 Comportamento da Tela Inicial (`Home`)
 
 1. **Visualização Central Única (O Grafo):**
-   - Não há botão `Macro | Micro`. O centro da tela é ocupado integralmente pelo **Grafo de Conhecimento** em Canvas 2D (`#141414`), com *clusters* nebulosos suaves agrupando nós correlatos.
-   - Clicar num nó abre seu card contextual (`#1c1c1c`, borda `#434343`) com o resumo do conceito, suas dependências, o caminho da nota `Conceitos/<Nome>.md` no Vault e ações rápidas (`[ Abrir Nota ]`, `[ + Practice ]`, `[ ✎ Desenhar ]`).
+   - Não há botão `Macro | Micro`. O centro da tela é ocupado integralmente pelo **Grafo de Conhecimento** em Canvas 2D (`#1a1430`), com *clusters* nebulosos suaves agrupando nós correlatos.
+   - Clicar num nó abre seu card contextual (`#231b3e`, borda `#54458a`) com o resumo do conceito, suas dependências, o caminho da nota `Conceitos/<Nome>.md` no Vault e ações rápidas (`[ Abrir Nota ]`, `[ + Practice ]`, `[ ✎ Desenhar ]`).
    - O botão **`☍ Chains`** no topo abre a visualização em tabela das proposições e implicações lógicas ($A \land B \implies C$), permitindo filtrar e selecionar itens para estudo ou prática.
 
 2. **Comportamento do Botão `↑ Import` (Guiado por MCP):**
@@ -188,7 +188,7 @@ Toda pergunta com resposta certa acontece exclusivamente dentro do componente **
 1. **Início do Desenho de Memória (*Retrieval Practice*):**
    - Ao concluir uma aula (ou clicar em `✎ Excalidraw`), o sistema cria `Desenhos/YYYY-MM-DD-<slug>.excalidraw.md` contendo **apenas o título e o prompt do que desenhar de memória** (sem respostas prontas), com links no frontmatter para a aula (`Aulas/...`) e os conceitos (`Conceitos/...`).
 2. **Edição Bidirecional (`UI Web ⇄ Obsidian`):**
-   - Na UI da plataforma, o componente `@excalidraw/excalidraw` abre em tema escuro (`#141414`), pronto para a mesa digitalizadora.
+   - Na UI da plataforma, o componente `@excalidraw/excalidraw` abre em tema escuro (`#1a1430`), pronto para a mesa digitalizadora.
    - Cada salvamento grava o JSON Excalidraw dentro do arquivo `.excalidraw.md` e exporta automaticamente a imagem `Desenhos/YYYY-MM-DD-<slug>.png` — mantendo 100% de compatibilidade se você abrir o mesmo arquivo no Obsidian.
 3. **Botão `[ Revisar meu desenho ]`:**
    - Dispara uma chamada multimodal passando o `.png` do desenho do usuário + o mapa de dependências e notas da aula.

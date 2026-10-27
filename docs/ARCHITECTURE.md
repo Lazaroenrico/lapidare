@@ -121,7 +121,7 @@ flowchart TB
     ├── next.config.ts                 # Proxy rewrites de /api/* para http://127.0.0.1:8000/api/*
     ├── public/fonts/                  # CMU Serif Bold (cmunbx.ttf) local
     ├── app/
-    │   ├── globals.css                # Tokens "The Skin" (#141414, #1c1c1c, #434343, tipografia modular)
+    │   ├── globals.css                # Tokens "The Skin" (#1a1430, #231b3e, #54458a, tipografia modular)
     │   ├── layout.tsx                 # ServerEventsProvider + SidebarProvider + fontes JetBrains/SourceSans3
     │   ├── page.tsx                   # Home (Grafo Único + Top Pills + Chip da Trilha + Composer)
     │   ├── chat/[id]/page.tsx         # Sala de Aula TEACH / Sessão PRACTICE Interativa
@@ -215,7 +215,7 @@ A API escreve no disco e pode registrar servidores MCP `stdio` (ou seja, executa
 ### 🚀 Onda 1 — MVP Funcional de Ponta a Ponta
 | Etapa | Entregável | Critério de Pronto (Verificação) |
 |---|---|---|
-| **1.1 Fundação & Skin** | Monorepo `backend/` (`FastAPI` + `uv`) + `frontend/` (`Next.js` + Tailwind v4 + `#141414` + `CMU Serif` / `Source Sans 3` / `JetBrains Mono`) + canal SSE `/api/events` | `uv run` + `npm run dev` sobem sem erros; conexão SSE reconecta sozinha e respeita 100% os tokens `#141414` / `#1c1c1c` / `#434343`. |
+| **1.1 Fundação & Skin** | Monorepo `backend/` (`FastAPI` + `uv`) + `frontend/` (`Next.js` + Tailwind v4 + `#1a1430` + `CMU Serif` / `Source Sans 3` / `JetBrains Mono`) + canal SSE `/api/events` | `uv run` + `npm run dev` sobem sem erros; conexão SSE reconecta sozinha e respeita 100% os tokens `#1a1430` / `#231b3e` / `#54458a`. |
 | **1.2 Setup & Vault** | `detector.py` (auto-detecção `agy` / `gemini` / `API`) + `vault/bootstrap.py` (criação de Vault novo ou adoção de `~/Documents/AI Engineering`) + `SetupDialog` (Conector, Vault, MCP, Trilha) | Onboarding detecta sua assinatura Google, adota seu Vault existente sem alterar notas e grava `.harness/config.json`. |
 | **1.3 Home Unificada** | `graph-view.tsx` (Canvas 2D único + `Chains`) + `import-dialog.tsx` (integração MCP Praxis / Notas locais) + `composer.tsx` (Chip da Trilha ativa + `TEACH \| PRACTICE` + Ditado Zero-Key) | Grafo renderiza os conceitos do Vault; botão `Import` lista aulas do MCP; chip da Trilha mostra o próximo passo do `00 Mapa.md` / `LEARNING.md`. |
 | **1.4 Sala de Aula `TEACH`** | `AgyStreamEngine` & `GeminiAcpEngine` + `FastMCP` (`pose_quiz`, `plan_init`, `plan_advance`) + `/chat/[id]` (`QuestionDock` com KaTeX + Confiança % + *Your Thinking*, `PlanWindow` mini-DAG, painel `#^pN`) + escrita não-destrutiva em `Aulas/*.md` | Sessão completa de estudo funciona sobre assinatura Google, pausa no `QuestionDock`, grava em `quiz-log.jsonl` e atualiza a nota da aula no Obsidian em tempo real. |

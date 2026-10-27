@@ -53,12 +53,12 @@
 }
 
 :root {
-  --background: #141414;
-  --card: #1c1c1c;
-  --accent: #2a2a2a;
-  --border: #434343;
-  --foreground: #e6e6e6;
-  --muted-foreground: #8d8d8d;
+  --background: #1a1430;
+  --card: #231b3e;
+  --accent: #30255a;
+  --border: #54458a;
+  --foreground: #efeaff;
+  --muted-foreground: #a99cd0;
   --success: #34d399;
   --warning: #e0a030;
   --danger: #f87171;
@@ -124,7 +124,7 @@ body {
   background: var(--border);
 }
 
-/* KaTeX custom integration for achromatic graphite skin */
+/* KaTeX custom integration for dark purple skin */
 .katex {
   font-size: 1.05em;
   color: var(--foreground);

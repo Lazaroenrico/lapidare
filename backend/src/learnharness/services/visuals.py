@@ -26,8 +26,8 @@ Rules the file must satisfy (it is validated and rejected otherwise):
 
 Design: the figure shows what prose cannot (a structure, a flow, a geometric relation, a
 comparison). Label every element the learner must read; keep text short and at least 12px.
-Suggested palette (graphite, dark background): background #141414, panels #1c1c1c and
-#2a2a2a, strokes #434343, text #e6e6e6, secondary text #8d8d8d; use at most one or two
+Suggested palette (dark purple background): background #1a1430, panels #231b3e and
+#30255a, strokes #54458a, text #efeaff, secondary text #a99cd0; use at most one or two
 muted accent hues and only where they carry meaning. Font: a generic family such as
 sans-serif or monospace.
 

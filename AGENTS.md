@@ -3,7 +3,7 @@
 Leia **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** e **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** antes de alterar contratos, prompts, componentes de UI ou rotas do servidor.
 
 ## 1. Visão em Uma Frase
-Este projeto é um *Learning Harness* local-first, bilíngue (`PT-BR` / `EN`), com **frontend em Next.js** (seguindo o Design System `#141414` + `CMU Serif` + `Source Sans 3` + `JetBrains Mono`) e **backend em Python (`FastAPI` + `FastMCP` + `LangGraph`)**, que roda sobre a **assinatura Google** do usuário (`gemini` CLI / `agy` CLI / `google-genai`) e mantém **persistência bidirecional (`UI ⇄ Vault Markdown/Obsidian`)**.
+Este projeto é um *Learning Harness* local-first, bilíngue (`PT-BR` / `EN`), com **frontend em Next.js** (seguindo o Design System `#1a1430` + `CMU Serif` + `Source Sans 3` + `JetBrains Mono`) e **backend em Python (`FastAPI` + `FastMCP` + `LangGraph`)**, que roda sobre a **assinatura Google** do usuário (`gemini` CLI / `agy` CLI / `google-genai`) e mantém **persistência bidirecional (`UI ⇄ Vault Markdown/Obsidian`)**.
 
 ## 2. Invariantes de Produto e Comportamento (NUNCA VIOLE)
 
@@ -22,7 +22,7 @@ Este projeto é um *Learning Harness* local-first, bilíngue (`PT-BR` / `EN`), c
    - Em `Aulas/*.md` e `Conceitos/*.md`, atualize apenas as seções gerenciadas pelo agente, preservando qualquer anotação livre escrita pelo usuário no Obsidian.
    - Os dados brutos de máquina moram em `.harness/` dentro do próprio Vault (`config.json`, `sessions/*.jsonl`, `chains.jsonl`, `quiz-log.jsonl`, `langgraph.sqlite`), no formato *append-only*.
 5. **Design System ("The Skin"):**
-   - Paleta acromática de grafite: `--background: #141414`, `--card: #1c1c1c`, `--accent: #2a2a2a`, `--border: #434343`, `--foreground: #e6e6e6`, `--muted-foreground: #8d8d8d`. Zero azul corporativo/slate.
+   - Paleta roxa escura (remete ao Google/Gemini; decisão do usuário em 2026-10-27, substitui o grafite): `--background: #1a1430`, `--card: #231b3e`, `--accent: #30255a`, `--border: #54458a`, `--foreground: #efeaff`, `--muted-foreground: #a99cd0`. Zero azul corporativo/slate.
    - Fontes: títulos em `CMU Serif Bold`, prosa de ensino em `Source Sans 3` (`16px`, `1.5`) + KaTeX, e cromia de UI em `JetBrains Mono` (`11px` / `12.5px`).
    - Escala modular em múltiplos de `4px`; zero `outline` nativo do navegador (`*:focus { outline: none }`).
 6. **Fronteiras Arquiteturais Limpas:**

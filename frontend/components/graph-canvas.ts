@@ -13,7 +13,7 @@
  * - dragging pins a node and reports its position (persisted by the caller);
  * - optional roadmap ghost nodes (hollow, dashed) linked to real nodes.
  *
- * Colours come only from lib/palette (graphite skin).
+ * Colours come only from lib/palette (purple skin).
  */
 
 import { palette, toneAlpha, withAlpha, type PaletteTone } from "@/lib/palette";

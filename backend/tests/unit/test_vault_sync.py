@@ -369,7 +369,7 @@ def test_excalidraw_retrieval_drawing_and_save_load(tmp_path: Path):
             "y": 200,
             "width": 100,
             "height": 50,
-            "strokeColor": "#e6e6e6",
+            "strokeColor": "#efeaff",
             "backgroundColor": "transparent",
             "isDeleted": False,
         }

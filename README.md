@@ -13,7 +13,7 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 1. **A profundidade pedagógica do sistema `ai-engineer`:**
    - Estudo estruturado por **Trilha integrada (`2:1`)**, ingestão de aulas densas/mentorias via **MCP** (com fatiamento em blocos, mapeamento do que foi *Dito / Pressuposto / Pulado / Simplificado* e ancoragem por parágrafo `#^pN`), prática de código e consolidação por **desenho de memória à mão livre no Excalidraw** com revisão multimodal.
 2. **A excelência de UX/UI e engenharia de estado do `amosblomqvist/learnharness`:**
-   - Lousa editorial sem balões de chat (`CMU Serif Bold` + `Source Sans 3` + `KaTeX` + `JetBrains Mono` sobre grafite `#141414`), Grafo de Conhecimento central em Canvas 2D com cadeias de implicação lógica ($A \land B \implies C$), `QuestionDock` inline com calibração de confiança (`0–100%`) e campo *Your Thinking*, ditado por voz e pipelines em background de extração e prática (`Practice`).
+   - Lousa editorial sem balões de chat (`CMU Serif Bold` + `Source Sans 3` + `KaTeX` + `JetBrains Mono` sobre roxo escuro `#1a1430`), Grafo de Conhecimento central em Canvas 2D com cadeias de implicação lógica ($A \land B \implies C$), `QuestionDock` inline com calibração de confiança (`0–100%`) e campo *Your Thinking*, ditado por voz e pipelines em background de extração e prática (`Practice`).
 
 ---
 

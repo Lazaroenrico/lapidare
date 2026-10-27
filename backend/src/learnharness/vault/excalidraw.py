@@ -95,7 +95,7 @@ def create_retrieval_drawing(
             "width": 640,
             "height": 40,
             "angle": 0,
-            "strokeColor": "#e6e6e6",
+            "strokeColor": "#efeaff",
             "backgroundColor": "transparent",
             "fillStyle": "hachure",
             "strokeWidth": 1,
@@ -131,7 +131,7 @@ def create_retrieval_drawing(
             "width": 720,
             "height": 60,
             "angle": 0,
-            "strokeColor": "#8d8d8d",
+            "strokeColor": "#a99cd0",
             "backgroundColor": "transparent",
             "fillStyle": "hachure",
             "strokeWidth": 1,
@@ -168,7 +168,7 @@ def create_retrieval_drawing(
         "elements": initial_elements,
         "appState": {
             "gridSize": None,
-            "viewBackgroundColor": "#141414",
+            "viewBackgroundColor": "#1a1430",
         },
         "files": {},
     }
