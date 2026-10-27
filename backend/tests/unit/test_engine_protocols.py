@@ -162,6 +162,34 @@ async def test_sdk_history_tools_and_image(monkeypatch):
     assert calls[2]["config"].system_instruction == "Be strict."
 
 
+async def test_sdk_timeout_pauses_while_the_learner_answers(monkeypatch):
+    """An inline ``pose`` blocks the stream; that wait must not count against the timeout."""
+    from learnharness.engines import genai_sdk_engine as module
+
+    waiting = {"value": False}
+
+    class Models:
+        async def generate_content_stream(self, **kwargs):
+            async def chunks():
+                yield SimpleNamespace(text="Pergunta. ", usage_metadata=None)
+                waiting["value"] = True  # The learner thinks longer than the timeout.
+                await asyncio.sleep(0.6)
+                waiting["value"] = False
+                yield SimpleNamespace(text="Continua.", usage_metadata=None)
+
+            return chunks()
+
+    monkeypatch.setattr(module.genai, "Client",
+                        lambda **kwargs: SimpleNamespace(aio=SimpleNamespace(models=Models())))
+    engine = GenAiSdkEngine(api_key="test", timeout=0.3,
+                            is_waiting_on_learner=lambda sid: sid == "session" and waiting["value"])
+    assert await collect(engine) == "Pergunta. Continua."
+
+    stalled = GenAiSdkEngine(api_key="test", timeout=0.3)  # Nobody waiting: idle is an error.
+    with pytest.raises(EngineError, match="idle"):
+        await collect(stalled)
+
+
 async def test_json_events_timeout_is_idle_not_total(tmp_path):
     from learnharness.engines.cli_protocol import json_events
 

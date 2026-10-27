@@ -253,6 +253,25 @@ def sync_concept_note(
     raise FileExistsError("Could not allocate a concept note name")
 
 
+_MANAGED_KEYS = {"harness_id", "aliases", "sessions", "tags"}
+_HARNESS_TAGS = {labels["tag"] for labels in _LABELS.values()}
+
+
+def _only_managed_frontmatter(content: str, node: PropositionNode) -> bool:
+    """True when every frontmatter key/value is one the harness writes (a learner's tag,
+    alias or property keeps the note alive)."""
+    data = read_frontmatter(content)
+    if not data and body_without_frontmatter(content) != content:
+        return False  # Unparseable YAML is the learner's: keep the note.
+    if not set(data) <= _MANAGED_KEYS:
+        return False
+    tags, aliases = data.get("tags") or [], data.get("aliases") or []
+    tags = [tags] if isinstance(tags, str) else tags
+    aliases = [aliases] if isinstance(aliases, str) else aliases
+    return (isinstance(tags, list) and set(tags) <= _HARNESS_TAGS
+            and isinstance(aliases, list) and set(aliases) <= set(node.aliases))
+
+
 def remove_concept_section(vault_path: Path, node: PropositionNode) -> bool:
     """Remove only the managed block; delete the file only if the harness created it and
     nothing but its heading/frontmatter remains. Returns True when the note changed."""
@@ -269,7 +288,7 @@ def remove_concept_section(vault_path: Path, node: PropositionNode) -> bool:
         original = target.read_bytes().decode("utf-8")
         content = remove_owned_block(original, CONCEPT_BLOCK)
         body = body_without_frontmatter(content).strip()
-        if node.note_created and body in ("", f"# {node.name}"):
+        if node.note_created and body in ("", f"# {node.name}") and _only_managed_frontmatter(content, node):
             target.unlink()
             return True
         if content == original:

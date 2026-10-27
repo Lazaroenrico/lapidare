@@ -395,6 +395,17 @@ def test_excalidraw_retrieval_drawing_and_save_load(tmp_path: Path):
     assert reloaded["png_path"] is not None
     assert Path(reloaded["png_path"]).is_file()
 
+    # Our own export is refreshed on the next save...
+    folder = saved_path.parent
+    plain = folder / saved_path.name.replace(".excalidraw.md", ".png")
+    save_drawing(vault_path=vault, slug=slug, scene_json=scene, png_bytes=fake_png + b"v2")
+    assert plain.read_bytes() == fake_png + b"v2"
+    # ...but an image the learner put under that name is never replaced.
+    plain.write_bytes(b"learner image")
+    save_drawing(vault_path=vault, slug=slug, scene_json=scene, png_bytes=fake_png + b"v3")
+    assert plain.read_bytes() == b"learner image"
+    assert (folder / saved_path.name.replace(".md", ".light.png")).read_bytes() == fake_png + b"v3"
+
 
 # ============================================================================
 # 4. TRANSCRIPT IMPORTER & ^pN CITATIONS

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -816,8 +817,9 @@ class SessionService:
             source.rename(target)
         self.state.dock_registry.cancel_dock(session_id)
         await self._release_runtime(session_id)
+        # The lock stays: a request already waiting on it must not race one that would
+        # get a fresh lock (it finds the session gone and fails cleanly).
         self.tasks.pop(session_id, None)
-        self.locks.pop(session_id, None)
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "deleted": True})
         self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})  # Its petal loses the title.
         return {"ok": True, "id": session_id, "mode": mode,
@@ -987,22 +989,25 @@ class SessionService:
             text = ""
             last_flush = last_notify = asyncio.get_running_loop().time()
             streaming = self.streaming[session_id] = [message_id, "", 0]
-            async for chunk in stream:
-                if streaming[0] != message_id:  # A PRACTICE tool split the message.
-                    message_id, text = streaming[0], ""
-                text += chunk
-                streaming[1] = text
-                current_time = asyncio.get_running_loop().time()
-                if current_time - last_notify >= LIVE_NOTIFY_SECONDS:
-                    # Live view: GET /api/chats/{id} overlays the in-memory text (live_view);
-                    # nothing is written for this tick.
-                    self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "streaming": True})
-                    last_notify = current_time
-                if current_time - last_flush >= PERSIST_FLUSH_SECONDS:
-                    # Each save appends a full snapshot to the append-only JSONL: keep it sparse.
-                    streaming[2] = len(text)
-                    await self._flush(session_id, message_id, text, refresh_note=False)
-                    last_flush = current_time
+            # Closed even when the loop body raises: a CLI engine's generator holds the
+            # session's process lock and idle timer until it is finalized.
+            async with contextlib.aclosing(stream):
+                async for chunk in stream:
+                    if streaming[0] != message_id:  # A PRACTICE tool split the message.
+                        message_id, text = streaming[0], ""
+                    text += chunk
+                    streaming[1] = text
+                    current_time = asyncio.get_running_loop().time()
+                    if current_time - last_notify >= LIVE_NOTIFY_SECONDS:
+                        # Live view: GET /api/chats/{id} overlays the in-memory text (live_view);
+                        # nothing is written for this tick.
+                        self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "streaming": True})
+                        last_notify = current_time
+                    if current_time - last_flush >= PERSIST_FLUSH_SECONDS:
+                        # Each save appends a full snapshot to the append-only JSONL: keep it sparse.
+                        streaming[2] = len(text)
+                        await self._flush(session_id, message_id, text, refresh_note=False)
+                        last_flush = current_time
             self.streaming.pop(session_id, None)
             if text:
                 await self._flush(session_id, message_id, text)

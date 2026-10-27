@@ -403,9 +403,13 @@ def save_drawing(
         atomic_write(file_path, content, expected_revision=current_revision)
         if png_bytes is not None:
             base = file_path.name.removesuffix(".excalidraw.md")
-            for filename in (f"{base}.excalidraw.light.png", f"{base}.png"):
-                target = safe_path(
-                    vault_path, file_path.parent.relative_to(Path(vault_path).resolve()) / filename
-                )
-                atomic_write(target, png_bytes)
+            folder = file_path.parent.relative_to(Path(vault_path).resolve())
+            light = safe_path(vault_path, folder / f"{base}.excalidraw.light.png")
+            plain = safe_path(vault_path, folder / f"{base}.png")
+            # ``<slug>.png`` is ours only while it still matches our last export (the light
+            # copy); a learner's own image under that name is never replaced.
+            ours = not plain.exists() or (light.exists() and plain.read_bytes() == light.read_bytes())
+            atomic_write(light, png_bytes)
+            if ours:
+                atomic_write(plain, png_bytes)
     return file_path

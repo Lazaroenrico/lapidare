@@ -64,7 +64,7 @@ class JobManager:
                   "activity": None, "payload": payload, "dedup_key": key, "result_id": None, "error": None,
                   "created_at": now()}
         self.save(record)
-        self.tasks[record["job_id"]] = asyncio.create_task(self.run(record))
+        self._start(record)
         return record
 
     def dispatch(self, session_id: str, kind: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
@@ -206,8 +206,14 @@ class JobManager:
         record["attempt"] = record.get("attempt", 1) + 1
         record.pop("steer_message_id", None)
         self.save(record)
-        self.tasks[job_id] = asyncio.create_task(self.run(record))
+        self._start(record)
         return record
+
+    def _start(self, record: dict[str, Any]) -> None:
+        job_id = record["job_id"]
+        task = self.tasks[job_id] = asyncio.create_task(self.run(record))
+        # Finished jobs live on in active_jobs/jobs.jsonl; only running tasks are kept here.
+        task.add_done_callback(lambda done: self.tasks.pop(job_id, None) if self.tasks.get(job_id) is done else None)
 
     async def close(self):
         tasks = [t for t in self.tasks.values() if not t.done()]

@@ -6,7 +6,7 @@ import os
 from pydantic import ValidationError
 
 from learnharness.core.contracts.drawing import DrawingReviewResult
-from learnharness.engines.cli_protocol import EngineError
+from learnharness.engines.cli_protocol import EngineError, idle_wait
 from learnharness.engines.usage import genai_usage, report_usage
 
 try:
@@ -29,6 +29,7 @@ class GenAiSdkEngine:
         project=None,
         location=None,
         timeout=180,
+        is_waiting_on_learner=None,
         **kwargs,
     ):
         if simulate:
@@ -36,6 +37,7 @@ class GenAiSdkEngine:
         config = dict(runtime_config or {})
         self.default_model = default_model
         self.timeout = timeout
+        self.is_waiting_on_learner = is_waiting_on_learner
         self.runtime_config = config
         self.api_key = (
             api_key
@@ -109,17 +111,25 @@ class GenAiSdkEngine:
         )
         model = slot.model_id if slot else self.default_model
         metadata = None
-        async with asyncio.timeout(self.timeout):
-            stream = await self.client.aio.models.generate_content_stream(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-            async for chunk in stream:
-                # The last chunk's usage_metadata holds the call's totals.
-                metadata = getattr(chunk, "usage_metadata", None) or metadata
-                if chunk.text:
-                    yield chunk.text
+        # Inline tools run inside the stream, and ``pose`` waits for the learner: the
+        # timeout is idle time between chunks, paused while a question waits (as in the CLIs).
+        waiting = self.is_waiting_on_learner
+        suspended = (lambda: bool(waiting(session_id))) if waiting else None
+
+        def step(awaitable):
+            return idle_wait(awaitable, timeout=self.timeout, is_suspended=suspended, what="google-genai")
+
+        stream = await step(self.client.aio.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=config,
+        ))
+        chunks = aiter(stream)
+        while (chunk := await step(anext(chunks, None))) is not None:
+            # The last chunk's usage_metadata holds the call's totals.
+            metadata = getattr(chunk, "usage_metadata", None) or metadata
+            if chunk.text:
+                yield chunk.text
         report_usage(model, genai_usage(metadata))
 
     async def run_structured(self, prompt, schema, slot=None, system_instruction=None):
