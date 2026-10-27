@@ -1,5 +1,5 @@
 "use client";
-import {createContext, useContext, useEffect, useState} from 'react';
+import {createContext, useContext, useEffect, useMemo, useState} from 'react';
 import {getSetupStatus} from '@/lib/api';
 import {useEventSubscription} from './server-events';
 import {sessionUxMessages} from './session-ux-messages';
@@ -756,7 +756,9 @@ export function LocaleProvider({children}: {children: React.ReactNode}) {
     window.addEventListener('harness:error', onError); return () => window.removeEventListener('harness:error', onError);}, []);
   useEventSubscription('config:updated', () => {void refresh();});
   useEffect(() => {document.documentElement.lang = locale;}, [locale]);
-  return <LocaleContext.Provider value={{locale, t: messages[locale]}}>
+  // Stable per locale: ~50 components read it, and the error banner must not re-render them.
+  const value = useMemo(() => ({locale, t: messages[locale]}), [locale]);
+  return <LocaleContext.Provider value={value}>
     {error && <div role="alert" className="fixed top-2 left-1/2 -translate-x-1/2 z-[100] bg-card border border-border p-4 font-ui text-xs max-w-xl">{error}<button className="ml-4 underline" onClick={() => setError('')}>{messages[locale].close}</button></div>}
     {children}
   </LocaleContext.Provider>;

@@ -5,7 +5,9 @@ import contextlib
 import json
 import os
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 # While suspended (learner answering a QuestionDock) the idle clock is re-checked at this
 # cadence instead of firing.
@@ -14,6 +16,49 @@ SUSPEND_POLL_SECONDS = 1.0
 
 class EngineError(RuntimeError):
     """Provider failed; callers must surface this instead of inventing an answer."""
+
+
+STDERR_TAIL_BYTES = 16384
+
+
+@dataclass(frozen=True)
+class Pipes:
+    stdin: asyncio.StreamWriter
+    stdout: asyncio.StreamReader
+    stderr: asyncio.StreamReader
+
+
+def pipes(process: asyncio.subprocess.Process | None) -> Pipes:
+    """The three pipes of a child started with stdin/stdout/stderr all ``PIPE``."""
+    if process is None or process.stdin is None or process.stdout is None or process.stderr is None:
+        raise EngineError("Provider process is not running with piped stdio")
+    return Pipes(process.stdin, process.stdout, process.stderr)
+
+
+async def drain_stderr(stream: asyncio.StreamReader, tail: bytearray | None = None) -> None:
+    """Read a child's stderr to EOF so it never blocks on a full pipe.
+
+    Stderr may hold credentials or user data: at most the last bytes are kept (``tail``),
+    for local debugging only, never relayed to errors or the UI.
+    """
+    while chunk := await stream.read(8192):
+        if tail is not None:
+            tail.extend(chunk)
+            del tail[:-STDERR_TAIL_BYTES]
+
+
+async def terminate_group(process: asyncio.subprocess.Process, grace: float = 2) -> None:
+    """SIGTERM the child's process group, SIGKILL it after ``grace`` seconds (no-op once exited)."""
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(process.wait(), grace)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await process.wait()
 
 
 async def idle_wait[T](
@@ -61,7 +106,7 @@ async def json_events(
     timeout: float = 180,
     env=None,
     is_suspended: Callable[[], bool] | None = None,
-) -> AsyncIterator[dict]:
+) -> AsyncGenerator[dict[str, Any], None]:
     """Yield NDJSON objects from ``command``.
 
     ``timeout`` is an IDLE timeout (seconds without a stdout line), suspended while
@@ -77,27 +122,22 @@ async def json_events(
         start_new_session=True,
         limit=4 * 1024 * 1024,
     )
-    stderr_tail = bytearray()
-
-    async def drain():
-        while chunk := await process.stderr.read(8192):
-            stderr_tail.extend(chunk)
-            del stderr_tail[:-16384]
+    io = pipes(process)
 
     async def feed():
         try:
-            process.stdin.write(stdin)
-            await process.stdin.drain()
+            io.stdin.write(stdin)
+            await io.stdin.drain()
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
-            process.stdin.close()
+            io.stdin.close()
 
-    stderr_task = asyncio.create_task(drain())
+    stderr_task = asyncio.create_task(drain_stderr(io.stderr))
     input_task = asyncio.create_task(feed())
     try:
         while line := await idle_wait(
-            process.stdout.readline(), timeout=timeout, is_suspended=is_suspended
+            io.stdout.readline(), timeout=timeout, is_suspended=is_suspended
         ):
             if not line.strip():
                 continue
@@ -114,15 +154,7 @@ async def json_events(
             # Stderr may contain credentials or user data. Never relay it to the UI.
             raise EngineError(f"Provider process exited with code {process.returncode}")
     finally:
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), 2)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
+        await terminate_group(process)
         for task in (input_task, stderr_task):
             task.cancel()
         await asyncio.gather(input_task, stderr_task, return_exceptions=True)

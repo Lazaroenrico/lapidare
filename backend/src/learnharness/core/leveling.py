@@ -88,16 +88,24 @@ def validate_leveling(track: TrackConfig, known_item_ids: list[str], start_item_
     return [i for i in pending_ids if i in known_set]
 
 
+def _step(track: TrackConfig, item_id: str) -> TrackItem:
+    """A step the caller already validated (``validate_leveling`` / ``undo_blocker``)."""
+    item = track.item(item_id)
+    if item is None:
+        raise LevelingError(f"Step {item_id!r} does not exist in the track.")
+    return item
+
+
 def apply_leveling(track: TrackConfig, known_item_ids: list[str], start_item_id: str,
                    summary: str = "", created_at: str = "") -> LevelingResult:
     """Validate, then mark ``known`` completed (``status_detail="nivelado"``) and move the track's
     active step to ``start``. Mutates ``track``; returns the record with the undo snapshot."""
     known = validate_leveling(track, known_item_ids, start_item_id)
-    start = track.item(start_item_id.strip())
+    start = _step(track, start_item_id.strip())
     snapshot: list[LevelingItemFlags] = []
     refs: list[LevelingItemRef] = []
     for item_id in known:
-        item = track.item(item_id)
+        item = _step(track, item_id)
         snapshot.append(LevelingItemFlags(id=item.id, completed=item.completed, status_detail=item.status_detail))
         refs.append(LevelingItemRef(id=item.id, title=item.title))
         item.completed = True
@@ -142,7 +150,7 @@ def undo_leveling(track: TrackConfig, result: LevelingResult) -> None:
     if blocker:
         raise LevelingError(blocker)
     for flags in result.snapshot:
-        item = track.item(flags.id)
+        item = _step(track, flags.id)
         item.completed = flags.completed
         item.status_detail = flags.status_detail
     previous = track.item(result.previous_active_item_id)

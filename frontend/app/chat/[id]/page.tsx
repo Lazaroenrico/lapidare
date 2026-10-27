@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale } from "@/components/locale-provider";
-import React, { useEffect, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,7 +12,6 @@ import {
   Edit3,
   FileText,
   GitBranch,
-  Layers,
   Loader2,
   Mic,
   MicOff,
@@ -315,12 +314,12 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   };
 
-  // Handle open citation drawer
-  const handleOpenCitation = (sourceName: string, paragraphId: string) => {
+  // Handle open citation drawer (stable: every memoized LessonProse receives it)
+  const handleOpenCitation = useCallback((sourceName: string, paragraphId: string) => {
     setSelectedSource(sourceName);
     setSelectedParagraph(paragraphId);
     setCitationDrawerOpen(true);
-  };
+  }, []);
 
   // Handle send message
   const handleSendMessage = async (e?: React.FormEvent) => {
@@ -565,6 +564,9 @@ export default function ChatPage({ params }: ChatPageProps) {
     );
   };
 
+  // Rebuilt only when a fetch replaces the session, not on every keystroke.
+  const transcript = useMemo(() => (session ? buildTranscript(session) : []), [session]);
+
   // Safe Vault file name link
   const vaultNoteName = session
     ? session.title.replace(/[\/\\:*?"<>|]/g, "_")
@@ -597,7 +599,6 @@ export default function ChatPage({ params }: ChatPageProps) {
   }
 
   const isWaitingQuiz = Boolean(session.pending_quiz);
-  const transcript = buildTranscript(session);
   const teachPhase =
     session.mode === "TEACH" ? normalizePhase(session.phase, Boolean(session.plan?.nodes.length)) : null;
   const execStatus = session.execution_status;

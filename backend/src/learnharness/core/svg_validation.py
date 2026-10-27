@@ -30,7 +30,7 @@ def _internal(reference: str) -> bool:
 
 
 def _css_errors(text: str, where: str) -> list[str]:
-    errors = []
+    errors: list[str] = []
     if _CSS_IMPORT.search(text):
         errors.append(f"CSS @import is forbidden ({where})")
     for match in _CSS_URL.finditer(text):
@@ -66,7 +66,9 @@ def validate_svg(svg: str) -> list[str]:
             errors.append(message)
 
     for element in root.iter():
-        if not isinstance(element.tag, str):
+        # Comments and processing instructions carry a factory function as their tag,
+        # whatever the stubs say.
+        if not isinstance(element.tag, str):  # pyright: ignore[reportUnnecessaryIsInstance]
             continue
         tag = _local(element.tag)
         reason = _FORBIDDEN_ELEMENTS.get(tag.lower())

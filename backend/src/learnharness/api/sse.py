@@ -76,6 +76,10 @@ class SseHub:
             while True:
                 if await request.is_disconnected():
                     break
+                if queue not in self._subscribers:
+                    # Evicted by broadcast (queue full): end the stream so the browser's
+                    # EventSource reconnects and resyncs instead of hearing only heartbeats.
+                    break
 
                 try:
                     frame = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval)
@@ -88,8 +92,6 @@ class SseHub:
         finally:
             await self.unsubscribe(queue)
 
-
-default_sse_hub = SseHub()
 
 
 @sse_router.get("/api/events")

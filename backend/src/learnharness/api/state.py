@@ -13,7 +13,7 @@ from learnharness.core.contracts.config import HarnessConfig
 from learnharness.mcp.content_client import ContentMcpClient
 from learnharness.mcp.pending_dock import PendingDockRegistry
 from learnharness.vault.bootstrap import load_config
-from learnharness.vault.watcher import VaultWatcher
+from learnharness.vault.watcher import VaultWatcher, affects_graph
 
 
 def selected_vault_path():
@@ -134,7 +134,8 @@ class AppState:
         from learnharness.core.events import SseEventType
         async def changed(paths):
             self.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": [str(Path(p).relative_to(self.vault_path)) for p in paths]})
-            self.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
+            if affects_graph(paths):
+                self.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
         self.watcher = VaultWatcher(self.vault_path, changed)
         await self.watcher.start()
 

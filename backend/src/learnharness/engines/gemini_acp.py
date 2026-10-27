@@ -29,11 +29,17 @@ import json
 import logging
 import os
 import re
-import signal
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from learnharness.engines.cli_protocol import EngineError, idle_wait
+from learnharness.engines.cli_protocol import (
+    EngineError,
+    drain_stderr,
+    idle_wait,
+    pipes,
+    terminate_group,
+)
 from learnharness.engines.detector import KNOWN_GEMINI_PATHS, _find_executable
 from learnharness.engines.gemini_engine import GeminiHeadlessEngine, write_workspace_settings
 from learnharness.engines.usage import acp_usage, report_usage
@@ -123,7 +129,7 @@ def handle_agent_request(method, params):
     return None, {"code": METHOD_NOT_FOUND, "message": f"Unsupported method: {method}"}
 
 
-def parse_update(message):
+def parse_update(message: dict[str, Any]) -> tuple[str, Any]:
     """Normalise a ``session/update`` notification into ``(kind, payload)``.
 
     kinds: ``text`` (str), ``tool`` (dict with id/status/harness), ``event`` (ignored).
@@ -232,17 +238,13 @@ class AcpConnection:
             raise EngineError(f"Could not start {os.path.basename(self.command[0])} --acp") from exc
         self._tasks = [
             asyncio.create_task(self._read_loop()),
-            asyncio.create_task(self._drain_stderr()),
+            asyncio.create_task(drain_stderr(pipes(self.process).stderr)),
         ]
-
-    async def _drain_stderr(self):
-        # Stderr may contain credentials or user data; keep it out of errors and the UI.
-        while await self.process.stderr.read(8192):
-            pass
 
     async def _read_loop(self):
         try:
-            while line := await self.process.stdout.readline():
+            stdout = pipes(self.process).stdout
+            while line := await stdout.readline():
                 if not line.strip():
                     continue
                 try:
@@ -257,8 +259,9 @@ class AcpConnection:
             logger.warning("gemini --acp stdout closed unexpectedly", exc_info=True)
         finally:
             self._eof = True
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(self.process.wait(), 2)
+            if self.process is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(self.process.wait(), 2)
             error = EngineError(
                 f"gemini --acp process exited (code {self.returncode})"
                 if self.returncode is not None
@@ -307,8 +310,9 @@ class AcpConnection:
         data = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
         async with self._write_lock:
             try:
-                self.process.stdin.write(data)
-                await self.process.stdin.drain()
+                stdin = pipes(self.process).stdin
+                stdin.write(data)
+                await stdin.drain()
             except (BrokenPipeError, ConnectionResetError) as exc:
                 raise EngineError("gemini --acp stdin closed") from exc
 
@@ -359,16 +363,8 @@ class AcpConnection:
         process = self.process
         if process is not None:
             with contextlib.suppress(Exception):
-                process.stdin.close()
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
+                pipes(process).stdin.close()
+            await terminate_group(process)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -619,14 +615,6 @@ class GeminiCliAcpEngine:
         self.pool.put(session_id, entry)
         return entry, True
 
-    @classmethod
-    async def close_session(cls, session_id):
-        await cls.pool.close(session_id)
-
-    @classmethod
-    async def close_all(cls):
-        await cls.pool.close_all()
-
     # ----------------------------------------------------------------- turns
 
     async def stream_turn(
@@ -649,7 +637,7 @@ class GeminiCliAcpEngine:
             finally:
                 self.pool.release(session_id)
 
-    async def _prompt(self, session_id, entry, text):
+    async def _prompt(self, session_id, entry, text) -> AsyncGenerator[str, None]:
         connection = entry.connection
         acp_session = entry.acp_session_id
         queue = asyncio.Queue()

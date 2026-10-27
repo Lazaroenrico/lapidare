@@ -7,6 +7,7 @@ A PDF with no extractable text is refused: nothing read, nothing answered.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
 from collections.abc import Callable
@@ -129,7 +130,7 @@ async def run_pdf_job(state, payload: dict[str, Any], progress: Callable[[str], 
     """Job body: resolve, extract, triage, ask the background-slot engine."""
     target, rel = resolve_pdf(state.vault_path, payload["path"])
     progress(f"extraindo texto de {target.name}")
-    pages = extract_pages(target)
+    pages = await asyncio.to_thread(extract_pages, target)  # pypdf is CPU-bound.
     selected, matched = triage(pages, payload["question"])
     if not selected:
         raise PdfPathError(f"nada pôde ser lido de {target.name} (sem texto extraível; PDFs escaneados precisam de OCR)")

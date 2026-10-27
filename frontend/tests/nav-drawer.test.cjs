@@ -1,9 +1,9 @@
 // Narrow-viewport sidebar drawer, prompt editor dirty state, dictation command routing.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const nd = require('/tmp/learnharness-frontend-tests/nav-drawer.js');
-const sw = require('/tmp/learnharness-frontend-tests/settings-wire.js');
-const ce = require('/tmp/learnharness-frontend-tests/command-events.js');
+const nd = require('../.test-build/nav-drawer.js');
+const sw = require('../.test-build/settings-wire.js');
+const ce = require('../.test-build/command-events.js');
 
 test('wide viewports keep the persisted collapse; narrow ones always use the full drawer', () => {
   assert.deepEqual(nd.sidebarPresentation(false, false, false), {variant: 'full', drawer: false, open: false});

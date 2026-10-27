@@ -1,7 +1,7 @@
 // Radial "flower" layout: depth rings, sectors per cluster, outer band, forces.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const OUT = '/tmp/learnharness-frontend-tests';
+const OUT = require('node:path').join(__dirname, '..', '.test-build');
 const rl = require(`${OUT}/radial-layout.js`);
 
 const arc = (premise, conclusion) => ({premise, conclusion});

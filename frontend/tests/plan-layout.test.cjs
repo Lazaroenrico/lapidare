@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const pl = require('/tmp/learnharness-frontend-tests/plan-layout.js');
+const pl = require('../.test-build/plan-layout.js');
 
 const n = (id, ...deps) => ({id, depends_on: deps});
 

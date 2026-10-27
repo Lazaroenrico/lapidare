@@ -72,7 +72,6 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   // Step 2: Language & Vault
   const [language, setLanguage] = useState<"pt-br" | "en">("pt-br");
   const [vaultPath, setVaultPath] = useState<string>(DEFAULT_VAULT_PATH);
-  const [isExistingVault, setIsExistingVault] = useState<boolean>(true);
 
   // Step 3: Content MCPs (generic; each server is saved by McpServerManager)
   const [selectedMcp, setSelectedMcp] = useState<string | null>(null);

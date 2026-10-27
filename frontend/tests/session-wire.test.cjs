@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const sw = require('/tmp/learnharness-frontend-tests/session-wire.js');
+const sw = require('../.test-build/session-wire.js');
 
 test('pending quiz decodes the Fase 8 payload and the legacy aliases', () => {
   const q = sw.decodeQuiz({

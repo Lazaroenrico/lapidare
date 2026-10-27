@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "es2020",
+    "outDir": ".test-build",
+    "rootDir": "lib",
+    "jsx": "react-jsx",
+    "plugins": []
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["node_modules"]
+}

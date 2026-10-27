@@ -59,23 +59,40 @@ def validate_folders(root: Path, folders: VaultFolderMap) -> None:
                     raise PermissionError("Writable folders cannot overlap immutable sources")
 
 
+def ensure_not_source(root: Path, target: Path, folders: VaultFolderMap) -> None:
+    """Refuse any write under the immutable sources folder (configured, ``Fontes`` or ``Sources``)."""
+    for source in {folders.sources_dir, "Fontes", "Sources"}:
+        if target.is_relative_to(safe_path(root, source)):
+            raise PermissionError("Fontes/ is strictly read-only")
+
+
+_FOLDERS_CACHE: dict[Path, tuple[tuple[int, int, int], VaultFolderMap]] = {}
+
+
 def folder_map(root: Path) -> VaultFolderMap:
     config = safe_path(root, ".harness/config.json")
-    if config.exists():
-        folders = VaultFolderMap.model_validate(json.loads(config.read_text()).get("folders", {}))
-    else:
-        folders = VaultFolderMap()
-        for key, english in [
-            ("lessons_dir", "Lessons"),
-            ("concepts_dir", "Concepts"),
-            ("sources_dir", "Sources"),
-            ("drawings_dir", "Drawings"),
-        ]:
-            if (
-                not (Path(root) / getattr(folders, key)).exists()
-                and (Path(root) / english).exists()
-            ):
-                setattr(folders, key, english)
+    try:
+        st = config.stat()
+    except FileNotFoundError:
+        st = None
+    if st is not None:
+        # Re-read only when config.json was replaced (every save is an atomic rename).
+        key = (st.st_ino, st.st_size, st.st_mtime_ns)
+        cached = _FOLDERS_CACHE.get(config)
+        if cached is None or cached[0] != key:
+            folders = VaultFolderMap.model_validate(json.loads(config.read_text()).get("folders", {}))
+            validate_folders(root, folders)
+            cached = _FOLDERS_CACHE[config] = (key, folders)
+        return cached[1].model_copy()
+    folders = VaultFolderMap()
+    for name, english in [
+        ("lessons_dir", "Lessons"),
+        ("concepts_dir", "Concepts"),
+        ("sources_dir", "Sources"),
+        ("drawings_dir", "Drawings"),
+    ]:
+        if not (Path(root) / getattr(folders, name)).exists() and (Path(root) / english).exists():
+            setattr(folders, name, english)
     validate_folders(root, folders)
     return folders
 

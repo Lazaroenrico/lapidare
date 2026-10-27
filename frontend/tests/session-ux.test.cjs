@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const ux = require('/tmp/learnharness-frontend-tests/session-ux.js');
-const sw = require('/tmp/learnharness-frontend-tests/session-wire.js');
+const ux = require('../.test-build/session-ux.js');
+const sw = require('../.test-build/session-wire.js');
 
 test('fuzzyScore: subsequence, accent/case-insensitive, literal beats scattered', () => {
   assert.equal(ux.fuzzyScore('atn', 'Attention'), ux.fuzzyScore('atn', 'attention'));
@@ -123,4 +123,11 @@ test('normalizeTitle trims, collapses spaces and rejects empty/unchanged/too lon
   assert.equal(ux.normalizeTitle('   ', 'Velha'), null);
   assert.equal(ux.normalizeTitle('Velha', 'Velha'), null);
   assert.equal(ux.normalizeTitle('x'.repeat(201), 'Velha'), null);
+});
+
+test('isStreamingTick spots live-text notifies only', () => {
+  assert.equal(ux.isStreamingTick({session_id: 's', streaming: true}), true);
+  assert.equal(ux.isStreamingTick({session_id: 's', sequence: 3}), false);
+  assert.equal(ux.isStreamingTick(null), false);
+  assert.equal(ux.isStreamingTick('streaming'), false);
 });

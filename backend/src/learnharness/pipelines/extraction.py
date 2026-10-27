@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -205,13 +204,27 @@ def _runtime(config: RunnableConfig | None) -> tuple[Any, Any]:
     return engine, runtime.get("slot")
 
 
+_SETUP_LOCK = asyncio.Lock()
+_READY_DBS: set[Path] = set()
+
+
 @asynccontextmanager
 async def _get_checkpointer(vault_path: Path):
-    """Keep the async SQLite connection alive exactly for graph execution."""
+    """Keep the async SQLite connection alive exactly for graph execution.
+
+    The schema setup (``PRAGMA journal_mode=WAL`` + DDL) fails with "database is locked"
+    while another extraction's connection writes, so it runs once per database, never
+    alongside a running pipeline: concurrent extractions (a notes import) share the file.
+    """
     db_path = safe_path(vault_path, ".harness/langgraph.sqlite")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        await saver.setup()
+        async with _SETUP_LOCK:
+            if db_path in _READY_DBS and db_path.exists():
+                saver.is_setup = True
+            else:
+                await saver.setup()
+                _READY_DBS.add(db_path)
         yield saver
 
 
@@ -395,7 +408,6 @@ async def run_extraction_pipeline(
     slot: Any = None,
     session_title: str = "",
     language: str = "pt-BR",
-    on_progress: Callable[[str, float], None] | None = None,
     origin: str = "session",
     merge_lock: asyncio.Lock | None = None,
 ) -> dict[str, Any]:
@@ -404,8 +416,6 @@ async def run_extraction_pipeline(
         raise ValueError("Extraction requires a configured engine")
     vault_path = Path(vault_path).resolve()
     run_id = f"extract-{uuid4().hex[:8]}"
-    if on_progress:
-        on_progress("Extracting propositions", 0.1)
     initial: ExtractionState = {
         "vault_path": str(vault_path), "session_id": session_id, "session_title": session_title,
         "language": language, "batch": [m.model_dump() for m in batch], "status": "running",
@@ -420,8 +430,6 @@ async def run_extraction_pipeline(
         }})
     if final.get("status") != "completed":
         raise RuntimeError("Extraction graph finished without completing the merge")
-    if on_progress:
-        on_progress("Knowledge persisted", 1.0)
     return {"run_id": run_id, "session_id": session_id, **final.get("result", {})}
 
 

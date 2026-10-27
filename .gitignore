@@ -9,6 +9,7 @@ __pycache__/
 node_modules/
 .next/
 *.tsbuildinfo
+frontend/.test-build/
 next-env.d.ts
 
 # Env & secrets

@@ -1,0 +1,890 @@
+[
+  {
+    "description": "Diagnosis only (before probe_done): a graded multiple-choice probe on one strand of the goal.\n\nBlocks until the learner answers and returns what they added (choice, correctness,\nconfidence, thinking). options: 2-6 strings or {label, value?} objects, symmetric\ndistractors, each diagnosing a specific wrong model; never include \"Don't know\"\n(the UI adds it). Write explanation (why the answer is right) BEFORE correct.\ncorrect: the value (A, B, ...) or label of the right option, or a list of them with\nmulti_select=true. details: optional context shown above the question.",
+    "name": "probe",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "correct": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "multi_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "description": "One answer option. ``label`` is the option text (KaTeX allowed).",
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "options",
+        "explanation",
+        "correct"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Diagnosis only (before probe_done): a free-recall question answered in the learner's words.\n\ncommitted_answer: your complete reference answer with its reasoning, written now and\nimmutable; you will grade against it. Blocks until the learner answers; then call\ngrade_recall(question_id, verdict, feedback) before commenting.",
+    "name": "recall",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "committed_answer": {
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "committed_answer"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Teaching: a graded multiple-choice question about one plan node (requires plan_init).\n\ntype=\"predict\" comes BEFORE you teach the step (a nudge to commit to a prediction,\nnot a test; start teaching by resolving it). type=\"check\" comes AFTER the step\n(applied, not recited; each distractor diagnoses one specific wrong model).\nnode_id must be an id from plan_init. options: 2-6 strings or {label, value?}\nobjects without \"Don't know\". Write explanation BEFORE correct (value or label, or a\nlist with multi_select=true). Blocks until the learner answers. One question per turn.",
+    "name": "quiz",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "correct": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "multi_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "description": "One answer option. ``label`` is the option text (KaTeX allowed).",
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "question": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "predict",
+            "check"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "node_id",
+        "question",
+        "options",
+        "explanation",
+        "correct"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Teaching: a free-text question about one plan node (requires plan_init).\n\ntype=\"predict\" before the step, type=\"check\" after it. committed_answer: your full\nreference answer with reasoning, fixed before asking. Blocks until the learner\nanswers; then call grade_recall(question_id, verdict, feedback) before commenting.\nA CHECK explain graded \"correct\" counts as mastery evidence for the node.",
+    "name": "explain",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "committed_answer": {
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "predict",
+            "check"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "node_id",
+        "question",
+        "committed_answer"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Ask the learner something ungraded (goal, preference, scope); allowed in any phase.\n\noptions: optional strings or {label, value?, description?} objects; put the\nrecommended option first with \"(Recommended)\" in its label. The UI always offers\n\"Other...\" with free text. Blocks until the learner answers.",
+    "name": "ask_user_question",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "multi_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "description": "One answer option. ``label`` is the option text (KaTeX allowed).",
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Close the diagnosis exactly once, with no question pending.\n\nstrands: one entry per dependency strand the goal rests on, each\n{strand, assessment} where assessment states the floor (reliably right), the\nceiling (where it breaks), misconceptions seen and where to build from.\nsummary: optional overall read. After it succeeds, say one closing sentence and\nend your turn; planning starts automatically.",
+    "name": "probe_done",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "strands": {
+          "anyOf": [
+            {
+              "items": {
+                "description": "One dependency strand of the goal and where the learner's edge sits on it.",
+                "properties": {
+                  "assessment": {
+                    "type": "string"
+                  },
+                  "strand": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "strand",
+                  "assessment"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "strands"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Write or rewrite the lesson map after probe_done (a mermaid flowchart).",
+    "name": "plan_init",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "approach_prose": {
+          "default": "",
+          "type": "string"
+        },
+        "mermaid": {
+          "type": "string"
+        },
+        "node_details": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "description": "Dense-source extras for one plan node.",
+                "properties": {
+                  "four_dimensions": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "source_paragraphs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "mermaid"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Grade a recall/explain answer against your committed_answer, before commenting on it.\n\nverdict: correct | partial | incorrect (strict: missing a load-bearing step is not\ncorrect). feedback: one or two sentences on what was right and what was missing.",
+    "name": "grade_recall",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "feedback": {
+          "type": "string"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "correct",
+            "partial",
+            "incorrect"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "verdict",
+        "feedback"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Mark a plan node mastered or needs_review after its check.\n\nmastered requires mastered prerequisites and CHECK evidence on the node (a CHECK\nquiz answered correctly with high confidence, or a CHECK explain graded correct).\nWhich node is current is derived from your questions; do not track it here.",
+    "name": "plan_advance",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "mastered",
+            "needs_review"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Insert a prerequisite lesson only when diagnostic evidence identifies a gap.",
+    "name": "track_foundation",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "prerequisite": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "prerequisite"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Dispatch a lesson-specific interactive simulator as a background job; returns at once.\n\nKeep teaching: when the demo is ready (or fails) a message arrives on its own.",
+    "name": "spawn_demo",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "topic"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "PRACTICE: pose exactly one problem; it does not block.\n\nstatement: the problem as the learner sees it (never name the target idea).\nmode: recall | discrimination | composition. model_solution: your complete worked\nsolution, written now; it stays hidden until conclude. target: graph proposition\nids (n_...) or their exact names (resolved to ids), [] when none apply. Refused while\nanother problem is active. After it succeeds, end your turn and wait for the attempt.",
+    "name": "problem",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "recall",
+            "discrimination",
+            "composition"
+          ],
+          "type": "string"
+        },
+        "model_solution": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "statement",
+        "mode",
+        "model_solution"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "PRACTICE: close the active problem and reveal its model solution.\n\noutcome: solved (no hints) | solvedWithHints | movedOn | surrendered. verdict: one\nsentence. rung: the highest hint rung used (R0..R5), null when none. miss_class:\ncue | discrimination | execution | careless | structural, null when nothing went\nwrong. retest: true to retest these targets later. Then write the closing words and\nend your turn; the next problem waits for the learner.",
+    "name": "conclude",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "miss_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "cue",
+                "discrimination",
+                "execution",
+                "careless",
+                "structural"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "enum": [
+            "solved",
+            "solvedWithHints",
+            "movedOn",
+            "surrendered"
+          ],
+          "type": "string"
+        },
+        "retest": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rung": {
+          "anyOf": [
+            {
+              "enum": [
+                "R0",
+                "R1",
+                "R2",
+                "R3",
+                "R4",
+                "R5"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verdict": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "verdict"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read-only search of the learner's knowledge graph (TEACH and PRACTICE).\n\nReturns up to ``limit`` propositions as {id, name, statement, session_title},\nranked by word overlap with ``query`` in name, statement and aliases.",
+    "name": "graph_search",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "x-fastmcp-wrap-result": true
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Dispatch web research with sources as a background job; returns at once (TEACH and PRACTICE).\n\nquestion: one precise, checkable question (a fact you are unsure of, a source to cite).\ncontext: optional, why it matters for this lesson. Keep teaching: the brief and its\nsources arrive on their own as a message; never wait for it or invent its result.",
+    "name": "research",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "default": "",
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Dispatch reading a PDF from the learner's vault as a background job; returns at once (TEACH and PRACTICE).\n\npath: vault-relative path of a .pdf (e.g. \"Fontes/paper.pdf\"); nothing outside the\nvault is readable. question: what to find in it. The relevant pages are triaged and\nread; the answer arrives on its own with pages cited as (p. N).",
+    "name": "read_pdf",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "question"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Dispatch a static figure (a self-contained SVG) for the current step; returns at once.\n\nbrief: what the figure must show that prose cannot (elements, labels, relations,\nlayout). It is inserted in the lesson when ready and a message tells you; until\nthen, do not refer to it as visible.",
+    "name": "visual",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "brief": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "brief"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Track leveling only: close the diagnosis exactly once, with no question pending.\n\nknown_item_ids: ids from the pending queue the learner already masters (they are marked\ndone); never an item whose prerequisite is not also known. start_item_id: the first\npending item NOT mastered (the track resumes there; never one of known_item_ids).\nsummary: two or three sentences on the evidence. After it succeeds, tell the learner\nwhere the track starts in one or two sentences and end your turn.",
+    "name": "leveling_done",
+    "output_schema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "known_item_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "start_item_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "known_item_ids",
+        "start_item_id",
+        "summary"
+      ],
+      "type": "object"
+    }
+  }
+]

@@ -148,16 +148,21 @@ learnharness/
 │   │   │   ├── compaction.py         # quando compactar, cauda literal, render do resumo
 │   │   │   ├── session_export.py     # exportação Markdown da sessão
 │   │   │   ├── svg_validation.py · demo_validation.py · latex_heal.py · text_hygiene.py
+│   │   │   ├── lesson_layout.py      # layout gerenciado da nota de aula (render puro)
+│   │   │   ├── slug.py               # ascii_slug: regra congelada de ids legados
+│   │   │   ├── frontmatter.py        # regra única (Obsidian) de frontmatter: CRLF, BOM, `---` em valores
+│   │   │   ├── turn_prompt.py        # o que um turno envia ao motor (one-shot | persistente)
 │   │   │   ├── events.py             # SseEventType + SseFrame
 │   │   │   └── ports.py              # Protocols: AgentEnginePort, VaultPort, ContentMcpPort
 │   │   ├── engines/                  # adaptadores dos 3 caminhos Google
 │   │   │   ├── agy_engine.py · agy_gate.py
 │   │   │   ├── gemini_acp.py · gemini_engine.py
 │   │   │   ├── genai_sdk_engine.py
-│   │   │   ├── cli_protocol.py       # EngineError, idle_wait, json_events
+│   │   │   ├── cli_protocol.py       # EngineError, idle_wait, json_events, drain_stderr, terminate_group
 │   │   │   ├── detector.py · models.py · usage.py
 │   │   ├── mcp/
-│   │   │   ├── runtime_server.py     # ferramentas pedagógicas (FastMCP)
+│   │   │   ├── runtime_server.py     # guardas de modo, ordem publicada e servidor FastMCP
+│   │   │   ├── tools/                # ferramentas por família: questions · lesson · practice · jobs (+ inputs)
 │   │   │   ├── pending_dock.py       # asyncio.Future por pergunta pendente
 │   │   │   ├── content_client.py     # cliente de QUALQUER servidor MCP de conteúdo
 │   │   │   └── demo_builder.py       # geração/validação de simuladores HTML
@@ -167,8 +172,8 @@ learnharness/
 │   │   │   ├── graph_notes.py        # Fase 16: fontes de notas, job notes_import, remoção
 │   │   │   └── agy_permissions.py · secrets.py
 │   │   ├── vault/                    # todo acesso a disco do Vault
-│   │   │   ├── bootstrap.py · safety.py · markdown_ast.py · lesson_layout.py
-│   │   │   ├── graph_store.py · jsonl_store.py · transcript_importer.py
+│   │   │   ├── bootstrap.py · safety.py · markdown_ast.py
+│   │   │   ├── graph_store.py · jsonl_store.py · jsonl_io.py · transcript_importer.py
 │   │   │   ├── github_source.py · excalidraw.py · watcher.py
 │   │   ├── pipelines/extraction.py   # StateGraph Extractor → Auditor → Merger
 │   │   ├── prompts/                  # fragmentos NN-*.md + loader.py (seção 6.4)
@@ -252,7 +257,7 @@ Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
 | `dock:resolved` | Resposta ou dispensa de pergunta | `GET /api/chats/{id}` |
 | `plan:updated` | `plan_init` / `plan_advance` / status derivado | `GET /api/chats/{id}` |
 | `vault:changed` | Watcher do Vault, notas de conceito, nota de trilha | Painéis de nota, grafo |
-| `graph:updated` | Lote de extração aplicado, nó excluído, watcher | `GET /api/graph` |
+| `graph:updated` | Lote de extração aplicado, nó excluído, sessão renomeada/excluída/restaurada, watcher (exceto `.harness/prompts/`) | `GET /api/graph` |
 | `jobs:updated` | Qualquer gravação em `jobs.jsonl` | `GET /api/jobs` |
 | `usage:updated` | Nova linha em `usage.jsonl` | `GET /api/usage` |
 | `config:updated` | Trilhas, ajustes do agente, setup | `GET /api/tracks`, `GET /api/setup/status`, `GET /api/settings/agent` |
@@ -464,7 +469,7 @@ sequenceDiagram
 - **Motores não persistentes:** a cada turno vai `system + PERSISTED HISTORY + regras`, e o primeiro turno recebe `opening_request` (o título da sessão **é** o pedido do aluno).
 - **Handoff:** `probe_done` arma `handoff_pending`. Quando o turno de diagnóstico termina, `_drive` roda logo em seguida um **turno de handoff** com `handoff.md` ("planeje o arco a partir do diagnóstico, chame `plan_init`, apresente e encerre"). É uma tentativa só; uma nova tentativa depende do aluno.
 - **Steers:** `deliver_steer(session_id, kind, content, details)` grava uma mensagem `role="user"` com `steer_kind` `learner` (enviada durante o turno, por `POST /api/chats/{id}/steer`) ou `job` (resultado de job), com `delivered=False`. Se a sessão está ociosa, agenda um turno. Se está ocupada, o turno corrente termina e `_steers_due` dispara um **turno de follow-up**. Com uma pergunta pendente, o steer espera a resposta e **segue junto dela**: `SessionService._attach_steers` acrescenta ao retorno da ferramenta de pergunta bloqueante os campos `learner_messages` (steers `learner`) e `background_results` (steers `job`) e os marca como entregues. Assim, um professor que encadeia perguntas no mesmo turno não deixa mensagens do aluno nem resultados de jobs esperando até o fim do turno.
-- **Escrita da prosa:** durante o streaming, a cada 0,2 s só é emitido `session:updated`; o `GET /api/chats/{id}` sobrepõe o texto em memória (`SessionService.live_view`). A gravação no JSONL (que é append-only e guarda o snapshot inteiro) acontece a cada 2 s, sem re-renderizar a nota; a nota da aula é atualizada antes de ferramentas e no fim do turno. Antes de ferramentas que mudam o plano ou abrem um problema, o texto até ali é gravado e a mensagem é dividida (`split_streaming` / `flush_streaming`), para a prosa ficar na seção certa da nota.
+- **Escrita da prosa:** durante o streaming, a cada 0,2 s só é emitido `session:updated`; o `GET /api/chats/{id}` sobrepõe o texto em memória (`SessionService.live_view`). A gravação no JSONL (que é append-only e guarda o snapshot inteiro) acontece a cada 2 s, sem re-renderizar a nota. A leitura valida só o último snapshot e fica em cache até o arquivo crescer (`vault/jsonl_io.py`), e `GET /api/chats` devolve linhas leves, sem mensagens, plano nem respostas; a nota da aula é atualizada antes de ferramentas e no fim do turno. Antes de ferramentas que mudam o plano ou abrem um problema, o texto até ali é gravado e a mensagem é dividida (`split_streaming` / `flush_streaming`), para a prosa ficar na seção certa da nota.
 - **Fim do turno:**
   - status `waiting` (pergunta pendente), `queued` (há follow-up) ou `idle`;
   - `_trigger_extraction` (seção 8);
@@ -717,7 +722,7 @@ Os nomes das pastas ficam em `HarnessConfig.folders` (`VaultFolderMap`). A tabel
 | `trash/` | diretório | JSONL de sessões excluídas (com sufixo datado em colisão); a última linha `{"event":"trashed",…}` registra quando e como. Restaurável pela UI; só `DELETE /api/chats/trash/{file}?confirm=true` apaga de vez |
 | `chains.jsonl` | append-only (legado) | Cadeias anteriores à Fase 8B, lidas como `legacy` |
 
-O watcher (`vault/watcher.py`, `watchfiles`) ignora `langgraph.sqlite`, `repos/`, `runtime/`, `.git`, temporários e `.obsidian/workspace*`, e emite `vault:changed` + `graph:updated`.
+O watcher (`vault/watcher.py`, `watchfiles`) ignora tudo em `.harness/` exceto `config.json` e `prompts/` (o próprio harness anuncia suas gravações com eventos específicos), além de `.git`, temporários e `.obsidian/workspace*`. Emite `vault:changed`, e `graph:updated` só quando algo fora de `.harness/prompts/` mudou.
 
 ### 11.3 Invariantes de escrita
 

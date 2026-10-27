@@ -13,12 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-try:
-    from watchfiles import Change, awatch
-    _WATCHFILES_AVAILABLE = True
-except ImportError:
-    _WATCHFILES_AVAILABLE = False
-    Change = None
+from watchfiles import awatch
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +24,19 @@ def is_ignored_path(path_str: str) -> bool:
         return True
     if normalized.endswith(".tmp") or ".tmp." in normalized:
         return True
-    if ".harness/langgraph.sqlite" in normalized:
-        return True
-    # Machine-only caches: GitHub clones and per-execution CLI work dirs churn heavily
-    # and never contain user notes.
-    if "/.harness/repos/" in normalized or "/.harness/runtime/" in normalized:
-        return True
+    if "/.harness/" in normalized:
+        # The harness announces its own writes (sessions, jobs, usage, graph, logs) with
+        # targeted SSE events; only files a person may edit by hand get through.
+        return not normalized.endswith("/.harness/config.json") and "/.harness/prompts/" not in normalized
     return "/.git" in normalized or normalized.endswith("/.git")
+
+
+def affects_graph(paths: list[str]) -> bool:
+    """Whether a batch of (non-ignored) changes can change the graph snapshot.
+
+    Prompt overrides cannot; notes, sources and ``config.json`` (tracks) can.
+    """
+    return any("/.harness/prompts/" not in p.replace("\\", "/") for p in paths)
 
 
 class VaultWatcher:
@@ -70,39 +71,31 @@ class VaultWatcher:
             self._task = None
 
     async def _watch_loop(self) -> None:
-        """Main watching loop using awatch or fallback polling."""
-        if _WATCHFILES_AVAILABLE:
-            try:
-                async for changes in awatch(
-                    str(self.vault_path),
-                    stop_event=self._stop_event,
-                    debounce=int(self.debounce_seconds * 1000),
-                    step=50,
-                ):
-                    valid_paths: list[str] = []
-                    for _, raw_path in changes:
-                        if not is_ignored_path(raw_path):
-                            valid_paths.append(raw_path)
+        """Main watching loop (watchfiles' awatch, debounced by watchfiles itself)."""
+        try:
+            async for changes in awatch(
+                str(self.vault_path),
+                stop_event=self._stop_event,
+                debounce=int(self.debounce_seconds * 1000),
+                step=50,
+            ):
+                valid_paths: list[str] = []
+                for _, raw_path in changes:
+                    if not is_ignored_path(raw_path):
+                        valid_paths.append(raw_path)
 
-                    if valid_paths and not self._stop_event.is_set():
-                        try:
-                            await self.on_change(sorted(set(valid_paths)))
-                        except Exception:  # callback is arbitrary; one failure must not kill the watcher
-                            logger.exception(
-                                "Vault change handler failed for %d path(s) in %s",
-                                len(valid_paths),
-                                self.vault_path,
-                            )
-            except asyncio.CancelledError:
-                return
-            except OSError:
-                # watchfiles surfaces filesystem errors (vault removed/unmounted,
-                # inotify limits) as OSError; stop watching but leave a trace.
-                logger.exception("Vault watcher stopped for %s", self.vault_path)
-        else:
-            # Fallback polling loop when watchfiles is not yet available
-            try:
-                while not self._stop_event.is_set():
-                    await asyncio.sleep(self.debounce_seconds * 2)
-            except asyncio.CancelledError:
-                return
+                if valid_paths and not self._stop_event.is_set():
+                    try:
+                        await self.on_change(sorted(set(valid_paths)))
+                    except Exception:  # callback is arbitrary; one failure must not kill the watcher
+                        logger.exception(
+                            "Vault change handler failed for %d path(s) in %s",
+                            len(valid_paths),
+                            self.vault_path,
+                        )
+        except asyncio.CancelledError:
+            return
+        except OSError:
+            # watchfiles surfaces filesystem errors (vault removed/unmounted,
+            # inotify limits) as OSError; stop watching but leave a trace.
+            logger.exception("Vault watcher stopped for %s", self.vault_path)

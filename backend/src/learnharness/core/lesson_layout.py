@@ -23,10 +23,12 @@ import re
 import unicodedata
 from datetime import date
 from pathlib import PurePosixPath
+from typing import Any
 
 from learnharness.core.contracts.session import NodeSpan, PlanDag, PlanNode, SessionRecord
 
-_LABELS = {
+# Flat strings, plus the ``modes``/``outcomes`` sub-maps of PRACTICE notes.
+_LABELS: dict[str, dict[str, Any]] = {
     "pt-BR": {
         "objective": "Objetivo",
         "diagnosis": "Diagnóstico",
@@ -108,7 +110,7 @@ _BARE_REF = re.compile(r"(?<![#\w\[^])\^(p\d+)\b")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
-def labels(language: str) -> dict[str, str]:
+def labels(language: str) -> dict[str, Any]:
     return _LABELS["en" if language == "en" else "pt-BR"]
 
 
@@ -259,13 +261,12 @@ def render_plan(plan: PlanDag, stem: str | None, with_sections: set[str], lang: 
     return "\n".join(lines)
 
 
-def render_dense_map(plan: PlanDag, stem: str | None, lang: dict[str, str]) -> str | None:
-    nodes = [n for n in plan.nodes if n.four_dimensions is not None]
+def render_dense_map(plan: PlanDag, stem: str | None, lang: dict[str, Any]) -> str | None:
+    nodes = [(n, n.four_dimensions) for n in plan.nodes if n.four_dimensions is not None]
     if not nodes:
         return None
     parts = [f"## {lang['map']}"]
-    for node in nodes:
-        dims = node.four_dimensions
+    for node, dims in nodes:
         said = normalize_citations(dims.said.strip(), stem, bare=True) or "—"
         block = [
             "",
@@ -296,7 +297,7 @@ def frontmatter_for(session: SessionRecord, language: str) -> tuple[dict[str, ob
     else:
         fonte = lang["free"]
     status = lang["done"] if session.phase == "completed" else lang["in_progress"]
-    managed = {"sessao": session.id, "topico": session.title, "fonte": fonte, "status": status}
+    managed: dict[str, object] = {"sessao": session.id, "topico": session.title, "fonte": fonte, "status": status}
     return managed, [lang["practice_tag"] if session.mode == "PRACTICE" else lang["tag"]]
 
 
@@ -313,14 +314,14 @@ def _callout(header: str, body: str) -> str:
     return "\n".join(lines)
 
 
-def _flat(text: str) -> str:
+def _flat(text: object) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
-def render_job_artifact(details: dict, language: str) -> str | None:
+def render_job_artifact(details: dict[str, Any], language: str) -> str | None:
     """Markdown for one finished background job (``steer_kind == "job"``, status ``done``)."""
     words = _ARTIFACT_LABELS["en" if language == "en" else "pt-BR"]
-    result = details.get("result") or {}
+    result: dict[str, Any] = details.get("result") or {}
     kind = details.get("kind")
     if kind == "visual" and result.get("path"):
         caption = _flat(result.get("title"))
@@ -331,13 +332,15 @@ def render_job_artifact(details: dict, language: str) -> str | None:
         path = result.get("rel_path") or f"viz/demos/{result['slug']}.html"
         return f"[[{path}|{words['demo']}: {title}]]"
     if kind == "research" and result.get("brief"):
+        found: list[dict[str, Any]] = result.get("sources") or []
         sources = "\n".join(f"- [{_flat(s.get('title')) or s.get('url')}]({s.get('url')})"
-                            for s in result.get("sources") or [] if s.get("url"))
+                            for s in found if s.get("url"))
         body = result["brief"] + (f"\n\n**{words['sources']}:**\n{sources}" if sources else "")
         return _callout(f"> [!note]- {words['research']}: {_flat(result.get('question') or details.get('label'))}",
                         body)
     if kind == "read_pdf" and result.get("answer"):
-        pages = ", ".join(str(p) for p in result.get("pages_read") or [])
+        read: list[Any] = result.get("pages_read") or []
+        pages = ", ".join(str(p) for p in read)
         header = f"> [!note]- {words['read_pdf']}: {_flat(result.get('file'))} — {_flat(result.get('question'))}"
         body = result["answer"] + (f"\n\n*{words['pages']}: {pages}*" if pages else "")
         return _callout(header, body)

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +18,7 @@ from learnharness.core.graph_merge import (
 )
 from learnharness.core.note_sources import is_source_id
 from learnharness.core.roadmap import roadmap_layout
+from learnharness.core.slug import ascii_slug
 from learnharness.vault.graph_store import (
     append_records,
     harness_owned_note,
@@ -47,9 +47,6 @@ LEGACY_CLUSTER = "legacy"
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
-
-def _slug(text: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
 
 
 class GraphService:
@@ -260,15 +257,15 @@ class GraphService:
                 "statement": statement, "summary": statement, "aliases": [],
                 "cluster": LEGACY_CLUSTER, "cluster_id": LEGACY_CLUSTER, "sessions": [],
                 "vault_rel_path": concept.vault_rel_path, "file_path": concept.vault_rel_path,
-                "status": concept.status, "depends_on": [_slug(d) for d in concept.depends_on if _slug(d) in ids],
+                "status": concept.status, "depends_on": [ascii_slug(d) for d in concept.depends_on if ascii_slug(d) in ids],
                 "ghost": False, "legacy": True, "created_at": "", **position(concept.id),
             })
             for dep in concept.depends_on:
-                if _slug(dep) in ids:
-                    edges.append({"source": _slug(dep), "target": concept.id, "kind": "depends_on"})
+                if ascii_slug(dep) in ids:
+                    edges.append({"source": ascii_slug(dep), "target": concept.id, "kind": "depends_on"})
         for chain in load_chains(vault):
-            premises = [_slug(p) for p in chain.premises]
-            conclusion = _slug(chain.conclusion)
+            premises = [ascii_slug(p) for p in chain.premises]
+            conclusion = ascii_slug(chain.conclusion)
             if premises and {conclusion, *premises} <= ids:
                 out_chains.append({
                     "id": chain.chain_id, "chain_id": chain.chain_id, "premises": premises,

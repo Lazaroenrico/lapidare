@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const OUT = '/tmp/learnharness-frontend-tests';
+const OUT = require('node:path').join(__dirname, '..', '.test-build');
 const rl = require(`${OUT}/roadmap-layout.js`);
 const gw = require(`${OUT}/graph-wire.js`);
 
@@ -148,7 +148,7 @@ test('alternate modules put their label below the disc', () => {
 });
 
 test('module labels take the first free slot, else the least overlapping one', () => {
-  const rl = require('/tmp/learnharness-frontend-tests/roadmap-layout.js');
+  const rl = require('../.test-build/roadmap-layout.js');
   const placed = [{x0: 0, y0: 0, x1: 100, y1: 20}];
   const blocked = {x0: 50, y0: 5, x1: 150, y1: 25};
   const free = {x0: 50, y0: 40, x1: 150, y1: 60};

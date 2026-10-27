@@ -1,11 +1,11 @@
 // Fase 13: appearance clamp/parse, prompt grouping, agent settings wire, key capture, command targets.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const ap = require('/tmp/learnharness-frontend-tests/appearance.js');
-const sw = require('/tmp/learnharness-frontend-tests/settings-wire.js');
-const kc = require('/tmp/learnharness-frontend-tests/key-capture.js');
-const kb = require('/tmp/learnharness-frontend-tests/keyboard.js');
-const ce = require('/tmp/learnharness-frontend-tests/command-events.js');
+const ap = require('../.test-build/appearance.js');
+const sw = require('../.test-build/settings-wire.js');
+const kc = require('../.test-build/key-capture.js');
+const kb = require('../.test-build/keyboard.js');
+const ce = require('../.test-build/command-events.js');
 
 test('prose size clamps to 14–20 integers and falls back to 16', () => {
   assert.equal(ap.clampProseSize(13), 14);

@@ -16,7 +16,9 @@ from typing import Any
 
 import yaml
 
-from learnharness.vault.markdown_ast import merge_managed_block
+from learnharness.core.frontmatter import split_frontmatter
+from learnharness.core.slug import ascii_slug
+from learnharness.vault.markdown_ast import merge_frontmatter_keys, merge_managed_block
 from learnharness.vault.safety import (
     RevisionConflictError,
     atomic_write,
@@ -37,33 +39,6 @@ except ImportError:
     _lz = None
 
 
-def _slugify(text: str) -> str:
-    """Generate safe URL/filename slug."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower())
-    return slug.strip("-")
-
-
-_atomic_write = atomic_write
-
-
-def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
-    """Extract YAML frontmatter from markdown file."""
-    if content.startswith("---\n"):
-        end_idx = content.find("\n---\n", 4)
-        if end_idx != -1:
-            raw_fm = content[4:end_idx]
-            body = content[end_idx + 5 :]
-            try:
-                fm_data = yaml.safe_load(raw_fm) or {}
-            except yaml.YAMLError as exc:
-                # User-authored frontmatter: tolerate it, but never silently.
-                logger.warning("Ignoring unparseable drawing frontmatter: %s", exc)
-                fm_data = {}
-            if not isinstance(fm_data, dict):
-                fm_data = {}
-            return fm_data, content[: end_idx + 5], body
-    return {}, "", content
-
 
 def create_retrieval_drawing(
     vault_path: Path,
@@ -82,7 +57,7 @@ def create_retrieval_drawing(
     drawings_dir.mkdir(parents=True, exist_ok=True)
 
     today = datetime.now().strftime("%Y-%m-%d")
-    slug = f"{_slugify(title)}-{today}"
+    slug = f"{ascii_slug(title)}-{today}"
     target_file = drawings_dir / f"{slug}.excalidraw.md"
 
     # Excalidraw locked text elements
@@ -246,7 +221,8 @@ def load_drawing(vault_path: Path, slug: str) -> dict[str, Any]:
     file_path = _find_drawing_file(vault_path, slug)
     content = file_path.read_bytes().decode("utf-8")
 
-    fm, _, body = _split_frontmatter(content)
+    split = split_frontmatter(content)
+    fm, body = split.data or {}, split.body
 
     # 1. Parse Text Elements
     text_elements: dict[str, str] = {}
@@ -393,19 +369,18 @@ def save_drawing(
             content = merge_managed_block(
                 content, "drawing:review", "## Revisão\n" + "\n\n---\n\n".join(entries)
             )
-            _fm, raw_fm, body = _split_frontmatter(content)
-            if raw_fm:
-                if re.search(r"^revisado:", raw_fm, re.MULTILINE):
-                    updated = re.sub(r"^(revisado:)[^\n]*", r"\1 true", raw_fm, flags=re.MULTILINE)
-                else:
-                    updated = raw_fm[:-4] + "revisado: true\n---\n"
-                content = updated + body
+            if split_frontmatter(content).present:
+                content = merge_frontmatter_keys(content, {"revisado": True})
         atomic_write(file_path, content, expected_revision=current_revision)
         if png_bytes is not None:
             base = file_path.name.removesuffix(".excalidraw.md")
-            for filename in (f"{base}.excalidraw.light.png", f"{base}.png"):
-                target = safe_path(
-                    vault_path, file_path.parent.relative_to(Path(vault_path).resolve()) / filename
-                )
-                atomic_write(target, png_bytes)
+            folder = file_path.parent.relative_to(Path(vault_path).resolve())
+            light = safe_path(vault_path, folder / f"{base}.excalidraw.light.png")
+            plain = safe_path(vault_path, folder / f"{base}.png")
+            # ``<slug>.png`` is ours only while it still matches our last export (the light
+            # copy); a learner's own image under that name is never replaced.
+            ours = not plain.exists() or (light.exists() and plain.read_bytes() == light.read_bytes())
+            atomic_write(light, png_bytes)
+            if ours:
+                atomic_write(plain, png_bytes)
     return file_path

@@ -4,7 +4,7 @@ Pure Pydantic models with ZERO I/O.
 Product Invariant: Single central 2D canvas graph (no Macro | Micro toggle) + ☍ Chains view.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -146,11 +146,11 @@ class AuditPayload(BaseModel):
 class MergePlan(BaseModel):
     """Deterministic result of merging one audited batch (``core.graph_merge.plan_merge``)."""
     new_nodes: list[PropositionNode] = Field(default_factory=list)
-    link_appends: list[dict] = Field(default_factory=list)
+    link_appends: list[dict[str, Any]] = Field(default_factory=list)
     new_chains: list[ChainRecord] = Field(default_factory=list)
     coverage: list[CoverageRecord] = Field(default_factory=list)
     key_to_id: dict[str, str] = Field(default_factory=dict)
-    rejected_chains: list[dict] = Field(default_factory=list)
+    rejected_chains: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def touched_node_ids(self) -> list[str]:

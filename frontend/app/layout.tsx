@@ -12,9 +12,7 @@ export const metadata: Metadata = {
   title: "Lapidare",
   description:
     "Lapidare — estudo ativo local-first com o ecossistema Google e persistência no Vault Obsidian",
-  icons: {
-    icon: "/favicon.ico",
-  },
+  // Icons come from the file convention: app/favicon.ico, app/icon.png, app/apple-icon.png.
 };
 
 export const viewport: Viewport = {

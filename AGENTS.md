@@ -31,3 +31,8 @@ O **Lapidare** é um *learning harness* local-first, bilíngue (`PT-BR` / `EN`),
    - `backend/core/` contém apenas tipos `Pydantic` e funções puras (zero chamadas de rede, subprocessos, sistema de arquivos ou `langgraph`).
    - A UI mantém **um único canal SSE (`EventSource("/api/events")`)** por janela seguindo o padrão *notify $\rightarrow$ fetch* (nunca crie loops de polling `setInterval`).
    - Apenas caminhos oficiais e sancionados do Google (`gemini --acp` / `stream-json`, `agy --input-format stream-json --output-format stream-json`, `google-genai` SDK).
+
+
+
+
+Antes de terminar qualquer tarefa, remova as coisas temporárias que a tarefa criou, e só elas. Nunca delete o que você não criou ou não consegue atribuir à tarefa. Na dúvida, liste pro dono

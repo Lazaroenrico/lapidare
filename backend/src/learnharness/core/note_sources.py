@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from learnharness.core.contracts.graph import BatchMessage, NoteSlice, SourceRecord
+from learnharness.core.frontmatter import split_frontmatter, strip_frontmatter
 from learnharness.core.graph_merge import estimate_tokens, fingerprint
 
 SOURCE_PREFIX = "src_"
@@ -79,26 +80,13 @@ def is_importable_note(rel_path: str, concepts_dir: str) -> bool:
                 == tuple(p.casefold() for p in concepts))
 
 
-def strip_frontmatter(text: str) -> str:
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return text
-    for index in range(1, len(lines)):
-        if lines[index].strip() in ("---", "..."):
-            return "\n".join(lines[index + 1:])
-    return text
-
-
 def note_title(text: str, fallback: str) -> str:
     """Frontmatter ``title``/``titulo``, else the first H1, else ``fallback``."""
-    lines = text.splitlines()
-    if lines and lines[0].strip() == "---":
-        for line in lines[1:]:
-            if line.strip() in ("---", "..."):
-                break
-            match = _TITLE_KEY.match(line)
-            if match and (value := match.group(2).strip().strip("'\"")):
-                return value
+    # Scanned line by line: a title still counts when the rest of the YAML does not parse.
+    for line in split_frontmatter(text).yaml.splitlines():
+        match = _TITLE_KEY.match(line)
+        if match and (value := match.group(2).strip().strip("'\"")):
+            return value
     for line in strip_frontmatter(text).splitlines():
         match = _HEADING.match(line)
         if match and len(match.group(1)) == 1 and match.group(2).strip():
@@ -220,7 +208,7 @@ def uncovered_slices(
     source_id: str, slices: Iterable[NoteSlice], coverage: Mapping[tuple[str, str], set[str]]
 ) -> list[BatchMessage]:
     """Slices whose current fingerprint was never extracted for this source."""
-    result = []
+    result: list[BatchMessage] = []
     for item in slices:
         fp = fingerprint(item.content)
         if fp in coverage.get((source_id, item.id), set()):

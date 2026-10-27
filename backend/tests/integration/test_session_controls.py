@@ -82,6 +82,8 @@ def test_list_carries_sidebar_fields(api_client: TestClient, fake_engine: FakeEn
     row = next(s for s in api_client.get("/api/chats").json() if s["id"] == session_id)
     assert {"title", "mode", "updated_at", "execution_status", "pending", "problem_open"} <= set(row)
     assert row["pending"] is True and row["execution_status"] == "waiting" and row["mode"] == "TEACH"
+    # Rows are refetched on every session notify: no transcript, plan or answers.
+    assert not {"messages", "plan", "answers"} & set(row)
     api_client.post(f"/api/chats/{session_id}/abort")
 
 

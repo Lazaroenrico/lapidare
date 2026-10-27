@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from pathlib import Path
 from typing import Any, Literal
@@ -36,7 +37,8 @@ class PositionsPayload(RootModel[dict[str, Point]]):
 @graph_router.get("")
 async def get_graph(request: Request) -> dict[str, Any]:
     """Snapshot: nodes (+ legacy notes), chains, edges, clusters, roadmap (with a track)."""
-    return get_app_state(request.app).graph.snapshot()
+    # Reads every graph/session file: off the event loop, so SSE and MCP keep flowing.
+    return await asyncio.to_thread(get_app_state(request.app).graph.snapshot)
 
 
 @graph_router.get("/concepts/{concept_id}/note")

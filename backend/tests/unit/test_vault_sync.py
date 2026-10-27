@@ -44,7 +44,7 @@ from learnharness.vault.transcript_importer import (
     get_source_paragraph,
     import_transcript_text,
 )
-from learnharness.vault.watcher import is_ignored_path
+from learnharness.vault.watcher import affects_graph, is_ignored_path
 
 # ============================================================================
 # 1. BOOTSTRAP TESTS (Case A and Case B)
@@ -395,6 +395,17 @@ def test_excalidraw_retrieval_drawing_and_save_load(tmp_path: Path):
     assert reloaded["png_path"] is not None
     assert Path(reloaded["png_path"]).is_file()
 
+    # Our own export is refreshed on the next save...
+    folder = saved_path.parent
+    plain = folder / saved_path.name.replace(".excalidraw.md", ".png")
+    save_drawing(vault_path=vault, slug=slug, scene_json=scene, png_bytes=fake_png + b"v2")
+    assert plain.read_bytes() == fake_png + b"v2"
+    # ...but an image the learner put under that name is never replaced.
+    plain.write_bytes(b"learner image")
+    save_drawing(vault_path=vault, slug=slug, scene_json=scene, png_bytes=fake_png + b"v3")
+    assert plain.read_bytes() == b"learner image"
+    assert (folder / saved_path.name.replace(".md", ".light.png")).read_bytes() == fake_png + b"v3"
+
 
 # ============================================================================
 # 4. TRANSCRIPT IMPORTER & ^pN CITATIONS
@@ -572,6 +583,15 @@ def test_watcher_is_ignored_path():
     assert is_ignored_path("/vault/.harness/langgraph.sqlite") is True
     assert is_ignored_path("/vault/.harness/langgraph.sqlite-wal") is True
     assert is_ignored_path("/vault/.git/index") is True
+    # The harness's own appends are announced by targeted events, not by the watcher.
+    for machine in ("sessions/s1.jsonl", "jobs.jsonl", "usage.jsonl", "quiz-log.jsonl",
+                    "graph/nodes.jsonl", "repos/x/README.md", "runtime/s1/settings.json"):
+        assert is_ignored_path(f"/vault/.harness/{machine}") is True
+    assert is_ignored_path("/vault/.harness/config.json") is False
+    assert is_ignored_path("/vault/.harness/prompts/teacher/10-method.md") is False
+    assert affects_graph(["/vault/.harness/prompts/shared/20-voice.md"]) is False
+    assert affects_graph(["/vault/.harness/config.json"]) is True
+    assert affects_graph(["/vault/Conceitos/Atenção.md"]) is True
 
     # Real user content must NOT be ignored
     assert is_ignored_path("/vault/Conceitos/Chain-of-thought.md") is False

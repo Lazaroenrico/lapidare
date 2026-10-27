@@ -25,8 +25,9 @@ from learnharness.core.contracts.graph import (
     SourceRecord,
 )
 from learnharness.core.graph_merge import fold_chains, fold_nodes
+from learnharness.core.lesson_layout import sanitize_note_title
 from learnharness.core.note_sources import fold_sources
-from learnharness.vault.lesson_layout import sanitize_note_title
+from learnharness.vault.jsonl_io import read_objects
 from learnharness.vault.markdown_ast import (
     body_without_frontmatter,
     merge_frontmatter_keys,
@@ -37,6 +38,7 @@ from learnharness.vault.markdown_ast import (
 from learnharness.vault.safety import (
     append_line,
     atomic_write,
+    ensure_not_source,
     folder_map,
     locked_path,
     revision,
@@ -63,20 +65,8 @@ def _file(vault_path: Path, name: str) -> Path:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    records = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not raw.strip():
-            continue
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.warning("Skipping malformed graph line %d in %s: %s", lineno, path, exc)
-            continue
-        if isinstance(entry, dict):
-            records.append(entry)
-    return records
+    """Cached, append-only read (``jsonl_io``); the dicts are shared and read-only."""
+    return read_objects(path)
 
 
 def append_records(vault_path: Path, name: str, records: list[dict[str, Any]]) -> None:
@@ -186,9 +176,7 @@ def note_link(rel_path: str) -> str:
 def _concepts_folder(vault_path: Path) -> tuple[Path, str]:
     folders = folder_map(vault_path)
     folder = safe_path(vault_path, folders.concepts_dir)
-    for source in {folders.sources_dir, "Fontes", "Sources"}:
-        if folder.is_relative_to(safe_path(vault_path, source)):
-            raise PermissionError("Fontes/ is strictly read-only")
+    ensure_not_source(vault_path, folder, folders)
     return folder, folders.concepts_dir
 
 
@@ -264,6 +252,25 @@ def sync_concept_note(
     raise FileExistsError("Could not allocate a concept note name")
 
 
+_MANAGED_KEYS = {"harness_id", "aliases", "sessions", "tags"}
+_HARNESS_TAGS = {labels["tag"] for labels in _LABELS.values()}
+
+
+def _only_managed_frontmatter(content: str, node: PropositionNode) -> bool:
+    """True when every frontmatter key/value is one the harness writes (a learner's tag,
+    alias or property keeps the note alive)."""
+    data = read_frontmatter(content)
+    if not data and body_without_frontmatter(content) != content:
+        return False  # Unparseable YAML is the learner's: keep the note.
+    if not set(data) <= _MANAGED_KEYS:
+        return False
+    tags, aliases = data.get("tags") or [], data.get("aliases") or []
+    tags = [tags] if isinstance(tags, str) else tags
+    aliases = [aliases] if isinstance(aliases, str) else aliases
+    return (isinstance(tags, list) and set(tags) <= _HARNESS_TAGS
+            and isinstance(aliases, list) and set(aliases) <= set(node.aliases))
+
+
 def remove_concept_section(vault_path: Path, node: PropositionNode) -> bool:
     """Remove only the managed block; delete the file only if the harness created it and
     nothing but its heading/frontmatter remains. Returns True when the note changed."""
@@ -280,7 +287,7 @@ def remove_concept_section(vault_path: Path, node: PropositionNode) -> bool:
         original = target.read_bytes().decode("utf-8")
         content = remove_owned_block(original, CONCEPT_BLOCK)
         body = body_without_frontmatter(content).strip()
-        if node.note_created and body in ("", f"# {node.name}"):
+        if node.note_created and body in ("", f"# {node.name}") and _only_managed_frontmatter(content, node):
             target.unlink()
             return True
         if content == original:

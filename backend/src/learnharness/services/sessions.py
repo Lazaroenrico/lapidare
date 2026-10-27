@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
+from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -17,7 +19,6 @@ from learnharness.core.calibration import (
     is_mastery_evidence,
     submission_matches,
 )
-from learnharness.core.compaction import split_history, summary_block
 from learnharness.core.contracts.config import EngineKind
 from learnharness.core.contracts.quiz import CalibrationResult, QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import (
@@ -29,6 +30,14 @@ from learnharness.core.contracts.session import (
     SessionRecord,
 )
 from learnharness.core.events import SseEventType
+from learnharness.core.lesson_layout import (
+    current_node_id,
+    frontmatter_for,
+    legacy_message_blocks,
+    lesson_note_stem,
+    plan_paragraph_refs,
+    render_lesson_blocks,
+)
 from learnharness.core.plan_mermaid import (
     STICKY_STATUSES,
     PlanSyntaxError,
@@ -36,6 +45,7 @@ from learnharness.core.plan_mermaid import (
     mermaid_to_plan_nodes,
 )
 from learnharness.core.text_hygiene import is_stray_fragment, strip_stray_tail
+from learnharness.core.turn_prompt import compose_turn, prompt_family
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
@@ -47,14 +57,6 @@ from learnharness.vault.jsonl_store import (
     load_session,
     load_session_file,
     trash_file_path,
-)
-from learnharness.vault.lesson_layout import (
-    current_node_id,
-    frontmatter_for,
-    legacy_message_blocks,
-    lesson_note_stem,
-    plan_paragraph_refs,
-    render_lesson_blocks,
 )
 from learnharness.vault.markdown_ast import sync_lesson_note
 from learnharness.vault.safety import RevisionConflictError, safe_component, safe_path
@@ -72,52 +74,6 @@ def now() -> str:
 # Streaming: notify the UI often (the in-memory text is served by live_view), persist rarely.
 LIVE_NOTIFY_SECONDS = 0.2
 PERSIST_FLUSH_SECONDS = 2.0
-
-TURN_RULES = (
-    "Every question goes through a question tool, never in prose, one per turn: probe/recall while "
-    "diagnosing, then exactly one probe_done; after it, plan_init (mermaid), present the plan and end "
-    "the turn; then quiz/explain with type predict|check and a plan node_id; ask_user_question for "
-    "anything ungraded. Grade every recall/explain answer with grade_recall before commenting on it. "
-    "Use plan_advance (mastered | needs_review) after checks. Do not invent citations. If prior answers "
-    "exist, react to their calibration before advancing. research, read_pdf, visual and spawn_demo "
-    "dispatch background jobs and return at once: announce the dispatch in one sentence and keep "
-    "teaching; never wait for or ask about the result. It arrives later as a message: use it then, "
-    "citing its sources or pages; if it fails or never comes, continue in prose and never invent it."
-)
-
-PRACTICE_TURN_RULES = (
-    "PRACTICE tools: problem(statement, mode, model_solution, target) poses exactly one problem (write "
-    "the full model_solution first; it stays hidden until conclude) and then you end the turn and wait "
-    "for the learner's attempt. Read each attempt; give hints in prose, one rung (R0..R5) per request. "
-    "Close every problem with conclude(outcome, verdict, rung, miss_class, retest), then write the "
-    "closing words and end the turn: the next problem only comes when the learner asks for it. "
-    "graph_search(query) looks up propositions of the learner's graph; ask_user_question is for anything "
-    "ungraded. probe/recall/quiz/explain/plan tools do not exist in PRACTICE. Never reopen a problem the "
-    "learner dismissed. research(question) and read_pdf(path, question) dispatch background jobs and "
-    "return at once; the result arrives later as a message. Do not wait for it and never invent it."
-)
-
-
-LEVELING_TURN_RULES = (
-    "TRACK LEVELING (Fase 15): every question goes through probe or recall, never in prose, one per "
-    "turn, about one item of the pending queue in the session state; grade every recall answer with "
-    "grade_recall before commenting. plan_init, quiz, explain and probe_done do not exist here; nothing "
-    "is taught. Close with exactly one leveling_done(known_item_ids, start_item_id, summary) and end the turn."
-)
-
-
-def turn_rules(session: SessionRecord) -> str:
-    if session.mode == "PRACTICE":
-        return PRACTICE_TURN_RULES
-    return LEVELING_TURN_RULES if session.context_kind == "leveling" else TURN_RULES
-
-
-def prompt_family(session: SessionRecord) -> str:
-    """Which prompt set the session needs now: ``prober``, ``teacher`` or ``practice``."""
-    if session.mode == "PRACTICE":
-        return "practice"
-    return "prober" if session.phase == "probing" else "teacher"
-
 
 class SessionConflict(ValueError):
     """An operation conflicts with the authoritative persisted session."""
@@ -141,22 +97,6 @@ def dismissed_answer(result: CalibrationResult) -> dict[str, Any]:
     """Compact tool result for a dismissed question (no grade, no answer key)."""
     return {"question_id": result.quiz_id, "kind": result.kind, "dismissed": True,
             "directive": DISMISSED_DIRECTIVE}
-
-
-def opening_request(session):
-    """First-turn request: the session title IS what the learner asked for."""
-    if session.mode == "PRACTICE":
-        return (
-            f'Begin the practice session. The learner asked to practice: "{session.title}". '
-            "Open directly with the first problem (no warm-up)."
-        )
-    if session.context_kind == "leveling":
-        return ("Begin the track leveling. Say in one sentence what this short diagnosis is for, then "
-                "ask the first question about the middle item of the pending queue.")
-    return (
-        f'Begin the session. The learner opened it with: "{session.title}". Treat that as '
-        "their stated goal; ask to clarify only if two readings would lead to different lessons."
-    )
 
 
 class SessionService:
@@ -629,8 +569,8 @@ class SessionService:
         }
 
     def _ensure_quiz_logs(self, session):
-        from learnharness.vault.jsonl_store import load_quiz_logs
-        existing = {(q.session_id, q.quiz_id) for q in load_quiz_logs(self.state.vault_path)}
+        from learnharness.vault.jsonl_store import logged_quiz_keys
+        existing = logged_quiz_keys(self.state.vault_path)
         for answer in session.answers.values():
             # Only graded answers are calibration evidence (ask / ungraded explain are not).
             if answer.correct is not None and not answer.dismissed and (answer.session_id, answer.quiz_id) not in existing:
@@ -751,7 +691,7 @@ class SessionService:
         session = self.get(session_id)
         task = self.tasks.get(session_id)
         running = task is not None and not task.done()
-        if running:
+        if task is not None and running:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         self.streaming.pop(session_id, None)
@@ -781,6 +721,7 @@ class SessionService:
                 session.title = title
                 self.save(session)
                 self._refresh_lesson_note(session)
+                self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})  # Petal labels.
         return session
 
     async def delete(self, session_id: str, mode: str = "preserve-graph") -> dict[str, Any]:
@@ -815,9 +756,11 @@ class SessionService:
             source.rename(target)
         self.state.dock_registry.cancel_dock(session_id)
         await self._release_runtime(session_id)
+        # The lock stays: a request already waiting on it must not race one that would
+        # get a fresh lock (it finds the session gone and fails cleanly).
         self.tasks.pop(session_id, None)
-        self.locks.pop(session_id, None)
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "deleted": True})
+        self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})  # Its petal loses the title.
         return {"ok": True, "id": session_id, "mode": mode,
                 "trash_path": str(target.relative_to(self.state.vault_path)), "graph": graph}
 
@@ -852,6 +795,7 @@ class SessionService:
                 self.save(session)
             self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED,
                                          {"session_id": session_id, "restored": True})
+            self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
         return session
 
     def purge_trash(self, file_name: str) -> dict[str, Any]:
@@ -879,7 +823,7 @@ class SessionService:
                 and not session.plan.nodes and not session.pending_quiz)
 
     async def run(self, session_id) -> bool:
-        """Execute one agent turn. Returns True when a follow-up handoff turn is due."""
+        """Execute one agent turn. Returns True when a follow-up turn is due (handoff, steers)."""
         completed = False
         follow_up = False
         usage = self.state.usage.capture(session_id=session_id)
@@ -888,135 +832,26 @@ class SessionService:
             if session.pending_quiz or session.recovery_required or session.phase == "completed":
                 completed = session.phase == "completed"
                 return False
-            # A turn that starts with the handoff armed is the teacher's planning turn.
-            handoff_run = self._handoff_due(session)
-            family = prompt_family(session)
-            session.execution_id = uuid4().hex
-            session.execution_status = "running"
-            session.error = None
-            # Steers queued so far ride this turn; later ones trigger a follow-up turn.
-            steers = [m for m in session.messages if not m.delivered]
-            for m in steers:
-                m.delivered = True
-            self.save(session)
+            handoff_run, steers = self._begin_turn(session)
             config = self.state.get_config()
-            if config.slots.strong.engine == EngineKind.AGY and self.state.engine_factory is None:
-                from learnharness.services.agy_permissions import status as agy_permission_status
-
-                if not agy_permission_status()["granted"]:
-                    # Headless agy silently refuses harness tools without this rule: the
-                    # lesson would end with no quiz and no explanation of why.
-                    raise EngineError(
-                        "O agy ainda não tem permissão para usar as ferramentas do harness. "
-                        "Conceda em Configurações → Conectores (regra mcp(harness/*))."
-                    )
-            slot = session.teaching_slot(config.slots.strong)
-            engine = self.state.engine(slot)
+            engine, slot, tools = self._prepare_engine(session, config)
             persistent = bool(getattr(engine, "session_persistent", False))
-            # One token per session, re-bound to this execution (stale ones stay rejected).
-            token = self.state.session_token(session_id, session.execution_id)
-            # Persistent CLI processes outlive a run: their cwd must be stable per session.
-            runtime = f".harness/runtime/{session_id}" + ("" if persistent else f"/{session.execution_id}")
-            work_dir = safe_path(self.state.vault_path, runtime)
-            work_dir.mkdir(parents=True, exist_ok=True)
-            if hasattr(engine, "configure_runtime"):
-                engine.configure_runtime(work_dir, self.state.mcp_url, token)
-            # CLI engines reach the tools through the bound MCP server; only in-process
-            # engines receive callables directly.
-            tools = self.state.tool_functions(session_id) if getattr(engine, "tool_transport", "inline") == "inline" else None
-            practice = session.mode == "PRACTICE"
-            rules = turn_rules(session)
-            # Fase 14: the session's own track, not the one in focus now.
-            track = config.session_track(session.track_id, session.track_item_id) if session.track_item_id else None
-            context_data: dict[str, Any] = {
-                "topic": session.title, "phase": session.phase,
-                "assessment": session.assessment.model_dump(mode="json") if session.assessment else None,
-                "plan": session.plan.model_dump(),
-                "answers": [a.model_dump(mode="json") for a in session.answers.values()],
-                "track": track.model_dump(mode="json") if track else None,
-            }
-            if practice:
-                context_data["practice"] = self.state.practice.state_context(session)
-            if session.context_kind == "leveling":  # Fase 15: the ordered pending queue.
-                context_data["leveling"] = self._leveling_context(session, config)
-            context = json.dumps(context_data, ensure_ascii=False)
             overrides = load_overrides(self.state.vault_path, config)
-            system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
-                                         extra_context=context, overrides=overrides)
-            system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
-            if graph_block := self.state.graph.context_for(session):  # Fase 8B graph_context
-                system += "\n\n" + graph_block
-            if practice and (material := self.state.practice.prompt_material(session)):  # Fase 9
-                system += "\n\n" + material
-            handoff = build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None
-            # Fase 12: after a compaction the model reads its summary plus the verbatim tail.
-            summary, tail = split_history(session.messages, session.compaction)
-            if persistent:
-                # The engine keeps the conversation: send rules once (on a fresh process,
-                # with a compact history) and per turn only what is new.
-                history, prompt = self._persistent_turn(session, handoff=handoff, steers=steers)
-                if summary:
-                    # Rehydration of a fresh process (compose_prompt) gets the summary with
-                    # the instructions; its history is only the tail.
-                    tail_ids = {m.id for m in tail}
-                    history = [m for m in history if m.id in tail_ids]
-                    system += "\n\n" + summary_block(summary)
-                if session.prompt_phase is not None and session.prompt_phase != family:
-                    # A live process still holds the previous phase's rules (prober -> teacher).
-                    prompt = ("UPDATED INSTRUCTIONS (they replace your previous system instructions):\n"
-                              + system + "\n" + rules + "\n\n" + prompt)
-                if session.prompt_phase != family:
-                    current = self.get(session_id)
-                    current.prompt_phase = family
-                    self.save(current)
-                stream = engine.stream_turn(prompt, session_id, history=history, slot=slot, tools=tools, system_instruction=system + "\n" + rules)
-            else:
-                history = "\n\n".join(f"{m.role}: {m.content}" for m in tail)
-                if summary:
-                    history = summary_block(summary) + "\n\n" + history
-                prompt = system + "\n\nPERSISTED HISTORY:\n" + history + "\n" + rules
-                if not session.messages and not handoff:
-                    prompt += "\n\nNOW:\n" + opening_request(session)
-                if handoff:
-                    prompt += "\n\nNOW:\n" + handoff
-                stream = engine.stream_turn(prompt, session_id, slot=slot, tools=tools)
-            message_id = f"msg-{uuid4().hex}"
-            text = ""
-            last_flush = last_notify = asyncio.get_running_loop().time()
-            streaming = self.streaming[session_id] = [message_id, "", 0]
-            async for chunk in stream:
-                if streaming[0] != message_id:  # A PRACTICE tool split the message.
-                    message_id, text = streaming[0], ""
-                text += chunk
-                streaming[1] = text
-                current_time = asyncio.get_running_loop().time()
-                if current_time - last_notify >= LIVE_NOTIFY_SECONDS:
-                    # Live view: GET /api/chats/{id} overlays the in-memory text (live_view);
-                    # nothing is written for this tick.
-                    self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "streaming": True})
-                    last_notify = current_time
-                if current_time - last_flush >= PERSIST_FLUSH_SECONDS:
-                    # Each save appends a full snapshot to the append-only JSONL: keep it sparse.
-                    streaming[2] = len(text)
-                    await self._flush(session_id, message_id, text, refresh_note=False)
-                    last_flush = current_time
-            self.streaming.pop(session_id, None)
-            if text:
-                await self._flush(session_id, message_id, text)
-            session = self.get(session_id)
-            if persistent and session.messages:
-                # Everything up to here reached the live process (in the prompt or via tools).
-                session.model_cursor = session.messages[-1].id
-            if handoff_run:
-                session.handoff_pending = False  # One planning turn; a retry needs the learner.
-            follow_up = (not handoff_run and self._handoff_due(session)) or self._steers_due(session)
-            if session.phase != "completed":
-                session.execution_status = "waiting" if session.pending_quiz else ("queued" if follow_up else "idle")
-            completed = session.phase == "completed"
-            self.save(session)
-            self._trigger_extraction(session_id)  # Fase 8B: end-of-run graph trigger
-            if not completed:
-                follow_up = await self._compact_at_settle(session_id, follow_up)
+            turn = compose_turn(
+                session, system=self._system_prompt(session, config, overrides), persistent=persistent,
+                handoff=build_handoff_prompt(config.language, overrides=overrides) if handoff_run else None,
+                steers=steers)
+            if persistent and session.prompt_phase != (family := prompt_family(session)):
+                current = self.get(session_id)
+                current.prompt_phase = family  # The live process now holds this family's rules.
+                self.save(current)
+            # Only session-persistent engines take a history and a separate system instruction
+            # (``AgentEnginePort.stream_turn`` has neither for one-shot engines).
+            persisted = ({"history": turn.history, "system_instruction": turn.system_instruction}
+                         if persistent else {})
+            await self._stream_reply(session_id, engine.stream_turn(
+                turn.prompt, session_id, slot=slot, tools=tools, **persisted))
+            follow_up, completed = await self._settle(session_id, persistent=persistent, handoff_run=handoff_run)
         except asyncio.CancelledError:
             session = self.get(session_id)
             if session.phase != "completed":
@@ -1035,6 +870,121 @@ class SessionService:
             if completed:
                 await self._release_runtime(session_id)
         return follow_up
+
+    def _begin_turn(self, session: SessionRecord) -> tuple[bool, list[SessionMessage]]:
+        """Mark the turn running; returns ``(handoff_run, steers delivered with it)``."""
+        # A turn that starts with the handoff armed is the teacher's planning turn.
+        handoff_run = self._handoff_due(session)
+        session.execution_id = uuid4().hex
+        session.execution_status = "running"
+        session.error = None
+        # Steers queued so far ride this turn; later ones trigger a follow-up turn.
+        steers = [m for m in session.messages if not m.delivered]
+        for m in steers:
+            m.delivered = True
+        self.save(session)
+        return handoff_run, steers
+
+    def _prepare_engine(self, session: SessionRecord, config) -> tuple[Any, Any, list[Any] | None]:
+        """``(engine, slot, inline tools)`` for this turn, with its runtime dir and MCP token bound."""
+        if config.slots.strong.engine == EngineKind.AGY and self.state.engine_factory is None:
+            from learnharness.services.agy_permissions import status as agy_permission_status
+
+            if not agy_permission_status()["granted"]:
+                # Headless agy silently refuses harness tools without this rule: the
+                # lesson would end with no quiz and no explanation of why.
+                raise EngineError(
+                    "O agy ainda não tem permissão para usar as ferramentas do harness. "
+                    "Conceda em Configurações → Conectores (regra mcp(harness/*))."
+                )
+        slot = session.teaching_slot(config.slots.strong)
+        engine = self.state.engine(slot)
+        persistent = bool(getattr(engine, "session_persistent", False))
+        # One token per session, re-bound to this execution (stale ones stay rejected).
+        token = self.state.session_token(session.id, session.execution_id)
+        # Persistent CLI processes outlive a run: their cwd must be stable per session.
+        runtime = f".harness/runtime/{session.id}" + ("" if persistent else f"/{session.execution_id}")
+        work_dir = safe_path(self.state.vault_path, runtime)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(engine, "configure_runtime"):
+            engine.configure_runtime(work_dir, self.state.mcp_url, token)
+        # CLI engines reach the tools through the bound MCP server; only in-process
+        # engines receive callables directly.
+        inline = getattr(engine, "tool_transport", "inline") == "inline"
+        return engine, slot, self.state.tool_functions(session.id) if inline else None
+
+    def _system_prompt(self, session: SessionRecord, config, overrides) -> str:
+        """Prompt fragments + session state, then the source, graph context and practice material."""
+        practice = session.mode == "PRACTICE"
+        # Fase 14: the session's own track, not the one in focus now.
+        track = config.session_track(session.track_id, session.track_item_id) if session.track_item_id else None
+        context_data: dict[str, Any] = {
+            "topic": session.title, "phase": session.phase,
+            "assessment": session.assessment.model_dump(mode="json") if session.assessment else None,
+            "plan": session.plan.model_dump(),
+            "answers": [a.model_dump(mode="json") for a in session.answers.values()],
+            "track": track.model_dump(mode="json") if track else None,
+        }
+        if practice:
+            context_data["practice"] = self.state.practice.state_context(session)
+        if session.context_kind == "leveling":  # Fase 15: the ordered pending queue.
+            context_data["leveling"] = self._leveling_context(session, config)
+        system = build_system_prompt(session.mode, session.context_kind, config.language, session.phase,
+                                     extra_context=json.dumps(context_data, ensure_ascii=False),
+                                     overrides=overrides)
+        system += "\n\nSOURCE (read-only; citations must exist):\n" + self.source_text(session)
+        if graph_block := self.state.graph.context_for(session):  # Fase 8B graph_context
+            system += "\n\n" + graph_block
+        if practice and (material := self.state.practice.prompt_material(session)):  # Fase 9
+            system += "\n\n" + material
+        return system
+
+    async def _stream_reply(self, session_id: str, stream: AsyncGenerator[str, None]) -> None:
+        """Consume the engine stream: live notifies, sparse flushes, the final message saved."""
+        message_id = f"msg-{uuid4().hex}"
+        text = ""
+        last_flush = last_notify = asyncio.get_running_loop().time()
+        streaming = self.streaming[session_id] = [message_id, "", 0]
+        # Closed even when the loop body raises: a CLI engine's generator holds the
+        # session's process lock and idle timer until it is finalized.
+        async with contextlib.aclosing(stream):
+            async for chunk in stream:
+                if streaming[0] != message_id:  # A PRACTICE tool split the message.
+                    message_id, text = streaming[0], ""
+                text += chunk
+                streaming[1] = text
+                current_time = asyncio.get_running_loop().time()
+                if current_time - last_notify >= LIVE_NOTIFY_SECONDS:
+                    # Live view: GET /api/chats/{id} overlays the in-memory text (live_view);
+                    # nothing is written for this tick.
+                    self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "streaming": True})
+                    last_notify = current_time
+                if current_time - last_flush >= PERSIST_FLUSH_SECONDS:
+                    # Each save appends a full snapshot to the append-only JSONL: keep it sparse.
+                    streaming[2] = len(text)
+                    await self._flush(session_id, message_id, text, refresh_note=False)
+                    last_flush = current_time
+        self.streaming.pop(session_id, None)
+        if text:
+            await self._flush(session_id, message_id, text)
+
+    async def _settle(self, session_id: str, *, persistent: bool, handoff_run: bool) -> tuple[bool, bool]:
+        """Close the turn's status; returns ``(follow_up, completed)``."""
+        session = self.get(session_id)
+        if persistent and session.messages:
+            # Everything up to here reached the live process (in the prompt or via tools).
+            session.model_cursor = session.messages[-1].id
+        if handoff_run:
+            session.handoff_pending = False  # One planning turn; a retry needs the learner.
+        follow_up = (not handoff_run and self._handoff_due(session)) or self._steers_due(session)
+        if session.phase != "completed":
+            session.execution_status = "waiting" if session.pending_quiz else ("queued" if follow_up else "idle")
+        completed = session.phase == "completed"
+        self.save(session)
+        self._trigger_extraction(session_id)  # Fase 8B: end-of-run graph trigger
+        if not completed:
+            follow_up = await self._compact_at_settle(session_id, follow_up)
+        return follow_up, completed
 
     @staticmethod
     def _leveling_context(session: SessionRecord, config) -> dict[str, Any] | None:
@@ -1084,46 +1034,6 @@ class SessionService:
         except Exception:
             # The trigger never fails a finished teaching turn; the job carries its own errors.
             logger.exception("Could not queue graph extraction for %s", session_id)
-
-    @staticmethod
-    def _persistent_turn(session, handoff: str | None = None, steers=()):
-        """Split persisted messages into ``(history, new-content prompt)``.
-
-        New content is everything after the last assistant message (quiz answers, learner
-        input); the plan status travels each turn because answers can master nodes. The
-        post-diagnosis ``handoff`` instruction, when given, is the turn's request.
-        """
-        messages = list(session.messages)
-        ids = [m.id for m in messages]
-        if session.model_cursor in ids:
-            # What the live process has already seen ends at the cursor (see SessionRecord).
-            cut = ids.index(session.model_cursor)
-        else:
-            cut = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
-        history, new = messages[: cut + 1], messages[cut + 1:]
-        new = [m for m in new if m.role != "assistant"]
-        # A steer can land before the cursor (it arrived while the previous turn ran and was
-        # not handed over mid-turn); it is still new content for the model.
-        new_ids = {m.id for m in new}
-        late = [m for m in steers if m.id not in new_ids]
-        history = [m for m in history if m.id not in {s.id for s in late}]
-        new = late + new
-        current = {"phase": session.phase, "plan": [{"id": n.id, "status": n.status} for n in session.plan.nodes]}
-        if session.mode == "PRACTICE":
-            current = {"phase": session.phase, "active_problem_id": session.practice.active_problem_id}
-        state = json.dumps(current, ensure_ascii=False)
-        if handoff:
-            # The planning request leads; learner input that arrived meanwhile still goes along.
-            body = handoff
-            if new:
-                body += "\n\nAlso new since the diagnosis:\n" + "\n\n".join(f"{m.role}: {m.content}" for m in new)
-        elif new:
-            body = "\n\n".join(f"{m.role}: {m.content}" for m in new)
-        elif messages:
-            body = "Continue the session from where it stopped."
-        else:
-            body = opening_request(session)
-        return history, f"{body}\n\nCURRENT STATE: {state}"
 
     async def _release_runtime(self, session_id):
         from learnharness.engines import close_engine_processes
