@@ -46,6 +46,7 @@ HARNESS_SERVER = "harness"
 HARNESS_TOOLS = frozenset({
     "probe", "recall", "quiz", "explain", "ask_user_question", "probe_done", "plan_init",
     "grade_recall", "plan_advance", "track_foundation", "spawn_demo", "problem", "conclude", "graph_search",
+    "research", "read_pdf", "visual",
 })
 IDLE_CLOSE_SECONDS = 600
 CANCEL_GRACE_SECONDS = 2.0
@@ -742,6 +743,12 @@ class GeminiCliAcpEngine:
         return await self._headless.run_structured(
             prompt, schema, slot=slot, system_instruction=system_instruction
         )
+
+    def research_ready(self):
+        return self._headless.research_ready()
+
+    async def research(self, prompt, slot=None):
+        return await self._headless.research(prompt, slot=slot)
 
     async def review_drawing_multimodal(self, png_bytes, drawing_title, context_notes=""):
         return await self._headless.review_drawing_multimodal(

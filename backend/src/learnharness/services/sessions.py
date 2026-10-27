@@ -70,7 +70,10 @@ TURN_RULES = (
     "the turn; then quiz/explain with type predict|check and a plan node_id; ask_user_question for "
     "anything ungraded. Grade every recall/explain answer with grade_recall before commenting on it. "
     "Use plan_advance (mastered | needs_review) after checks. Do not invent citations. If prior answers "
-    "exist, react to their calibration before advancing."
+    "exist, react to their calibration before advancing. research, read_pdf, visual and spawn_demo "
+    "dispatch background jobs and return at once: announce the dispatch in one sentence and keep "
+    "teaching; never wait for or ask about the result. It arrives later as a message: use it then, "
+    "citing its sources or pages; if it fails or never comes, continue in prose and never invent it."
 )
 
 PRACTICE_TURN_RULES = (
@@ -81,7 +84,8 @@ PRACTICE_TURN_RULES = (
     "closing words and end the turn: the next problem only comes when the learner asks for it. "
     "graph_search(query) looks up propositions of the learner's graph; ask_user_question is for anything "
     "ungraded. probe/recall/quiz/explain/plan tools do not exist in PRACTICE. Never reopen a problem the "
-    "learner dismissed."
+    "learner dismissed. research(question) and read_pdf(path, question) dispatch background jobs and "
+    "return at once; the result arrives later as a message. Do not wait for it and never invent it."
 )
 
 

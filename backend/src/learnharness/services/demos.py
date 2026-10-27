@@ -6,6 +6,7 @@ from typing import Any
 
 from learnharness.core.events import SseEventType
 from learnharness.mcp.demo_builder import generate_demo, link_demo_in_lesson, save_demo_html
+from learnharness.vault.lesson_layout import current_node_id
 from learnharness.vault.safety import safe_path
 
 logger = logging.getLogger(__name__)
@@ -16,13 +17,17 @@ MAX_LESSON_CONTEXT_CHARS = 12_000
 def submit_demo(state, title: str, topic: str, description: str = "", lesson_rel_path: str | None = None,
                 session_id: str | None = None) -> dict[str, Any]:
     """Queue a ``demo_builder`` job and return its record immediately (never blocks a teaching turn)."""
-    if session_id and not lesson_rel_path:
+    node_id = None
+    if session_id:
         try:
-            lesson_rel_path = state.sessions.get(session_id).lesson_vault_path
+            session = state.sessions.get(session_id)
         except KeyError:
             session_id = None
-    payload = {"title": title, "topic": topic, "description": description,
-               "lesson_rel_path": lesson_rel_path, "session_id": session_id}
+        else:
+            lesson_rel_path = lesson_rel_path or session.lesson_vault_path
+            node_id = current_node_id(session.plan)
+    payload = {"title": title, "topic": topic, "description": description, "label": title,
+               "lesson_rel_path": lesson_rel_path, "session_id": session_id, "node_id": node_id}
     return state.jobs.submit("demo_builder", payload)
 
 
@@ -62,7 +67,9 @@ async def run_demo_job(state, payload: dict[str, Any]) -> dict[str, Any]:
     result = save_demo_html(state.vault_path, demo, topic=payload["topic"],
                             description=payload.get("description") or demo.learning_goal)
     lesson = payload.get("lesson_rel_path")
-    if lesson:
+    # A session demo reaches its lesson note through the job steer (rendered in the section
+    # of the node current at dispatch); only a sessionless demo is linked directly.
+    if lesson and not payload.get("session_id"):
         try:
             link_demo_in_lesson(state.vault_path, lesson, slug=result["slug"], title=demo.title,
                                 description=payload.get("description") or demo.learning_goal)
