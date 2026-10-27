@@ -52,8 +52,9 @@ test('GitHub preview/import bodies match the contract', () => {
   assert.equal(im.path, '/api/import/github/import');
   assert.deepEqual(JSON.parse(im.body), {url: 'https://github.com/o/r', paths: ['a.md'], start_session: true, use_as_track: false});
 
+  // Fase 14: use_as_track creates a new track; replace_track is no longer sent.
   const track = JSON.parse(wire.buildGithubImport({url: 'https://github.com/o/r', paths: [], start_session: false, use_as_track: true, replace_track: true}).body);
-  assert.deepEqual(track, {url: 'https://github.com/o/r', paths: [], start_session: false, use_as_track: true, replace_track: true});
+  assert.deepEqual(track, {url: 'https://github.com/o/r', paths: [], start_session: false, use_as_track: true});
 });
 
 test('GitHub URL guard accepts repo/tree links and rejects other schemes', () => {

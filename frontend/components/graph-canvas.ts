@@ -115,6 +115,8 @@ export class GraphCanvasEngine {
   private clusterOrder: string[] = [];
   private clusters: ClusterGroup[] = [];
   private ghosts: RoadmapItem[] = [];
+  /** Per-track tone of each ghost (⇶ Roteiro, Fase 14); null = neutral. */
+  private ghostTone: (item: RoadmapItem) => PaletteTone | null = () => null;
   private ghostPos = new Map<string, Point>();
 
   private nebula: HTMLCanvasElement | null = null;
@@ -233,8 +235,9 @@ export class GraphCanvasEngine {
     this.start();
   }
 
-  public setGhosts(items: RoadmapItem[] | null) {
+  public setGhosts(items: RoadmapItem[] | null, tone?: (item: RoadmapItem) => PaletteTone | null) {
     this.ghosts = items ?? [];
+    this.ghostTone = tone ?? (() => null);
     this.updateGhostLayout();
     this.requestRender();
   }
@@ -665,8 +668,6 @@ export class GraphCanvasEngine {
     ctx.save();
     ctx.setLineDash([3 / this.zoom, 3 / this.zoom]);
     ctx.lineWidth = this.lineWidth(0.9);
-    ctx.strokeStyle = withAlpha("mutedForeground", 0.45);
-    ctx.beginPath();
     for (const g of this.ghosts) {
       const gp = this.ghostPos.get(g.id);
       if (!gp) continue;
@@ -674,12 +675,16 @@ export class GraphCanvasEngine {
         ...g.linked_node_ids.map((id) => this.nodeMap.get(id)).filter((p): p is CanvasNode => !!p),
         ...g.depends_on.map((id) => this.ghostPos.get(id)).filter((p): p is Point => !!p),
       ];
+      if (targets.length === 0) continue;
+      const tone = this.ghostTone(g);
+      ctx.strokeStyle = tone ? toneAlpha(tone, 0.4) : withAlpha("mutedForeground", 0.45);
+      ctx.beginPath();
       for (const t of targets) {
         ctx.moveTo(gp.x, gp.y);
         ctx.lineTo(t.x, t.y);
       }
+      ctx.stroke();
     }
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -696,7 +701,8 @@ export class GraphCanvasEngine {
       ctx.fill();
       ctx.setLineDash([2 / this.zoom, 2 / this.zoom]);
       ctx.lineWidth = 1 / this.zoom;
-      ctx.strokeStyle = hovered ? palette.foreground : withAlpha("mutedForeground", 0.8);
+      const tone = this.ghostTone(g);
+      ctx.strokeStyle = hovered ? palette.foreground : tone ? toneAlpha(tone, 0.85) : withAlpha("mutedForeground", 0.8);
       ctx.stroke();
       ctx.restore();
       this.drawLabel(ctx, g.title, p.x, p.y + r, hovered, true);

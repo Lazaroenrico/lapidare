@@ -284,7 +284,7 @@ export function McpServerManager({
                   readOnly={editing}
                   value={draft.name}
                   onChange={(e) => set("name", e.target.value)}
-                  placeholder="praxis"
+                  placeholder={t.mcpNamePh}
                   className={cx(inputClass, editing && "text-muted-foreground")}
                 />
               </Field>

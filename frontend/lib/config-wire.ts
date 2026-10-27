@@ -1,3 +1,4 @@
+import { decodeTracks } from './tracks';
 import type { EngineKind, HarnessConfig, ModelSlotConfig, ModelSlots, SetupStatusResponse, WireEngine } from './types';
 
 type Wire = Record<string, any>;
@@ -33,7 +34,7 @@ export function normalizeSlots(slots: Partial<ModelSlots> | undefined, engine: E
 
 /** The API boundary alone translates legacy presentation names to canonical contracts. */
 export function encodeConfig(config: Partial<HarnessConfig>, apiKey?: string) {
-  const { initialized, vault_folders, slots, track, content_mcps, ...rest } = config;
+  const { initialized, vault_folders, slots, track, content_mcps, tracks: _tracks, active_track_id: _active, ...rest } = config;
   return {
     ...rest,
     configured: initialized,
@@ -77,6 +78,8 @@ export function decodeConfig(raw: Wire): HarnessConfig {
       items: (track.queue ?? track.items ?? []).map((item: Wire) => ({...item, source_path: item.source_ref ?? item.source_path,
         current: item.id === (track.active_item_id ?? track.current_step_id)}))},
     content_mcps: (raw.content_mcps || []).map((m: Wire) => ({...m, active: m.enabled ?? m.active})),
+    tracks: decodeTracks(raw.tracks, typeof raw.active_track_id === 'string' ? raw.active_track_id : null),
+    active_track_id: typeof raw.active_track_id === 'string' ? raw.active_track_id : null,
   } as HarnessConfig;
 }
 

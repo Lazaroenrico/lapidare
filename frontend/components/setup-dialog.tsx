@@ -12,10 +12,8 @@ import {
   Globe,
   HardDrive,
   Key,
-  Layers,
   Loader2,
   Route,
-  Server,
   Sparkles,
   Terminal,
   X,
@@ -24,12 +22,16 @@ import type {
   ConnectorStatus,
   EngineKind,
   HarnessConfig,
-  McpServerConfig,
   ModelSlots,
   TrackConfig,
-  TrackMode,
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
+import { McpServerManager } from "@/components/mcp-server-manager";
+import { TrackCreateForm } from "@/components/track-create-form";
+import { isGithubRepoUrl } from "@/lib/import-wire";
+import { buildCreateTrack, emptyTrackDraft, type DraftError, type NewTrackDraft } from "@/lib/tracks";
+import { createTrack } from "@/lib/tracks-api";
+import { tracksText } from "@/lib/tracks-i18n";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
 import { normalizeSlots } from "@/lib/config-wire";
@@ -46,10 +48,10 @@ const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
 const defaultSlotsFor = (engine: EngineKind): ModelSlots => normalizeSlots(undefined, engine);
 
 type DetectedConnector = ConnectorStatus & { recommended?: boolean };
-const DEFAULT_REPO_PATH = "";
 
 export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
-  const {t} = useLocale();
+  const {t, locale} = useLocale();
+  const tt = tracksText(locale);
   const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -72,17 +74,14 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   const [vaultPath, setVaultPath] = useState<string>(DEFAULT_VAULT_PATH);
   const [isExistingVault, setIsExistingVault] = useState<boolean>(true);
 
-  // Step 3: Content MCPs
-  const [praxisActive, setPraxisActive] = useState<boolean>(false);
-  const [praxisUrl, setPraxisUrl] = useState<string>("http://127.0.0.1:8765/sse");
-  const [customMcps, setCustomMcps] = useState<McpServerConfig[]>([]);
+  // Step 3: Content MCPs (generic; each server is saved by McpServerManager)
+  const [selectedMcp, setSelectedMcp] = useState<string | null>(null);
 
-  // Step 4: Track Selection
-  const [trackMode, setTrackMode] = useState<TrackMode>("free");
-  const [trackRepoPath, setTrackRepoPath] = useState<string>(DEFAULT_REPO_PATH);
-  const [goalDescription, setGoalDescription] = useState<string>(
-    "Dominar Engenharia de IA de ponta a ponta: Transformers, RLHF, RAG e Sistemas Multi-Agente."
-  );
+  // Step 4: optional first track (POST /api/tracks after the config is saved)
+  const [createFirstTrack, setCreateFirstTrack] = useState<boolean>(false);
+  const [trackDraft, setTrackDraft] = useState<NewTrackDraft>(() => emptyTrackDraft());
+  const [trackError, setTrackError] = useState<DraftError | null>(null);
+  const [existingTracks, setExistingTracks] = useState<number>(0);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -106,13 +105,7 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
           if (res.config.language) setLanguage(res.config.language);
           if (res.config.vault_path) setVaultPath(res.config.vault_path);
           if (res.config.slots) setSlots(normalizeSlots(res.config.slots));
-          if (res.config.track) {
-            setTrackMode(res.config.track.mode);
-            if (res.config.track.repo_path)
-              setTrackRepoPath(res.config.track.repo_path);
-            if (res.config.track.goal_description)
-              setGoalDescription(res.config.track.goal_description);
-          }
+          setExistingTracks((res.config.tracks ?? []).filter((tr) => !tr.archived).length);
         }
       })
       .catch((err) => {
@@ -130,26 +123,18 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   if (!isOpen) return null;
 
   const handleFinishSetup = async () => {
+    // Validate the optional first track before saving anything.
+    const built = createFirstTrack ? buildCreateTrack({ ...trackDraft, activate: true }, isGithubRepoUrl) : null;
+    if (built && !built.ok) {
+      setTrackError(built.error);
+      return;
+    }
+    setTrackError(null);
     setSubmitting(true);
     setErrorMsg(null);
 
-    const content_mcps: McpServerConfig[] = [];
-    if (praxisActive) {
-      content_mcps.push({
-        name: "praxis",
-        url: praxisUrl,
-        active: true,
-      });
-    }
-    content_mcps.push(...customMcps);
-
-    const track: TrackConfig = {
-      mode: trackMode,
-      active: trackMode !== "free",
-      repo_path: trackMode === "repo_binary" ? trackRepoPath : undefined,
-      goal_description:
-        trackMode === "goal_generated" ? goalDescription : undefined,
-    };
+    // Fase 14: the setup never replaces tracks; a new one is created through /api/tracks.
+    const track: TrackConfig = { mode: "free", active: false };
 
     const finalConfig: Partial<HarnessConfig> = {
       initialized: true,
@@ -165,13 +150,24 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
       },
       slots,
       track,
-      content_mcps,
+      // content_mcps is omitted: McpServerManager saves each server on its own.
     };
 
     try {
       const res = await completeSetup(finalConfig, apiKey);
       if (res.success) {
         setApiKey("");
+        if (built?.ok) {
+          try {
+            await createTrack(built.payload);
+            setCreateFirstTrack(false);
+            setTrackDraft(emptyTrackDraft());
+          } catch (err) {
+            setErrorMsg(tt.setupTrackFailed(err instanceof Error ? err.message : String(err)));
+            onComplete?.(res.config);
+            return;
+          }
+        }
         onComplete?.(res.config);
         onClose?.();
       } else {
@@ -468,51 +464,14 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                     </p>
                   </div>
 
-                  {/* Praxis MCP Toggle Card */}
-                  <div className="p-3.5 bg-background border border-border rounded space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <Server className="w-4 h-4 text-foreground" />
-                        <div>
-                          <div className="font-ui text-xs font-semibold text-foreground">
-                            Praxis AI Engineering MCP (mcp__praxis__*)
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {t.sdPraxisHint}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setPraxisActive((prev) => !prev)}
-                        className={`px-3 py-1 rounded font-ui text-xs border cursor-pointer transition-colors ${
-                          praxisActive
-                            ? "bg-accent border-foreground text-foreground"
-                            : "bg-card border-border text-muted-foreground"
-                        }`}
-                      >
-                        {praxisActive ? t.sdEnabled : t.sdDisabled}
-                      </button>
-                    </div>
+                  <p className="text-xs text-muted-foreground font-prose">{tt.mcpHint}</p>
 
-                    {praxisActive && (
-                      <div className="space-y-1.5 pt-2 border-t border-border">
-                        <label className="font-ui text-[10.5px] text-muted-foreground">
-                          {t.sdPraxisUrl}
-                        </label>
-                        <input
-                          type="text"
-                          value={praxisUrl}
-                          onChange={(e) => setPraxisUrl(e.target.value)}
-                          className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground"
-                        />
-                      </div>
-                    )}
-                  </div>
+                  <McpServerManager
+                    className="bg-background border border-border rounded min-h-[280px]"
+                    selected={selectedMcp}
+                    onSelect={setSelectedMcp}
+                  />
 
-                  <p className="text-xs text-muted-foreground italic">
-                    {t.sdImportNote}
-                  </p>
                 </div>
               )}
 
@@ -531,99 +490,61 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                     </p>
                   </div>
 
-                  {/* Track options — "Livre" first and default: the graph is the base, the track is an optional layer */}
+                  {existingTracks > 0 && (
+                    <p className="p-2.5 bg-background border border-border rounded font-ui text-[11px] text-muted-foreground">
+                      {tt.setupExisting(existingTracks)}
+                    </p>
+                  )}
+
+                  {/* "Livre" first and default: the graph is the base, a track is an optional layer */}
                   <div className="space-y-2.5">
-                    <div
-                      onClick={() => setTrackMode("free")}
-                      className={`p-3.5 rounded border cursor-pointer transition-all ${
-                        trackMode === "free"
+                    <button
+                      type="button"
+                      onClick={() => setCreateFirstTrack(false)}
+                      aria-pressed={!createFirstTrack}
+                      className={`w-full text-left p-3.5 rounded border cursor-pointer transition-all ${
+                        !createFirstTrack
                           ? "bg-accent border-foreground"
                           : "bg-background border-border hover:border-muted-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2">
                         <HardDrive className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          {t.sdOption3}
-                        </span>
+                        <span className="font-ui text-xs font-semibold text-foreground">{tt.setupNone}</span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1 font-prose">
-                        {t.sdOption3Hint}
-                      </p>
-                    </div>
+                      <p className="text-xs text-muted-foreground mt-1 font-prose">{tt.setupNoneHint}</p>
+                    </button>
 
-                    {/* Option 1: Local Repo & Binary Leveling */}
                     <div
-                      onClick={() => setTrackMode("repo_binary")}
-                      className={`p-3.5 rounded border cursor-pointer transition-all ${
-                        trackMode === "repo_binary"
-                          ? "bg-accent border-foreground"
-                          : "bg-background border-border hover:border-muted-foreground"
+                      className={`p-3.5 rounded border transition-all ${
+                        createFirstTrack ? "bg-accent border-foreground" : "bg-background border-border hover:border-muted-foreground"
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <Route className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          {t.sdOption1}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1 font-prose">
-                        {t.sdOption1HintA}{" "}
-                        <code className="text-foreground font-ui">
-                          00 Mapa.md / LEARNING.md
-                        </code>
-                        {t.sdOption1HintB}
-                      </p>
-                      {trackMode === "repo_binary" && (
-                        <div className="mt-2.5 pt-2 border-t border-border">
-                          <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                            {t.sdRepoPathLabel}
-                          </label>
-                          <input
-                            type="text"
-                            value={trackRepoPath}
-                            onChange={(e) => setTrackRepoPath(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground"
+                      <button
+                        type="button"
+                        onClick={() => setCreateFirstTrack(true)}
+                        aria-pressed={createFirstTrack}
+                        className="w-full text-left cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Route className="w-4 h-4 text-foreground" />
+                          <span className="font-ui text-xs font-semibold text-foreground">{tt.setupCreate}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 font-prose">{t.sdStep4Hint}</p>
+                      </button>
+                      {createFirstTrack && (
+                        <div className="mt-3 pt-3 border-t border-border">
+                          <TrackCreateForm
+                            draft={trackDraft}
+                            onChange={setTrackDraft}
+                            error={trackError}
+                            disabled={submitting}
+                            showActivate={false}
+                            idPrefix="setup-track"
                           />
                         </div>
                       )}
                     </div>
-
-                    {/* Option 2: Goal Generated Track */}
-                    <div
-                      onClick={() => setTrackMode("goal_generated")}
-                      className={`p-3.5 rounded border cursor-pointer transition-all ${
-                        trackMode === "goal_generated"
-                          ? "bg-accent border-foreground"
-                          : "bg-background border-border hover:border-muted-foreground"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-foreground" />
-                        <span className="font-ui text-xs font-semibold text-foreground">
-                          {t.sdOption2}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1 font-prose">
-                        {t.sdOption2Hint}
-                      </p>
-                      {trackMode === "goal_generated" && (
-                        <div className="mt-2.5 pt-2 border-t border-border">
-                          <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                            {t.sdGoalLabel}
-                          </label>
-                          <textarea
-                            value={goalDescription}
-                            onChange={(e) => setGoalDescription(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            rows={2}
-                            className="w-full bg-card border border-border rounded px-2.5 py-1.5 font-ui text-xs text-foreground resize-none"
-                          />
-                        </div>
-                      )}
-                    </div>
-
                   </div>
                 </div>
               )}

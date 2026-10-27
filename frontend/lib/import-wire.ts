@@ -93,7 +93,6 @@ export function buildGithubImport(req: GithubImportRequest): RequestSpec {
     start_session: req.start_session,
     use_as_track: req.use_as_track,
   };
-  if (req.replace_track) body.replace_track = true;
   return { path: "/api/import/github/import", method: "POST", body: JSON.stringify(body) };
 }
 

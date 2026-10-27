@@ -7,7 +7,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, GitBranch, Search } from "lucide-react";
-import { ApiError, importGithubRepo, isAbortError, previewGithubRepo } from "@/lib/api";
+import { importGithubRepo, isAbortError, previewGithubRepo } from "@/lib/api";
 import { isGithubRepoUrl } from "@/lib/import-wire";
 import type { GithubImportResult, GithubPreview, GithubPreviewFile } from "@/lib/types";
 import { useLocale } from "./locale-provider";
@@ -64,7 +64,6 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [useAsTrack, setUseAsTrack] = useState(false);
   const [startSession, setStartSession] = useState(false);
-  const [conflict, setConflict] = useState<string | null>(null);
   const [result, setResult] = useState<GithubImportResult | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -99,7 +98,6 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
     const ctrl = begin("previewing");
     setPreview(null);
     setResult(null);
-    setConflict(null);
     try {
       const data = await previewGithubRepo(url, ctrl.signal);
       setPreview(data);
@@ -118,10 +116,9 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
     }
   };
 
-  const runImport = async (replaceTrack = false) => {
+  const runImport = async () => {
     if (!preview) return;
     const ctrl = begin("importing");
-    setConflict(null);
     setResult(null);
     try {
       const paths = preview.files.filter((f) => selected.has(f.path)).map((f) => f.path);
@@ -131,7 +128,6 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
           paths,
           start_session: startSession && paths.length > 0,
           use_as_track: useAsTrack,
-          replace_track: replaceTrack,
         },
         ctrl.signal
       );
@@ -139,8 +135,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
       onImported(res);
     } catch (err) {
       if (isAbortError(err)) return;
-      if (err instanceof ApiError && err.status === 409) setConflict(err.message || t.ghTrackExists);
-      else setError(errMsg(err, t.impImporting));
+      setError(errMsg(err, t.impImporting));
     } finally {
       if (abortRef.current === ctrl) {
         abortRef.current = null;
@@ -350,25 +345,6 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
             />
           </div>
 
-          {conflict && (
-            <Banner
-              tone="warn"
-              action={
-                <>
-                  <Btn variant="ghost" onClick={() => setConflict(null)}>
-                    {t.impCancel}
-                  </Btn>
-                  <Btn variant="secondary" onClick={() => runImport(true)}>
-                    {t.ghReplaceTrack}
-                  </Btn>
-                </>
-              }
-            >
-              {t.ghTrackExists}
-              {conflict !== t.ghTrackExists && <span className="block text-muted-foreground">{conflict}</span>}
-            </Banner>
-          )}
-
           {phase === "importing" && <BusyStrip label={t.ghImportingLong} onCancel={cancel} cancelLabel={t.impCancel} />}
 
           {result && (
@@ -382,7 +358,7 @@ export function GithubImportPanel({ onImported }: { onImported: (result: GithubI
             <Btn
               variant="primary"
               disabled={busy || (selected.size === 0 && !useAsTrack)}
-              onClick={() => runImport(false)}
+              onClick={() => void runImport()}
             >
               {`${t.ghImportSelected} (${selected.size})`}
             </Btn>

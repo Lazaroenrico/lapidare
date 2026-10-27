@@ -42,6 +42,23 @@ import { useShortcut } from "./use-shortcut";
 import { ConfirmDialog } from "./session-ux";
 import { requestComposerFocus } from "./composer-focus";
 import { SettingsComboHint } from "./use-combo-label";
+import { useTracks } from "./use-tracks";
+import { TrackDot } from "./tracks-ui";
+import {
+  filterByTrack,
+  orderTracks,
+  parseTrackFilter,
+  resolveTrackRef,
+  sanitizeTrackFilter,
+  shortTrackTag,
+  toneForTrack,
+  trackFilterFor,
+  trackTones,
+  TRACK_FILTER_ALL,
+  TRACK_FILTER_NONE,
+  type TrackFilter,
+} from "@/lib/tracks";
+import { tracksText } from "@/lib/tracks-i18n";
 
 const COLLAPSED_STORAGE_KEY = "learnharness:sidebar-collapsed";
 
@@ -61,6 +78,24 @@ function saveCollapsed(value: boolean) {
   }
 }
 
+const TRACK_FILTER_STORAGE_KEY = "learnharness:sidebar-track-filter";
+
+function loadTrackFilter(): TrackFilter {
+  try {
+    return parseTrackFilter(globalThis.localStorage?.getItem(TRACK_FILTER_STORAGE_KEY));
+  } catch {
+    return TRACK_FILTER_ALL;
+  }
+}
+
+function saveTrackFilter(value: TrackFilter) {
+  try {
+    globalThis.localStorage?.setItem(TRACK_FILTER_STORAGE_KEY, value);
+  } catch {
+    // Storage unavailable: the filter still applies for this page view.
+  }
+}
+
 const EXTRACT_NOTICE_MS = 6000;
 
 type ExtractNotice = { sessionId: string; ok: boolean; text: string };
@@ -75,6 +110,18 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   const pathname = usePathname();
   const { activeJobs } = useServerEvents();
   const { locale, t } = useLocale();
+  const tt = tracksText(locale);
+  const { tracks, loaded: tracksLoaded, error: tracksError } = useTracks();
+  const trackOptions = useMemo(() => orderTracks(tracks), [tracks]);
+  const tones = useMemo(() => trackTones(tracks), [tracks]);
+  const [trackFilterRaw, setTrackFilterRaw] = useState<TrackFilter>(TRACK_FILTER_ALL);
+  useEffect(() => setTrackFilterRaw(loadTrackFilter()), []);
+  // A filter on a removed track falls back to "all" (only once the list is known).
+  const trackFilter = tracksLoaded ? sanitizeTrackFilter(trackFilterRaw, tracks) : trackFilterRaw;
+  const changeTrackFilter = (value: TrackFilter) => {
+    setTrackFilterRaw(value);
+    saveTrackFilter(value);
+  };
 
   // Uncontrolled by default (the root layout passes nothing): remembered per browser.
   const [collapsedState, setCollapsedState] = useState(false);
@@ -212,11 +259,12 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   );
 
   const filteredSessions = useMemo(
-    () => fuzzyFilter(filterByMode(sessions, filter), searchQuery, (s) => [s.title, s.topic]),
-    [sessions, filter, searchQuery],
+    () => fuzzyFilter(filterByTrack(filterByMode(sessions, filter), trackFilter), searchQuery, (s) => [s.title, s.topic]),
+    [sessions, filter, trackFilter, searchQuery],
   );
+  const showTrackFilter = tracks.length > 0 || sessions.some((s) => s.track_id);
 
-  useEffect(() => setCursor(-1), [searchQuery, filter]);
+  useEffect(() => setCursor(-1), [searchQuery, filter, trackFilter]);
 
   // Global shortcuts (registry ids; rebindable in Settings → Teclado).
   useEffect(() => {
@@ -558,6 +606,25 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             </button>
           ))}
         </div>
+
+        {/* Track filter: Todas / Sem trilha / each track */}
+        {showTrackFilter && (
+          <select
+            value={trackFilter}
+            onChange={(e) => changeTrackFilter(e.target.value)}
+            aria-label={tt.filterLabel}
+            title={tt.filterLabel}
+            className="w-full bg-card border border-border rounded px-2 py-1 text-[11px] text-foreground cursor-pointer focus:border-foreground"
+          >
+            <option value={TRACK_FILTER_ALL}>{tt.filterAll}</option>
+            <option value={TRACK_FILTER_NONE}>{tt.filterNone}</option>
+            {trackOptions.map((track) => (
+              <option key={track.id} value={trackFilterFor(track.id)}>
+                {track.archived ? `${track.title} (${tt.archivedBadge})` : track.title}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Session List */}
@@ -571,6 +638,8 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           <div className="py-8 text-center text-muted-foreground text-[11px] px-3">
             {searchQuery
               ? t.noSessionsMatch
+              : trackFilter !== TRACK_FILTER_ALL
+              ? tt.noSessionsForTrack
               : filter !== "ALL"
               ? t.noSessionsOfMode(filter === "TEACH" ? "TEACHING" : filter)
               : t.noSessions}
@@ -584,6 +653,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             const isCursor = index === cursor;
             const now = Date.now();
             const status = rowStatus(session);
+            const trackRef = resolveTrackRef(session.track_id, tracks);
             if (renamingId === session.id) {
               return (
                 <div key={session.id} className="p-2 rounded border border-border bg-card flex flex-col gap-1">
@@ -642,6 +712,18 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                         {session.mode}
                       </span>
                     </div>
+                    {trackRef.kind === "track" && (
+                      <span
+                        className="mt-0.5 inline-flex items-center gap-1 max-w-full text-[9.5px] text-muted-foreground"
+                        title={trackRef.track.title}
+                      >
+                        <TrackDot tone={toneForTrack(trackRef.track.id, tones)} className="w-1.5 h-1.5" />
+                        <span className="truncate">{shortTrackTag(trackRef.track.title)}</span>
+                      </span>
+                    )}
+                    {trackRef.kind === "removed" && tracksLoaded && !tracksError && (
+                      <span className="mt-0.5 block text-[9.5px] italic text-muted-foreground">{tt.removedTrack}</span>
+                    )}
                     {session.topic && session.topic !== session.title && (
                       <p className="text-[10px] text-muted-foreground truncate mt-0.5 font-prose">
                         {session.topic}
