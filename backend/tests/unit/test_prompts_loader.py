@@ -84,13 +84,58 @@ def test_context_fragments_are_included_only_for_their_kind():
     assert not any("context-" in p for p in selected_segments("TEACH", "free_topic", "teaching"))
 
 
-def test_practice_uses_shared_subset_and_unchanged_practice_text():
+PRACTICE_FRAGMENTS = [
+    "practice/10-opening.md",
+    "practice/20-doctrine.md",
+    "practice/30-hints.md",
+    "practice/40-reading-attempts.md",
+    "practice/50-conclude.md",
+]
+
+
+def _practice_text() -> str:
+    return "\n".join((PROMPTS_ROOT / p).read_text(encoding="utf-8") for p in PRACTICE_FRAGMENTS)
+
+
+def test_practice_uses_shared_subset_plus_practice_fragments_in_order():
     paths = selected_segments("PRACTICE", "free_topic", "teaching")
-    assert "practice/10-practice.md" in paths
+    shared = [p for p in paths if p.startswith("shared/")]
     assert "shared/50-questions.md" not in paths
+    assert shared and paths[: len(shared)] == shared  # shared subset first
+    assert paths[len(shared):] == PRACTICE_FRAGMENTS
     assert not any(p.startswith(("prober/", "teacher/")) for p in paths)
+    # Context kind and phase do not change the PRACTICE composition.
+    assert selected_segments("PRACTICE", "dense_source", "probing") == paths
     prompt = build_system_prompt("PRACTICE", "free_topic", "pt-BR", "teaching")
-    assert "R0" in prompt and "R5" in prompt and "Commit-Before-Pose" in prompt
+    assert prompt.index("No warm-up") < prompt.index("The hint ladder") < prompt.index("Concluding a problem")
+
+
+def test_practice_fragments_carry_the_session_vocabulary():
+    text = _practice_text()
+    for tool in ("problem", "conclude", "graph_search", "ask_user_question"):
+        assert f"`{tool}" in text, tool
+    for rung in ("R0", "R1", "R2", "R3", "R4", "R5"):
+        assert f"`{rung}`" in text, rung
+    for mode in ("recall", "discrimination", "composition"):
+        assert f"`{mode}`" in text, mode
+    for outcome in ("solved", "solvedWithHints", "movedOn", "surrendered", "dismissed"):
+        assert f"`{outcome}`" in text, outcome
+    for miss in ("cue", "discrimination", "execution", "careless", "structural"):
+        assert f"`{miss}`" in text, miss
+    assert "`retest`" in text and "`model_solution`" in text
+    assert "One rung per request" in text and "85%" in text
+
+
+def test_practice_fragments_do_not_mention_teach_tools():
+    text = _practice_text()
+    for name in ("probe", "quiz", "plan_init", "pose_quiz", "probe_done", "plan_advance", "explain("):
+        assert not re.search(rf"\b{re.escape(name)}", text), name
+
+
+def test_practice_latex_examples_use_dollar_delimiters():
+    text = _practice_text()
+    assert "\\\\sum" in text  # doubled backslash inside the JSON example
+    assert "\\(" not in text.replace("`\\(…\\)`", "")
 
 
 def test_runtime_section_language_and_extra_context():
