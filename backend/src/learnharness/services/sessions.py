@@ -33,6 +33,7 @@ from learnharness.core.plan_mermaid import (
     derive_plan_statuses,
     mermaid_to_plan_nodes,
 )
+from learnharness.core.text_hygiene import is_stray_fragment
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
@@ -787,6 +788,8 @@ class SessionService:
                     message.node_spans.append(NodeSpan(start=len(message.content), node_id=node_id))
                 message.content = text
                 message.node_id = node_id
+            elif is_stray_fragment(text):
+                return  # Not (yet) content: a lone stray token after a tool call.
             else:
                 session.messages.append(SessionMessage(
                     id=message_id, role="assistant", content=text, created_at=now(),
