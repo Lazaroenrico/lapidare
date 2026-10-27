@@ -390,3 +390,15 @@ async def test_question_text_double_escaped_latex_is_healed(runtime) -> None:
     result, _ = await _ask(state, sid, call, chosen_indices=[0], confidence=90)
     assert result.question == r"Quanto vale $\sqrt{4}$?"
     assert result.choices[0].label == r"$\sqrt{4} = 2$" and result.explanation == r"Pois $2 \cdot 2 = 4$."
+
+
+async def test_steers_ride_the_answer_of_a_blocking_question(runtime) -> None:
+    state, sid, tools = runtime
+    before = set(state.sessions.get(sid).answers)
+    task = asyncio.create_task(tools["probe"]("Quanto é 2+2?", ["4", "5"], "Soma.", "4"))
+    pending = await wait_until(lambda: (q := state.sessions.get(sid).pending_quiz) and q.quiz_id not in before and q)
+    await state.sessions.deliver_steer(sid, "learner", "pode explicar com um exemplo?")
+    await state.sessions.answer(QuizSubmission(quiz_id=pending.quiz_id, session_id=sid, chosen_indices=[0], confidence=90))
+    result = await asyncio.wait_for(task, 3)
+    assert result["learner_messages"] == ["pode explicar com um exemplo?"]
+    assert all(m.delivered for m in state.sessions.get(sid).messages)

@@ -391,7 +391,32 @@ class SessionService:
         result = self.get(session_id).answers.get(quiz.quiz_id)
         if result is None:
             raise SessionConflict("The question was closed without an answer")
-        return dismissed_answer(result) if result.dismissed else compact_answer(result)
+        answer = dismissed_answer(result) if result.dismissed else compact_answer(result)
+        return await self._attach_steers(session_id, answer)
+
+    async def _attach_steers(self, session_id: str, answer: dict[str, Any]) -> dict[str, Any]:
+        """Hand queued steers to the model inside the answer of a blocking question.
+
+        A teacher can chain questions within one turn; steers otherwise wait for the turn to
+        end, so a learner message sent meanwhile (or a finished job) would starve.
+        """
+        async with self.lock(session_id):
+            session = self.get(session_id)
+            pending = [m for m in session.messages if not m.delivered]
+            if not pending:
+                return answer
+            for m in pending:
+                m.delivered = True
+            self.save(session)
+        learner = [m.content for m in pending if m.steer_kind == "learner"]
+        jobs = [m.content for m in pending if m.steer_kind != "learner"]
+        if learner:
+            answer["learner_messages"] = learner
+        if jobs:
+            answer["background_results"] = jobs
+        answer["steer_note"] = ("The learner wrote these while answering / background work finished: "
+                                "respond to them before continuing.")
+        return answer
 
     async def open_quiz(self, session_id: str, quiz: QuizPayload, *, replace_pending: bool = False) -> QuizPayload:
         """Persist ``quiz`` as pending and open the dock without awaiting the answer.
