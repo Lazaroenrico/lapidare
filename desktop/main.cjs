@@ -7,6 +7,10 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const policy = require("./policy.cjs");
+const integration = require("./integration.cjs");
+
+const IS_MAC = process.platform === "darwin";
+const IS_LINUX = process.platform === "linux";
 
 const DEV_URL = process.env.LAPIDARE_DEV_URL || "";
 const DEV_SECRET = process.env.LAPIDARE_DEV_SECRET || "";
@@ -51,8 +55,9 @@ function dedupe(p) {
 }
 
 function resolvePath() {
-  const fallback = dedupe(`${process.env.PATH || ""}:${path.join(os.homedir(), ".local", "bin")}`);
-  const shellBin = process.env.SHELL || "/bin/sh";
+  const extra = IS_MAC ? ":/opt/homebrew/bin:/usr/local/bin" : "";
+  const fallback = dedupe(`${process.env.PATH || ""}:${path.join(os.homedir(), ".local", "bin")}${extra}`);
+  const shellBin = process.env.SHELL || (IS_MAC ? "/bin/zsh" : "/bin/sh");
   return new Promise((resolve) => {
     try {
       execFile(shellBin, ["-ilc", 'printf %s "$PATH"'], { timeout: 3000, encoding: "utf8" }, (err, out) => {
@@ -202,7 +207,7 @@ function createWindow(url) {
     height: 860,
     backgroundColor: "#1a1430",
     title: "Lapidare",
-    icon: path.join(__dirname, "build-resources", "icon.png"),
+    ...(IS_LINUX ? { icon: path.join(__dirname, "build-resources", "icon.png") } : {}),
     autoHideMenuBar: true,
     webPreferences: { ...WEB_PREFS },
   });
@@ -214,7 +219,7 @@ function createWindow(url) {
 }
 
 function setupUpdater() {
-  if (!process.env.APPIMAGE || !app.isPackaged) return;
+  if (!IS_LINUX || !process.env.APPIMAGE || !app.isPackaged) return;
   try {
     const { autoUpdater } = require("electron-updater");
     autoUpdater.autoInstallOnAppQuit = true;
@@ -251,11 +256,28 @@ function quit() {
   app.quit();
 }
 
+function setupDesktopIntegration() {
+  if (!IS_LINUX || !process.env.APPIMAGE || !app.isPackaged) return;
+  try {
+    const r = integration.ensureIntegration({
+      appImage: process.env.APPIMAGE,
+      resourcesPath: process.resourcesPath,
+      iconSources: [path.join(process.resourcesPath, "icon.png"), path.join(__dirname, "build-resources", "icon.png")],
+      env: process.env,
+      home: os.homedir(),
+      log,
+    });
+    log(`integracao desktop: entry=${r.entry} icon=${r.icon}`);
+  } catch (e) {
+    log(`integracao desktop: ${e && e.message}`);
+  }
+}
+
 async function boot() {
   setupLog();
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([{ label: "Editar", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] }]),
-  );
+  setupDesktopIntegration();
+  const editMenu = { label: "Editar", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(IS_MAC ? [{ role: "appMenu" }, editMenu, { role: "windowMenu" }] : [editMenu]));
   if (DEV_URL) {
     appOrigin = new URL(DEV_URL).origin;
     setupSession();
@@ -287,6 +309,10 @@ if (!app.requestSingleInstanceLock()) {
     killBackend();
   });
   app.on("window-all-closed", () => quit());
+  app.on("activate", () => {
+    // macOS: clique no Dock sem janela recria a janela, se o backend ainda estiver vivo.
+    if (IS_MAC && !quitting && !mainWindow && appOrigin && child && !childExit) createWindow(appOrigin + "/");
+  });
   for (const sig of ["SIGTERM", "SIGHUP"]) process.on(sig, () => quit());
   app.whenReady().then(boot).catch((e) => {
     log(`boot falhou: ${e && e.stack}`);

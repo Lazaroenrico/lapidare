@@ -37,6 +37,7 @@ Icon=lapidare
 Terminal=false
 Categories=Education;
 StartupWMClass=lapidare
+X-Lapidare-Managed=true
 DESKTOP
 update-desktop-database "$DATA/applications" 2>/dev/null || true
 gtk-update-icon-cache -q -t "$DATA/icons/hicolor" 2>/dev/null || true
