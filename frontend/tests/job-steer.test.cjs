@@ -45,7 +45,7 @@ test('visual and demo results; missing essentials fall back to a generic summary
   assert.equal(js.visualFileName('', 'j3'), 'j3.svg');
 
   const demo = js.decodeJobSteer({job_id: 'j4', kind: 'demo', status: 'done', result: {slug: 'pendulo', title: 'Pêndulo'}});
-  assert.deepEqual(demo.result, {kind: 'demo', slug: 'pendulo', url: null, title: 'Pêndulo'});
+  assert.deepEqual(demo.result, {kind: 'demo', slug: 'pendulo', url: null, title: 'Pêndulo', verified: null});
 
   const empty = js.decodeJobSteer({job_id: 'j5', kind: 'visual', status: 'done', result: {path: 'x.svg'}});
   assert.equal(empty.result.kind, 'unknown');
@@ -148,4 +148,14 @@ test('backend Fase 10 shapes: visual by slug, PDF answer with pages_cited', () =
     result: {path: 'Fontes/paper.pdf', question: 'q', answer: 'diz isso (p. 2).', pages_cited: [2], pages_read: [2, 5]}}, '');
   assert.equal(pdf.result.kind, 'pdf');
   assert.deepEqual(pdf.result.pages, [2]);
+});
+
+test('Fase 17 verification flags decode (null when the check did not run)', () => {
+  const demo = js.decodeJobSteer({job_id: 'd', kind: 'demo', status: 'done', result: {slug: 'p', title: 'P', verified: true}}, '');
+  assert.equal(demo.result.verified, true);
+  const old = js.decodeJobSteer({job_id: 'd2', kind: 'demo', status: 'done', result: {slug: 'p'}}, '');
+  assert.equal(old.result.verified, null);
+  const vis = js.decodeJobSteer({job_id: 'v', kind: 'visual', status: 'done', result: {slug: 's', checked: false, check_notes: 'texto cortado'}}, '');
+  assert.equal(vis.result.checked, false);
+  assert.equal(vis.result.checkNotes, 'texto cortado');
 });

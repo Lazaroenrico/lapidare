@@ -26,8 +26,10 @@ export type JobResult =
   | { kind: "research"; brief: string; sources: JobSource[] }
   | { kind: "pdf"; path: string; question: string; brief: string; pages: number[] }
   // The backend stores visuals as vault files (`slug`); `svg` is filled only when inlined.
-  | { kind: "visual"; svg: string; slug: string | null; path: string; notes: string | null }
-  | { kind: "demo"; slug: string | null; title: string; url: string | null }
+  // `checked` / `verified`: the artifact passed the vision / headless-browser check (Fase 17);
+  // null when the backend did not run the check (older results or no Chromium).
+  | { kind: "visual"; svg: string; slug: string | null; path: string; notes: string | null; checked: boolean | null; checkNotes: string | null }
+  | { kind: "demo"; slug: string | null; title: string; url: string | null; verified: boolean | null }
   /** Unknown kind, or a known kind whose result lacks what its card needs. */
   | { kind: "unknown"; summary: string };
 
@@ -122,13 +124,20 @@ function decodeResult(kind: JobKind | null, raw: unknown, details: Raw): JobResu
     case "visual": {
       const svg = str(r.svg);
       const slug = strOrNull(r.slug);
-      if (svg.trim() || slug) return { kind, svg, slug, path: str(r.path), notes: strOrNull(r.notes ?? r.alt) };
+      if (svg.trim() || slug) {
+        return {
+          kind, svg, slug, path: str(r.path), notes: strOrNull(r.notes ?? r.alt),
+          checked: typeof r.checked === "boolean" ? r.checked : null, checkNotes: strOrNull(r.check_notes),
+        };
+      }
       break;
     }
     case "demo": {
       const slug = strOrNull(r.slug ?? r.result_id ?? details.slug);
       const url = strOrNull(r.url);
-      if (slug || url) return { kind, slug, url, title: str(r.title ?? details.title) };
+      if (slug || url) {
+        return { kind, slug, url, title: str(r.title ?? details.title), verified: typeof r.verified === "boolean" ? r.verified : null };
+      }
       break;
     }
   }
@@ -235,6 +244,10 @@ const LABELS = {
     closeFullscreen: "Fechar (Esc)",
     invert: "Inverter brilho",
     visualAlt: "Figura gerada para a aula",
+    demoVerified: "testada no navegador",
+    demoUnverified: "não testada no navegador",
+    visualChecked: "conferida",
+    visualUnchecked: "não conferida",
     openDemo: "Abrir simulador",
     unknownError: "erro desconhecido",
     learnerSent: "enviada durante o turno",
@@ -266,6 +279,10 @@ const LABELS = {
     closeFullscreen: "Close (Esc)",
     invert: "Invert brightness",
     visualAlt: "Figure generated for the lesson",
+    demoVerified: "tested in the browser",
+    demoUnverified: "not tested in the browser",
+    visualChecked: "checked",
+    visualUnchecked: "not checked",
     openDemo: "Open simulator",
     unknownError: "unknown error",
     learnerSent: "sent during the turn",

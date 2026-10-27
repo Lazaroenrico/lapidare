@@ -69,12 +69,15 @@ function JobFrame({
   subtitle,
   defaultOpen,
   actions,
+  check,
   children,
 }: {
   job: JobSteer;
   subtitle?: string;
   defaultOpen: boolean;
   actions?: React.ReactNode;
+  /** Verification badge (Fase 17): ok → success tone, false → warning, null/absent → none. */
+  check?: { ok: boolean | null; label: string; title?: string | null };
   children: React.ReactNode;
 }) {
   const { locale } = useLocale();
@@ -97,6 +100,14 @@ function JobFrame({
           </span>
           {subtitle && <span className="font-ui text-[12.5px] text-foreground truncate">{subtitle}</span>}
         </button>
+        {check && check.ok !== null && (
+          <span
+            title={check.title || undefined}
+            className={`${chip} shrink-0 ${check.ok ? "border-success/40 text-success" : "border-warning/40 text-warning"}`}
+          >
+            {check.label}
+          </span>
+        )}
         {actions}
         <DispatchLabel job={job} />
       </header>
@@ -261,7 +272,13 @@ function VisualFigure({ job, result }: { job: JobSteer; result: VisualResult }) 
 
   return (
     <>
-      <JobFrame job={job} defaultOpen subtitle={result.path ? pdfFileName(result.path) : undefined} actions={actions}>
+      <JobFrame
+        job={job}
+        defaultOpen
+        subtitle={result.path ? pdfFileName(result.path) : undefined}
+        actions={actions}
+        check={{ ok: result.checked, label: result.checked ? l.visualChecked : l.visualUnchecked, title: result.checkNotes }}
+      >
         <div className="flex justify-center rounded border border-accent bg-background p-2">
           {/* eslint-disable-next-line @next/next/no-img-element -- data: URI, not an optimizable asset */}
           <img src={src} alt={result.notes || l.visualAlt} className={`max-w-full max-h-[480px] h-auto ${filter}`} />
@@ -300,8 +317,15 @@ function VisualFigure({ job, result }: { job: JobSteer; result: VisualResult }) 
 // --- Demo -----------------------------------------------------------------------------------
 
 export function DemoCard({ job, result }: { job: JobSteer; result: Extract<JobResult, { kind: "demo" }> }) {
+  const { locale } = useLocale();
+  const l = jobLabels(locale);
   return (
-    <JobFrame job={job} defaultOpen subtitle={result.title || result.slug || undefined}>
+    <JobFrame
+      job={job}
+      defaultOpen
+      subtitle={result.title || result.slug || undefined}
+      check={{ ok: result.verified, label: result.verified ? l.demoVerified : l.demoUnverified }}
+    >
       <DemoIframe
         slug={result.slug ?? undefined}
         apiUrl={result.slug ? undefined : result.url ?? undefined}
