@@ -5,7 +5,7 @@ Este documento descreve a arquitetura **atual** do Lapidare: camadas do backend,
 > [!NOTE]
 > **Nome.** O produto se chama **Lapidare** (antes *LearnHarness*). Os identificadores técnicos mantêm o nome antigo por compatibilidade: o pacote Python `learnharness`, as variáveis `LEARNHARNESS_*`, a pasta `.harness/` do Vault, o servidor MCP interno `harness`, as chaves `learnharness:*` do `localStorage` e `~/.config/learnharness/`.
 >
-> **Estado.** Fases 8 a 14 implementadas. A **Fase 15** (nivelamento de trilha) está **em implementação**; a seção [10.4](#104-fase-15--nivelamento-por-busca-binária-em-implementação) descreve o desenho do spec, não código existente.
+> **Estado.** Fases 8 a 15 implementadas (a Fase 15, nivelamento de trilha, está na seção [10.4](#104-fase-15--nivelamento-por-busca-binária)).
 
 Leia também: [`AGENTS.md`](../AGENTS.md) (invariantes) e [`CONTEXT_AND_BEHAVIOR.md`](CONTEXT_AND_BEHAVIOR.md) (comportamento esperado de cada tela).
 
@@ -627,15 +627,16 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
 - **⇶ Roteiro no grafo:** nós fantasmas tracejados (`lib/ghost-layout.ts`), com cor por trilha e legenda. A alternância "Só a trilha em foco / Todas" fica em `learnharness:roadmap-scope`.
 - **Status do setup:** `GET /api/setup/status` também devolve `track` (a trilha em foco no formato antigo), por compatibilidade.
 
-### 10.4 Fase 15 — nivelamento por busca binária (em implementação)
+### 10.4 Fase 15 — nivelamento por busca binária
 
-Desenho do [spec](specs/fase-15-nivelamento.md). **Ainda não existe no código** desta revisão.
+Spec: [fase-15-nivelamento.md](specs/fase-15-nivelamento.md). Código: `core/leveling.py` (regras puras), `services/leveling.py` (`LevelingService`: start/done/undo), `prompts/prober/30-leveling.md`, rotas em `api/routes/tracks.py`, frontend em `lib/leveling.ts` e `components/leveling-ui.tsx`.
 
 - `POST /api/tracks/{id}/leveling` cria uma sessão **TEACH** com `context_kind="leveling"`, `track_id` e o título "Nivelamento: <trilha>". O botão aparece em Configurações → Trilhas e no menu ▾ do chip, para trilhas com 4 ou mais passos pendentes.
 - O agente recebe a fila pendente ordenada (ids, títulos e pré-requisitos) e faz **busca binária**: 1 ou 2 perguntas `probe`/`recall` sobre o item do meio. Um acerto confiante sobe; um erro ou "não sei" desce. O limite é de cerca de 12 perguntas, e um item cujo pré-requisito não foi dominado nunca é dado como sabido.
 - O fechamento é feito por uma nova ferramenta, `leveling_done(known_item_ids, start_item_id, summary)`. Ela marca os itens conhecidos `completed` com `status_detail="nivelado"`, move `active_item_id`, grava um snapshot para desfazer e põe a sessão em `phase="completed"`.
-- **Recusas:** `plan_init`, `quiz` e `explain` em `leveling`; ids desconhecidos; `start_item_id` dentro de `known_item_ids`; pergunta pendente; chamada repetida.
-- **Desfazer:** `POST /api/tracks/{id}/leveling/{session_id}/undo`, válido só enquanto nenhum item mudou depois.
+- **Recusas:** `plan_init`, `quiz`, `explain`, `probe_done` e `plan_advance` em `leveling`; `leveling_done` fora de `leveling`; ids desconhecidos ou já concluídos; `start_item_id` dentro de `known_item_ids`; item conhecido com pré-requisito pendente não conhecido; mais de 12 perguntas; pergunta pendente; chamada repetida.
+- **Resultado:** `GET /api/chats/{id}` traz `leveling` (`known_items`, `start_item`, `summary`, `snapshot`, `undone_at`). Para sessões `leveling`, o loader troca `prober/10-diagnosis.md` e `20-contexts.md` por `30-leveling.md`.
+- **Desfazer:** `POST /api/tracks/{id}/leveling/{session_id}/undo`, válido só enquanto os itens marcados continuam `nivelado` e o passo inicial continua pendente e ativo.
 - **Prompt:** novo fragmento `prober/30-leveling.md`, carregado só nesse contexto.
 - **Frontend:** `LevelingDoneCard` na transcrição e chip de fase "Nivelamento".
 

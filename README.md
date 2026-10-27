@@ -27,7 +27,7 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 2. **A Trilha é Configurada no Setup e Conduzida pelo Harness:**
    - No Setup Inicial (ou em `Settings`), o usuário configura sua Trilha (via repositório/currículo + nivelamento adaptativo, objetivo descrito para geração automática, ou modo livre). A partir daí, o próprio Harness conduz o aluno exibindo o próximo passo num *chip* discreto acima do composer (`⇶ Trilha ativa · Próximo: ... [Continuar ↵]`).
 3. **Um Único Grafo Central (Sem Divisão `Macro | Micro`):**
-   - A Home apresenta **uma única visualização de grafo** em Canvas 2D acompanhada do botão `☍ Chains`. Nos bastidores, o sistema mantém cada conceito sincronizado com `Conceitos/<Tema>.md` no Vault e as proposições/cadeias indexadas em `.harness/chains.jsonl`.
+   - A Home apresenta **uma única visualização de grafo** em Canvas 2D acompanhada do botão `☍ Chains`. Nos bastidores, o sistema mantém cada conceito sincronizado com `Conceitos/<Tema>.md` no Vault e as proposições, cadeias e cobertura em `.harness/graph/{nodes,chains,coverage}.jsonl` (append-only; o grafo cresce sozinho a partir do que é ensinado).
 4. **Persistência Dupla Não-Destrutiva (`UI ⇄ Vault`):**
    - Tudo acontece na UI Web **e** vive simultaneamente em Markdown/Excalidraw reais no Vault do usuário. Se o usuário não tiver um Vault no primeiro acesso, a plataforma cria e estrutura tudo automaticamente; se já tiver, adota sem sobrescrever nada.
 5. **Execução Oficial na Assinatura Google (Zero Custo Extra de API):**
@@ -36,7 +36,7 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
      2. Google Antigravity CLI (`agy --input-format stream-json --output-format stream-json` + `--json-schema` + `--effort`).
      3. Fallback opcional via SDK oficial `google-genai` (`GEMINI_API_KEY` / Vertex AI).
 6. **Arquitetura Hexagonal + Orquestração Híbrida (`FastMCP` + `LangGraph`):**
-   - `backend/core/` puro em Python (`Pydantic`, zero I/O); sessões interativas ao vivo (`Prober → Teacher` e `Practice` com dicas `R0–R5`) rodam no loop nativo do `agy`/`gemini` falando com um servidor **`FastMCP`** local; esteiras multi-etapa em background (*Graph Extraction* e geração paralela de *Problem Sets*) rodam em **`LangGraph`** (`StateGraph` + `Send` + `AsyncSqliteSaver`).
+   - `backend/core/` puro em Python (`Pydantic`, zero I/O); sessões interativas ao vivo (`Prober → Teacher` e `Practice` com dicas `R0–R5`) rodam no loop nativo do `agy`/`gemini` falando com um servidor **`FastMCP`** local; a esteira de extração do grafo (*extrator → auditor → merger*) roda em background em **`LangGraph`** (`StateGraph` + `AsyncSqliteSaver`); a prática é uma sessão (`problem`/`conclude`), não um lote de exercícios.
 
 ---
 
