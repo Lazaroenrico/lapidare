@@ -122,7 +122,7 @@ async def test_session_usage_accumulates_and_jobs_feed_the_ledger(metered, monke
     usage = state.sessions.get(session.id).usage
     assert (usage.input_tokens, usage.output_tokens, usage.thinking_tokens, usage.turns) == (200, 20, 10, 2)
 
-    async def generate():
+    async def generate(track_id=None, *, regenerate=False):
         report_usage("bg-model", {"input_tokens": 50, "output_tokens": 5})
 
     monkeypatch.setattr(state.tracks, "generate", generate)

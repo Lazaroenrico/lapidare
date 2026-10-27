@@ -186,7 +186,7 @@ def test_resources_server_list_import_and_versions(
     assert "Atenção compara consultas e chaves. ^p1" in text and "^p2" in text
     meta = _frontmatter(target)
     assert meta["source_kind"] == "mcp" and meta["mcp_server"] == "docs"
-    assert meta["mcp_item_id"] == "lesson://intro" and meta["origem"] == "docs"
+    assert meta["mcp_item_id"] == "lesson://intro" and meta["origem"] == "MCP: docs"
 
     items = {i["id"]: i for i in api_client.get("/api/import/mcp/servers/docs/items").json()}
     assert items["lesson://intro"]["is_new"] is False and items["lesson://kv"]["is_new"] is True

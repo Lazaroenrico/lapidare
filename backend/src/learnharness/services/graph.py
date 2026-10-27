@@ -201,17 +201,23 @@ class GraphService:
 
         self._legacy(nodes, out_nodes, out_chains, edges, clusters, position)
 
+        # Fase 14: every non-archived track; a step is ``track:<track_id>:<item_id>``.
         roadmap = []
-        track = config.track
-        if track.queue:
+        step_of: dict[str, tuple[str, str]] = {}  # session id -> (track id, item id)
+        for sid, s in sessions.items():
+            if s.track_item_id and (owner := config.session_track(s.track_id, s.track_item_id)):
+                step_of[sid] = (owner.id, s.track_item_id)
+        for track in config.tracks:
+            if track.archived:
+                continue
             for item in track.queue:
                 status = "completed" if item.completed else ("active" if item.id == track.active_item_id else "pending")
                 linked = [n.id for n in nodes.values()
-                          if any(p.session_id in sessions and sessions[p.session_id].track_item_id == item.id
-                                 for p in n.provenance)]
-                roadmap.append({"id": f"track:{item.id}", "title": item.title, "status": status,
+                          if any(step_of.get(p.session_id) == (track.id, item.id) for p in n.provenance)]
+                roadmap.append({"id": f"track:{track.id}:{item.id}", "title": item.title, "status": status,
+                                "track_id": track.id, "track_title": track.title,
                                 "linked_node_ids": linked,
-                                "depends_on": [f"track:{p}" for p in item.prerequisites]})
+                                "depends_on": [f"track:{track.id}:{p}" for p in item.prerequisites]})
         return {"nodes": out_nodes, "edges": edges, "chains": out_chains,
                 "clusters": list(clusters.values()), "roadmap": roadmap, "updated_at": _now()}
 

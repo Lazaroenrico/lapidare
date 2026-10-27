@@ -13,7 +13,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from learnharness.api.state import AppState
-from learnharness.core.contracts.config import TrackItem, TrackMode
+from learnharness.core.contracts.config import TrackConfig, TrackItem, TrackMode
 from learnharness.core.contracts.graph import ExtractionPayload
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.pipelines.extraction import refresh_notes
@@ -91,17 +91,34 @@ def test_graph_snapshot_shape_clusters_and_legacy(client_vault) -> None:
 def test_roadmap_links_track_items_to_session_nodes(client_vault) -> None:
     client, vault = client_vault
     config = load_config(vault)
-    config.track.mode = TrackMode.GOAL_GENERATED
-    config.track.queue = [TrackItem(id="t1", title="Álgebra", completed=True),
-                          TrackItem(id="t2", title="Atenção", prerequisites=["t1"])]
-    config.track.active_item_id = "t2"
+    config.tracks = [
+        TrackConfig(id="trk-a", title="IA", mode=TrackMode.GOAL_GENERATED, active_item_id="t2",
+                    queue=[TrackItem(id="t1", title="Álgebra", completed=True),
+                           TrackItem(id="t2", title="Atenção", prerequisites=["t1"])]),
+        # Same item id in another track: ids are unique only within a track.
+        TrackConfig(id="trk-b", title="Cálculo", source="manual", active_item_id="t1",
+                    queue=[TrackItem(id="t1", title="Limites")]),
+        TrackConfig(id="trk-z", title="Arquivada", archived=True, queue=[TrackItem(id="x", title="X")]),
+    ]
+    config.active_track_id = "trk-a"
     save_config(vault, config)
-    _seed(vault)
+    _seed(vault)  # sess-1 predates Fase 14 (no track_id): it belongs to the active track
     roadmap = client.get("/api/graph").json()["roadmap"]
     assert roadmap == [
-        {"id": "track:t1", "title": "Álgebra", "status": "completed", "linked_node_ids": [A, B], "depends_on": []},
-        {"id": "track:t2", "title": "Atenção", "status": "active", "linked_node_ids": [], "depends_on": ["track:t1"]},
+        {"id": "track:trk-a:t1", "title": "Álgebra", "status": "completed", "track_id": "trk-a",
+         "track_title": "IA", "linked_node_ids": [A, B], "depends_on": []},
+        {"id": "track:trk-a:t2", "title": "Atenção", "status": "active", "track_id": "trk-a",
+         "track_title": "IA", "linked_node_ids": [], "depends_on": ["track:trk-a:t1"]},
+        {"id": "track:trk-b:t1", "title": "Limites", "status": "active", "track_id": "trk-b",
+         "track_title": "Cálculo", "linked_node_ids": [], "depends_on": []},
     ]
+
+    # A session explicitly on (trk-b, t1) links its nodes there, not to (trk-a, t1).
+    append_session_event(vault, "sess-1", SessionRecord(id="sess-1", title="Álgebra linear", track_item_id="t1",
+                                                         track_id="trk-b", sequence=5,
+                                                         lesson_vault_path="Aulas/2026-10-27 Álgebra linear.md"))
+    linked = {r["id"]: r["linked_node_ids"] for r in client.get("/api/graph").json()["roadmap"]}
+    assert linked["track:trk-b:t1"] == [A, B] and linked["track:trk-a:t1"] == []
 
 
 def test_delete_node_tombstones_and_keeps_user_text(client_vault) -> None:

@@ -87,8 +87,11 @@ class JobManager:
             record["result_id"] = payload["session_id"]
             record["result"] = {k: summary[k] for k in ("batches", "new_node_ids", "new_chain_ids")}
         elif kind == "track_gen":
-            await self.state.tracks.generate()
-            record["result_id"] = "track"
+            # Payload: {track_id, regenerate}; jobs from before Fase 14 carry no track_id
+            # and mean the active track.
+            track = await self.state.tracks.generate(payload.get("track_id"),
+                                                     regenerate=bool(payload.get("regenerate")))
+            record["result_id"] = (track or {}).get("id") or "track"
         elif kind == "demo_builder":
             from learnharness.services.demos import run_demo_job
             result = await run_demo_job(self.state, payload)

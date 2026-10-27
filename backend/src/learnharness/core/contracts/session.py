@@ -200,6 +200,8 @@ class SessionRecord(BaseModel):
     phase: SessionPhase = "probing"
     source_path: str | None = None
     track_item_id: str | None = None
+    # Fase 14: track of ``track_item_id`` (None on older sessions: the track then in focus).
+    track_id: str | None = None
     lesson_vault_path: str | None = None
     plan: PlanDag = Field(default_factory=PlanDag)
     messages: list[SessionMessage] = Field(default_factory=list)

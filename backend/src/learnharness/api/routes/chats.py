@@ -23,6 +23,7 @@ class CreateChatPayload(BaseModel):
     topic: str | None = Field(default=None, max_length=10000)
     source_file: str | None = None
     track_item_id: str | None = None
+    track_id: str | None = None  # Fase 14; without it the step belongs to the active track
     graph_context: list[str] = Field(default_factory=list, max_length=64)
     # Optional per-session model/effort (the strong slot's engine is kept).
     model_id: str | None = Field(default=None, max_length=200)

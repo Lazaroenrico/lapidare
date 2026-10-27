@@ -80,16 +80,22 @@ def import_transcript_text(
     subdir: str | None = None,
     provenance: dict[str, Any] | None = None,
     filename: str | None = None,
+    mcp_server: str | None = None,
+    mcp_item_id: str | None = None,
 ) -> tuple[Path, int]:
     """Import a raw transcript or document into Fontes/ with ^pN citations.
 
     Never modifies words. Appends ^p1..^pN to each paragraph.
     Raises FileExistsError if target exists and force is False.
+    ``mcp_server`` / ``mcp_item_id`` record which content MCP server (any, e.g. Praxis) and
+    item the text came from (``origem: "MCP: <server>"``); ``praxis_id`` is the deprecated
+    spelling of ``mcp_item_id``.
     ``subdir`` places the file under ``<sources_dir>/<subdir>`` (each component validated);
-    ``provenance`` adds frontmatter keys (e.g. source_kind, source_url, commit, mcp_server).
+    ``provenance`` adds frontmatter keys (e.g. source_kind, source_url, commit).
     ``filename`` overrides the title-derived file stem (e.g. a repository path stem).
     Returns (target_file_path, paragraph_count).
     """
+    mcp_item_id = mcp_item_id or praxis_id
     vault_path = Path(vault_path).resolve()
     folders = folder_map(vault_path)
     target_dir = safe_path(vault_path, folders.sources_dir)
@@ -132,8 +138,9 @@ def import_transcript_text(
         "tipo": tipo,
         "modulo": modulo or "",
         "importado": today,
-        "praxis_id": praxis_id or "",
-        "origem": "Praxis" if praxis_id else "Import",
+        "mcp_server": mcp_server or "",
+        "mcp_item_id": mcp_item_id or "",
+        "origem": f"MCP: {mcp_server}" if mcp_server else "Import",
         "paragrafos": len(numbered_paragraphs),
         "palavras": total_words,
         "content_sha256": revision(raw_text),

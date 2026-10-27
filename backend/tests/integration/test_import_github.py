@@ -15,7 +15,7 @@ import pytest
 import yaml
 from starlette.testclient import TestClient
 
-from learnharness.core.contracts.config import TrackItem
+from learnharness.core.contracts.config import TrackConfig, TrackItem
 from learnharness.services.tracks import GeneratedTrack
 from learnharness.vault import github_source
 from learnharness.vault.bootstrap import load_config, save_config
@@ -225,32 +225,58 @@ def test_import_rejects_paths_outside_listing(api_client: TestClient, configured
     assert not (configured_vault / "Fontes/GitHub").exists()
 
 
-def test_use_as_track_requires_replace_and_submits_job(api_client: TestClient, configured_vault: Path,
-                                                        fake_engine: FakeEngine) -> None:
+def test_use_as_track_creates_a_new_track_and_keeps_the_others(
+        api_client: TestClient, configured_vault: Path, fake_engine: FakeEngine) -> None:
     config = load_config(configured_vault)
-    config.track.queue = [TrackItem(id="old", title="Trilha existente")]
+    config.tracks = [TrackConfig(id="trk-old", title="Trilha existente", source="manual",
+                                 queue=[TrackItem(id="old", title="Passo antigo")])]
+    config.active_track_id = "trk-old"
     save_config(configured_vault, config)
-    body = {"url": REPO_URL, "paths": [], "start_session": False, "use_as_track": True}
-    res = api_client.post("/api/import/github/import", json=body)
-    assert res.status_code == 409
-    assert load_config(configured_vault).track.queue[0].id == "old"
 
     fake_engine.program(GeneratedTrack, {"items": [
         {"id": "intro", "title": "Introdução", "kind": "curriculo", "source_ref": "lessons/01-intro.md"},
         {"id": "readme", "title": "Visão geral", "kind": "curriculo", "source_ref": "README.md",
          "prerequisites": ["intro"]},
     ]})
+    body = {"url": REPO_URL, "paths": [], "start_session": False, "use_as_track": True}
+    # replace_track is accepted and ignored: nothing is replaced anymore.
     res = api_client.post("/api/import/github/import", json={**body, "replace_track": True})
     assert res.status_code == 200, res.text
-    job_id = res.json()["track_job_id"]
-    assert job_id
+    data = res.json()
+    assert data["track_job_id"] and data["track_id"]
+    track_id = data["track_id"]
     config = poll_until(lambda: load_config(configured_vault),
-                        lambda c: bool(c.track.queue) and c.track.queue[0].id == "intro")
+                        lambda c: bool(c.find_track(track_id) and c.find_track(track_id).queue))
     clone = (configured_vault / ".harness/repos/acme__course@default").resolve()
-    assert config.track.mode == "repo_leveling"
-    assert Path(config.track.repo_path) == clone
-    assert config.track.queue[0].source_ref == str(clone / "lessons/01-intro.md")
+    track = config.find_track(track_id)
+    assert [t.id for t in config.tracks] == ["trk-old", track_id]
+    assert config.find_track("trk-old").queue[0].id == "old"
+    assert config.active_track_id == track_id
+    assert (track.source, track.title, track.mode) == ("github", "acme/course", "repo_leveling")
+    assert track.github_url == REPO_URL
+    assert Path(track.repo_path) == clone
+    assert track.queue[0].source_ref == str(clone / "lessons/01-intro.md")
+    assert state_job_key(api_client, data["track_job_id"]) == f"track:{track_id}"
     assert "lessons/01-intro.md — Introdução a Tokens" in fake_engine.structured_calls[0]["prompt"]
+
+
+def state_job_key(client: TestClient, job_id: str) -> str:
+    return client.app.state.learnharness_state.active_jobs[job_id]["dedup_key"]
+
+
+def test_create_github_track_clones_and_generates(api_client: TestClient, configured_vault: Path,
+                                                  fake_engine: FakeEngine) -> None:
+    fake_engine.program(GeneratedTrack, {"items": [
+        {"id": "intro", "title": "Introdução", "kind": "curriculo", "source_ref": "lessons/01-intro.md"},
+    ]})
+    res = api_client.post("/api/tracks", json={"source": "github", "github_url": REPO_URL, "title": ""})
+    assert res.status_code == 200, res.text
+    created = res.json()
+    assert created["title"] == "acme/course" and created["source"] == "github" and created["active"]
+    config = poll_until(lambda: load_config(configured_vault),
+                        lambda c: bool(c.find_track(created["id"]).queue))
+    clone = (configured_vault / ".harness/repos/acme__course@default").resolve()
+    assert Path(config.find_track(created["id"]).repo_path) == clone
 
 
 def _tiny_pdf(text_lines: list[str]) -> bytes:

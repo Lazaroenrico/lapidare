@@ -21,10 +21,12 @@ from learnharness.core.contracts.config import (
     TrackMode,
     VaultFolderMap,
     default_slots,
+    derive_track_title,
 )
 from learnharness.core.events import SseEventType
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.engines.detector import detect_connectors, get_default_engine
+from learnharness.services.sessions import now
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import atomic_write, safe_path, validate_folders
 
@@ -61,11 +63,54 @@ class ProbeResult(BaseModel):
     ready: bool
 
 
-def _serialize_config_for_frontend(config: HarnessConfig) -> dict[str, Any]:
+def _matching_track(config: HarnessConfig, wanted: TrackConfig) -> TrackConfig | None:
+    """An existing track for the same repository or goal (re-running setup adds no duplicate)."""
+    repo = str(Path(wanted.repo_path).expanduser().resolve()) if wanted.repo_path else None
+    goal = (wanted.goal_description or "").strip()
+    for track in config.tracks:
+        if repo and track.repo_path == repo:
+            return track
+        if not repo and goal and not track.repo_path and (track.goal_description or "").strip() == goal:
+            return track
+    return None
+
+
+def _apply_setup_track(target: TrackConfig, wanted: TrackConfig, language: str) -> None:
+    """Fill ``target`` from the setup payload's track, adopting a parsed queue unless the
+    payload brings an explicit one."""
+    target.mode = wanted.mode
+    target.archived = False
+    if wanted.repo_path:
+        target.repo_path = str(Path(wanted.repo_path).expanduser().resolve())
+    if wanted.goal_description:
+        target.goal_description = wanted.goal_description
+    if wanted.learning_md_path:
+        target.learning_md_path = wanted.learning_md_path
+    if "queue" in wanted.model_fields_set or "items" in wanted.model_fields_set or wanted.queue:
+        target.queue = wanted.queue
+        target.active_item_id = wanted.active_item_id or next((i.id for i in wanted.queue if not i.completed), None)
+    if target.source != "legacy":
+        target.source = "repo" if target.repo_path else ("goal" if target.mode == TrackMode.GOAL_GENERATED or not target.queue else "manual")
+    target.title = wanted.title.strip() or target.title or derive_track_title(target, language)
+
+
+def _legacy_track_shape(config: HarnessConfig) -> dict[str, Any]:
+    """The track in focus in the pre-Fase-14 shape (``active``, ``current_step_id``, ``items``)."""
+    track = config.active_track() or TrackConfig(id="", title="")
+    data = track.model_dump(mode="json")
+    data.update({"active": bool(track.active_item_id or track.queue), "current_step_id": track.active_item_id,
+                 "items": [{**it.model_dump(mode="json"), "source_path": it.source_ref} for it in track.queue]})
+    return data
+
+
+def _serialize_config_for_frontend(config: HarnessConfig, state: Any) -> dict[str, Any]:
     data = config.model_dump(mode="json")
     data["initialized"] = config.configured
     data["vault_folders"] = {"aulas": config.folders.lessons_dir, "conceitos": config.folders.concepts_dir, "fontes": config.folders.sources_dir, "desenhos": config.folders.drawings_dir, "viz": config.folders.viz_dir, "templates": config.folders.templates_dir}
-    data["track"].update({"active": bool(config.track.active_item_id or config.track.queue), "current_step_id": config.track.active_item_id, "items": [{**it.model_dump(mode="json"), "source_path": it.source_ref} for it in config.track.queue]})
+    # Fase 14: ``tracks`` in the GET /api/tracks shape; ``track`` stays as the active one (compat).
+    data["tracks"] = state.tracks.list_tracks(config)
+    data["active_track_id"] = config.active_track_id
+    data["track"] = _legacy_track_shape(config)
     return data
 
 
@@ -74,7 +119,11 @@ async def get_setup_status(request: Request):
     state = get_app_state(request.app)
     config = state.get_config()
     connectors = [{**c.model_dump(mode="json"), "name": c.engine.value.upper(), "details": c.detail, "available_models": c.models} for c in detect_connectors()]
-    return {"initialized": config.configured, "configured": config.configured, "config": _serialize_config_for_frontend(config) if config.configured else None, "connectors": connectors}
+    return {"initialized": config.configured, "configured": config.configured,
+            "config": _serialize_config_for_frontend(config, state) if config.configured else None,
+            "tracks": state.tracks.list_tracks(config) if config.configured else [],
+            "active_track_id": config.active_track_id if config.configured else None,
+            "connectors": connectors}
 
 
 @setup_router.get("/models")
@@ -136,12 +185,17 @@ async def complete_setup(payload: SetupCompletePayload, request: Request):
         # First setup without explicit slots: use the connector that actually works here
         # (agy before gemini CLI, whose individual accounts are blocked since 0.62).
         config.slots = default_slots(get_default_engine())
-    if track:
-        # Adopt parsed queues unless an explicit replacement queue was provided.
-        if "queue" not in track.model_fields_set and config.track.queue:
-            track.queue = config.track.queue
-            track.active_item_id = config.track.active_item_id
-        config.track = track
+    setup_track = None
+    if track and (track.mode != TrackMode.FREE or track.queue):
+        # Fase 14: the setup's track is *added* (never replaces the others). On a first
+        # setup, bootstrap may already have seeded one from the repository / parsed map:
+        # that one is completed with the payload instead of duplicated.
+        seeded = config.tracks[0] if first_setup and config.tracks else None
+        setup_track = seeded or _matching_track(config, track) or TrackConfig(created_at=now())
+        _apply_setup_track(setup_track, track, config.language)
+        if setup_track not in config.tracks:
+            config.tracks.append(setup_track)
+        config.active_track_id = setup_track.id
     if payload.content_mcps is not None:
         config.content_mcps = payload.content_mcps
     config.vault_path = str(target)
@@ -154,11 +208,13 @@ async def complete_setup(payload: SetupCompletePayload, request: Request):
     if not state.explicit_vault:
         registry = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "learnharness" / "active-vault"
         atomic_write(registry, str(target))
-    if config.track.mode != TrackMode.FREE and not config.track.queue:
-        state.jobs.submit("track_gen", {"topic": config.track.goal_description or "Curriculum"}, key="track:initial")
+    for pending in config.tracks:
+        if pending.mode != TrackMode.FREE and not pending.queue and not pending.archived:
+            state.tracks.submit_generation(pending)
     state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"vault_path": str(target)})
+    state.sse_hub.broadcast(SseEventType.CONFIG_UPDATED, {"tracks": True})
     state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {})
-    return {"success": True, "config": _serialize_config_for_frontend(config)}
+    return {"success": True, "config": _serialize_config_for_frontend(config, state)}
 
 
 class AgyPermissionPayload(BaseModel):
