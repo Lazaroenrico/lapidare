@@ -21,6 +21,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  X,
 } from "lucide-react";
 import type { BackgroundJobStatus, SessionMode, SessionRecord } from "@/lib/types";
 import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
@@ -44,6 +45,8 @@ import { requestComposerFocus } from "./composer-focus";
 import { SettingsComboHint } from "./use-combo-label";
 import { useTracks } from "./use-tracks";
 import { TrackDot } from "./tracks-ui";
+import { useNarrowViewport } from "./nav-drawer";
+import { sidebarPresentation, toggleSidebarAction, TOGGLE_NAV_DRAWER_EVENT } from "@/lib/nav-drawer";
 import {
   filterByTrack,
   orderTracks,
@@ -126,7 +129,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   // Uncontrolled by default (the root layout passes nothing): remembered per browser.
   const [collapsedState, setCollapsedState] = useState(false);
   useEffect(() => setCollapsedState(loadCollapsed()), []);
-  const collapsed = collapsedProp ?? collapsedState;
+  const collapsedPref = collapsedProp ?? collapsedState;
   const onToggleCollapse = () => {
     if (onToggleProp) return onToggleProp();
     setCollapsedState((prev) => {
@@ -134,6 +137,50 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
       return !prev;
     });
   };
+
+  // Narrow viewports (< md): off-canvas drawer, closed by default, never persisted.
+  const narrow = useNarrowViewport();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const view = sidebarPresentation(narrow, collapsedPref, drawerOpen);
+  const collapsed = view.variant === "rail";
+  const asideRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const closeDrawer = () => setDrawerOpen(false);
+  useEffect(() => {
+    const onToggle = () => {
+      setDrawerOpen((open) => {
+        if (!open && document.activeElement instanceof HTMLElement) returnFocusRef.current = document.activeElement;
+        return !open;
+      });
+    };
+    window.addEventListener(TOGGLE_NAV_DRAWER_EVENT, onToggle);
+    return () => window.removeEventListener(TOGGLE_NAV_DRAWER_EVENT, onToggle);
+  }, []);
+  // Navigating (a session row, Settings, the logo) or widening the window closes it.
+  useEffect(() => setDrawerOpen(false), [pathname, narrow]);
+  // Esc closes first (capture phase + preventDefault, so the session's Esc chain does not also run).
+  useEffect(() => {
+    if (!view.open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [view.open]);
+  // Focus moves into the drawer when it opens and back to the ☰ button when it closes.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (view.open && !wasOpenRef.current) {
+      asideRef.current?.querySelector<HTMLElement>("button, a[href], input")?.focus();
+    } else if (!view.open && wasOpenRef.current) {
+      const target = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (target?.isConnected && !asideRef.current?.contains(target)) target.focus();
+    }
+    wasOpenRef.current = view.open;
+  }, [view.open]);
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<Record<string, string>>({});
   // `activeJobs` holds every known job record; only queued/running ones are "busy".
@@ -270,9 +317,15 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   useEffect(() => {
     setSearchCombo(formatCombo(comboFor("sessionSearch"), /Mac|iPhone|iPad/.test(navigator.platform)));
   }, []);
-  useShortcut("toggleSidebar", () => onToggleCollapse());
+  useShortcut("toggleSidebar", () => {
+    if (toggleSidebarAction(narrow) === "drawer") window.dispatchEvent(new CustomEvent(TOGGLE_NAV_DRAWER_EVENT));
+    else onToggleCollapse();
+  });
   useShortcut("sessionSearch", () => {
-    if (collapsed) {
+    if (view.drawer && !view.open) {
+      window.dispatchEvent(new CustomEvent(TOGGLE_NAV_DRAWER_EVENT));
+      setPendingSearchFocus(true);
+    } else if (collapsed) {
       onToggleCollapse();
       setPendingSearchFocus(true);
     } else {
@@ -280,11 +333,12 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
       searchRef.current?.select();
     }
   });
+  const searchHidden = collapsed || (view.drawer && !view.open);
   useEffect(() => {
-    if (!pendingSearchFocus || collapsed) return;
+    if (!pendingSearchFocus || searchHidden) return;
     searchRef.current?.focus();
     setPendingSearchFocus(false);
-  }, [pendingSearchFocus, collapsed]);
+  }, [pendingSearchFocus, searchHidden]);
   useShortcut("newSession", () => {
     router.push("/");
     requestComposerFocus();
@@ -443,7 +497,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
 
   if (collapsed) {
     return (
-      <aside className="w-14 bg-background border-r border-border flex flex-col justify-between items-center py-4 select-none shrink-0 transition-all duration-200 z-30">
+      <aside className="w-14 bg-background border-r border-border flex flex-col justify-between items-center py-4 select-none shrink-0 transition-all duration-200 z-30 max-md:hidden">
         <div className="flex flex-col items-center gap-4 w-full">
           <button
             type="button"
@@ -512,8 +566,30 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     );
   }
 
+  // Below `md` the CSS alone keeps the panel off-canvas until opened (also on the first,
+  // server-rendered paint); no transform while open, so `fixed` dialogs inside stay viewport-fixed.
+  const drawerClasses = `max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:max-w-[85vw] ${
+    view.open ? "max-md:shadow-2xl" : "max-md:-translate-x-full"
+  }`;
+
   return (
-    <aside className="w-[260px] bg-background border-r border-border flex flex-col justify-between select-none shrink-0 h-screen overflow-hidden text-xs font-ui transition-all duration-200 z-30">
+    <>
+    {view.open && (
+      <div
+        aria-hidden
+        onClick={closeDrawer}
+        className="fixed inset-0 z-40 bg-background/70 backdrop-blur-[2px] md:hidden"
+      />
+    )}
+    <aside
+      ref={asideRef}
+      id="app-sidebar"
+      inert={view.drawer && !view.open}
+      role={view.drawer ? "dialog" : undefined}
+      aria-modal={view.open ? true : undefined}
+      aria-label={view.drawer ? "Lapidare" : undefined}
+      className={`w-[260px] bg-background border-r border-border flex flex-col justify-between select-none shrink-0 h-screen h-dvh overflow-hidden text-xs font-ui transition-all duration-200 z-30 ${drawerClasses}`}
+    >
       {/* Top Header & Quick Actions */}
       <div className="p-3 border-b border-border flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
@@ -528,11 +604,20 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="p-1 text-muted-foreground hover:text-foreground hover:bg-card rounded cursor-pointer transition-colors"
+            className="p-1 text-muted-foreground hover:text-foreground hover:bg-card rounded cursor-pointer transition-colors max-md:hidden"
             title={t.collapseSidebar}
             aria-label={t.collapseSidebar}
           >
             <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={closeDrawer}
+            className="p-1 text-muted-foreground hover:text-foreground hover:bg-card rounded cursor-pointer transition-colors md:hidden"
+            title={t.closeNav}
+            aria-label={t.closeNav}
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -952,5 +1037,6 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
         </label>
       </ConfirmDialog>
     </aside>
+    </>
   );
 }

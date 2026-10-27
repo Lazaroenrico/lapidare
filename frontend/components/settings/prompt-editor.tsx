@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Loader2, RotateCcw, Save } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, RotateCcw, Save, X } from "lucide-react";
 import { deletePrompt, listPrompts, putPrompt } from "@/lib/settings-api";
-import { groupPrompts, promptLabel, type PromptSegment } from "@/lib/settings-wire";
+import { groupPrompts, promptBaseline, promptDirty, promptLabel, type PromptSegment } from "@/lib/settings-wire";
 import { settingsText } from "@/lib/settings-i18n";
 import { useLocale } from "@/components/locale-provider";
 import { buttonClass, Card, InlineStatus, SectionHeader, Switch } from "./ui";
@@ -16,16 +16,25 @@ function PromptRow({ segment, onSaved }: { segment: PromptSegment; onSaved: (nex
   const s = settingsText(locale);
   const [open, setOpen] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [draft, setDraft] = useState(segment.override ?? segment.source);
-  const [enabled, setEnabled] = useState(segment.override !== null ? segment.enabled : true);
+  const [draft, setDraft] = useState(() => promptBaseline(segment).text);
+  const [enabled, setEnabled] = useState(() => promptBaseline(segment).enabled);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>(null);
+  const dirty = promptDirty(segment, draft, enabled);
 
   // Server state changed (save/restore here or another window): reset the editor to it.
-  useEffect(() => {
-    setDraft(segment.override ?? segment.source);
-    setEnabled(segment.override !== null ? segment.enabled : true);
-  }, [segment.override, segment.enabled, segment.source]);
+  const discard = () => {
+    const base = promptBaseline(segment);
+    setDraft(base.text);
+    setEnabled(base.enabled);
+  };
+  useEffect(discard, [segment.override, segment.enabled, segment.source]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A stale "saved"/"restored" line would contradict fresh edits.
+  const edit = (apply: () => void) => {
+    apply();
+    setStatus(null);
+  };
 
   const run = async (action: () => Promise<PromptSegment>, ok: string) => {
     setBusy(true);
@@ -55,11 +64,14 @@ function PromptRow({ segment, onSaved }: { segment: PromptSegment; onSaved: (nex
           className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer text-foreground"
         >
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-          <span className="font-ui text-[12.5px] truncate">{promptLabel(segment.path)}</span>
-          <span className="font-ui text-[11px] text-muted-foreground truncate">{segment.path}</span>
+          <span className="font-ui text-[12.5px] truncate shrink-0 max-w-full">{promptLabel(segment.path)}</span>
+          <span className="font-ui text-[11px] text-muted-foreground truncate min-w-0 max-sm:hidden">{segment.path}</span>
+          {dirty && (
+            <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title={s.promptDirty} aria-label={s.promptDirty} />
+          )}
         </button>
         <span
-          className={`font-ui text-[10px] px-1.5 rounded border ${
+          className={`font-ui text-[10px] px-1.5 rounded border shrink-0 whitespace-nowrap ${
             segment.override !== null && segment.enabled ? "border-warning/50 text-warning" : "border-border text-muted-foreground"
           }`}
         >
@@ -82,7 +94,7 @@ function PromptRow({ segment, onSaved }: { segment: PromptSegment; onSaved: (nex
             {showOriginal && (
               <pre
                 aria-label={s.promptOriginal}
-                className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap p-3 rounded border border-border bg-card font-ui text-[11px] leading-relaxed text-muted-foreground"
+                className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] p-3 rounded border border-border bg-card font-ui text-[11px] leading-relaxed text-muted-foreground"
               >
                 {segment.source}
               </pre>
@@ -95,19 +107,31 @@ function PromptRow({ segment, onSaved }: { segment: PromptSegment; onSaved: (nex
           <textarea
             id={`${editorId}-text`}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={12}
+            onChange={(e) => edit(() => setDraft(e.target.value))}
+            rows={14}
             spellCheck={false}
-            className="w-full bg-card border border-border rounded px-3 py-2 font-ui text-[12px] leading-relaxed text-foreground resize-y"
+            aria-describedby={dirty ? `${editorId}-dirty` : undefined}
+            className="w-full min-h-[12rem] max-h-[70vh] bg-card border border-border focus:border-muted-foreground rounded px-3 py-2 font-ui text-[12px] leading-relaxed text-foreground resize-y transition-colors"
           />
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 font-ui text-[11px] text-foreground">
-              <Switch checked={enabled} onChange={setEnabled} label={s.promptEnabled} disabled={busy} />
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <label className="flex items-center gap-2 font-ui text-[11px] text-foreground cursor-pointer">
+              <Switch checked={enabled} onChange={(next) => edit(() => setEnabled(next))} label={s.promptEnabled} disabled={busy} />
               {s.promptEnabled}
             </label>
-            <div className="ml-auto flex items-center gap-2">
+            {dirty && (
+              <span id={`${editorId}-dirty`} className="font-ui text-[11px] text-warning">
+                {s.promptDirty}
+              </span>
+            )}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
               <InlineStatus status={status} />
+              {dirty && (
+                <button type="button" disabled={busy} onClick={() => edit(discard)} className={buttonClass}>
+                  <X className="w-3 h-3" />
+                  {s.promptDiscard}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={busy || segment.override === null}
@@ -119,7 +143,7 @@ function PromptRow({ segment, onSaved }: { segment: PromptSegment; onSaved: (nex
               </button>
               <button
                 type="button"
-                disabled={busy || !draft.trim()}
+                disabled={busy || !dirty || !draft.trim()}
                 onClick={() => void run(() => putPrompt(segment.path, draft, enabled), s.promptSaved)}
                 className={buttonClass}
               >
@@ -167,7 +191,7 @@ export function PromptEditor() {
       {segments && segments.length === 0 && <p className="font-ui text-[11px] text-muted-foreground">{s.promptsEmpty}</p>}
       {segments &&
         groupPrompts(segments).map((group) => (
-          <Card key={group.id}>
+          <Card key={group.id} className="max-sm:px-2.5">
             <h3 className="font-ui text-[11px] uppercase tracking-wider text-muted-foreground">
               {s.promptGroups[group.id]} <span className="normal-case">· {group.segments.length}</span>
             </h3>

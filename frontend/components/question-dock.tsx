@@ -75,7 +75,8 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
   useEffect(() => rememberQuiz(quiz), [quiz]);
 
   // Dictation follows the active field.
-  const dictation = useDictation(locale);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const dictation = useDictation(locale, { field: rootRef, enabled: result === null });
   const setters: Record<Field, React.Dispatch<React.SetStateAction<string>>> = {
     reading: setReadingThinking,
     text: setText,
@@ -274,7 +275,7 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
   // CHECK waits collapsed: the reading-thinking field is the only open input.
   if (!revealed) {
     return (
-      <div className={`my-4 rounded-lg bg-card border border-border overflow-hidden ${className}`} onKeyDown={onKeyDown}>
+      <div ref={rootRef} className={`my-4 shrink-0 rounded-lg bg-card border border-border overflow-hidden ${className}`} onKeyDown={onKeyDown}>
         {header}
         <div className="p-4 flex flex-col gap-3">
           {readingField}
@@ -301,7 +302,7 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
   rowRefs.current.length = rows.length;
 
   return (
-    <div className={`my-4 rounded-lg bg-card border border-border overflow-hidden ${className}`} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={`my-4 shrink-0 rounded-lg bg-card border border-border overflow-hidden ${className}`} onKeyDown={onKeyDown}>
       {header}
       <div className="p-5 flex flex-col gap-4">
         {isCheck && readingThinking.trim() && (

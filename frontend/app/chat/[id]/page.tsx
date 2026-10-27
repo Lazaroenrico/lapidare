@@ -47,6 +47,8 @@ import {
   visibleLocalSteers,
 } from "@/lib/session-ux";
 import { useShortcut } from "@/components/use-shortcut";
+import { appendDictation, useDictation } from "@/components/use-dictation";
+import { NavDrawerButton } from "@/components/nav-drawer";
 import { SessionFindBar } from "@/components/session-find-bar";
 import {
   CompactingPlaceholder,
@@ -109,10 +111,6 @@ export default function ChatPage({ params }: ChatPageProps) {
   // Inline feedback for failed actions (send / demo / resume) — never alert()
   const [actionError, setActionError] = useState<string | null>(null);
   const [isResuming, setIsResuming] = useState<boolean>(false);
-
-  // Speech recognition dictation for bottom composer
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [speechSupported, setSpeechSupported] = useState<boolean>(false);
 
   // Citation drawer state
   const [citationDrawerOpen, setCitationDrawerOpen] = useState<boolean>(false);
@@ -195,15 +193,6 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [findSignal, setFindSignal] = useState(0);
   const [renaming, setRenaming] = useState(false);
 
-  // Speech support check
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const hasSpeech =
-        "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
-      setSpeechSupported(hasSpeech);
-    }
-  }, []);
-
   // Fetch session data (notify -> fetch pattern)
   const fetchSessionData = async () => {
     if (!id) return;
@@ -229,6 +218,12 @@ export default function ChatPage({ params }: ChatPageProps) {
   });
 
   const isPracticeSession = session?.mode === "PRACTICE";
+
+  // TEACH follow-up bar dictation (mic button and ⌘D via lib/command-events claim rules).
+  const followUpRef = useRef<HTMLFormElement | null>(null);
+  const dictation = useDictation(locale, { field: followUpRef, enabled: Boolean(session) && !isPracticeSession });
+  dictation.setSink((spoken) => setInputMessage((prev) => appendDictation(prev, spoken)));
+
   const loadNodeNames = React.useCallback(() => {
     getGraphSnapshot()
       .then((g) => setNodeNames(new Map(g.nodes.map((n) => [n.id, n.name]))))
@@ -323,55 +318,6 @@ export default function ChatPage({ params }: ChatPageProps) {
     setSelectedSource(sourceName);
     setSelectedParagraph(paragraphId);
     setCitationDrawerOpen(true);
-  };
-
-  // Toggle dictation
-  const handleToggleDictation = () => {
-    if (typeof window === "undefined") return;
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert(t.speechUnsupported);
-      return;
-    }
-
-    if (isListening) {
-      setIsListening(false);
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = locale === "en" ? "en-US" : "pt-BR";
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInputMessage((prev) =>
-          prev ? `${prev} ${transcript}` : transcript
-        );
-      };
-
-      recognition.onerror = () => {
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognition.start();
-    } catch {
-      setIsListening(false);
-    }
   };
 
   // Handle send message
@@ -756,6 +702,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       {/* 1. Top Classroom Bar */}
       <header className="px-5 py-3 border-b border-border bg-background shrink-0 flex flex-wrap items-center justify-between gap-3 z-20">
         <div className="flex items-center gap-3 min-w-0">
+          <NavDrawerButton />
           <Link
             href="/"
             className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-card"
@@ -776,7 +723,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               {teachPhase && <PhaseChip phase={teachPhase} />}
             </div>
 
-            <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5">
+            <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5 max-sm:hidden">
               <span>{t.vaultLabel} <code>{t.lessonsFolder}/{vaultNoteName}.md</code></span>
               {session.source_file && (
                 <>
@@ -825,7 +772,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             ) : (
               <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
             )}
-            <span>{t.extractGraph}</span>
+            <span className="max-sm:sr-only">{t.extractGraph}</span>
           </button>
 
           <button
@@ -840,7 +787,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             ) : (
               <Sparkles className="w-3.5 h-3.5 text-success" />
             )}
-            <span>{isSpawningDemo ? t.demoGenerating : t.demoButton}</span>
+            <span className="max-sm:sr-only">{isSpawningDemo ? t.demoGenerating : t.demoButton}</span>
           </button>
 
           <button
@@ -855,7 +802,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             ) : (
               <Edit3 className="w-3.5 h-3.5 text-warning" />
             )}
-            <span>{t.drawFromMemory}</span>
+            <span className="max-sm:sr-only">{t.drawFromMemory}</span>
           </button>
           </>
           )}
@@ -1037,22 +984,24 @@ export default function ChatPage({ params }: ChatPageProps) {
       ) : (
       <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
         <form
+          ref={followUpRef}
           onSubmit={handleSendMessage}
           className="max-w-4xl mx-auto flex items-center gap-2"
         >
-          {speechSupported && (
+          {dictation.supported && (
             <button
               type="button"
-              onClick={handleToggleDictation}
+              onClick={dictation.toggle}
               className={`p-2.5 rounded border transition-colors cursor-pointer shrink-0 ${
-                isListening
+                dictation.listening
                   ? "bg-danger/10 text-danger border-danger animate-pulse"
                   : "bg-card hover:bg-accent text-muted-foreground hover:text-foreground border-border"
               }`}
-              title={t.dictateMessage}
-              aria-label={t.dictateMessage}
+              title={dictation.listening ? t.dictateStop : t.dictateMessage}
+              aria-label={dictation.listening ? t.dictateStop : t.dictateMessage}
+              aria-pressed={dictation.listening}
             >
-              {isListening ? (
+              {dictation.listening ? (
                 <MicOff className="w-4 h-4 text-danger" />
               ) : (
                 <Mic className="w-4 h-4" />

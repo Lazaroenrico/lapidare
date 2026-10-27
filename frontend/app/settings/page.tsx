@@ -34,6 +34,7 @@ import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
 import { openSetup } from "@/components/setup-gate";
+import { NavDrawerButton } from "@/components/nav-drawer";
 import { AgentSection } from "@/components/settings/agent-section";
 import { GraphSection } from "@/components/settings/graph-section";
 import { AppearanceSection } from "@/components/settings/appearance-section";
@@ -189,28 +190,29 @@ export default function SettingsPage() {
   return (
     <div className="flex-1 min-h-screen bg-background text-foreground flex flex-col font-prose overflow-y-auto">
       {/* Top Bar */}
-      <header className="p-4 border-b border-border bg-background flex items-center justify-between sticky top-0 z-20">
-        <div className="flex items-center gap-3">
+      <header className="p-4 max-sm:px-3 max-sm:py-3 border-b border-border bg-background flex items-center justify-between gap-3 sticky top-0 z-20">
+        <div className="flex items-center gap-3 max-sm:gap-1.5 min-w-0">
+          <NavDrawerButton />
           <Link
             href="/"
-            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-card rounded transition-colors"
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-card rounded transition-colors shrink-0"
             title={t.backHome}
             aria-label={t.backHome}
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
-          <div>
-            <h1 className="font-title text-lg font-bold text-foreground tracking-wide">
+          <div className="min-w-0">
+            <h1 className="font-title text-lg max-sm:text-base font-bold text-foreground tracking-wide truncate">
               {t.settings}
             </h1>
-            <p className="text-[11px] font-ui text-muted-foreground">
+            <p className="text-[11px] font-ui text-muted-foreground max-sm:hidden">
               {t.settingsSubtitle}
             </p>
           </div>
         </div>
 
         {showSetupSave && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={loadSettings}
@@ -226,7 +228,7 @@ export default function SettingsPage() {
               type="button"
               onClick={handleSave}
               disabled={saving || loading}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-foreground text-background font-ui text-xs font-semibold rounded hover:bg-foreground/90 cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
+              className="flex items-center gap-1.5 px-4 max-sm:px-3 py-1.5 whitespace-nowrap bg-foreground text-background font-ui text-xs font-semibold rounded hover:bg-foreground/90 cursor-pointer transition-colors shadow-xs active:scale-[0.98]"
             >
               {saving ? (
                 <>

@@ -75,6 +75,8 @@ const ptBR = {
   promptRestore: "Restaurar original",
   promptSaved: "Override salvo.",
   promptRestored: "Original restaurado.",
+  promptDirty: "Alterações não salvas",
+  promptDiscard: "Descartar",
   promptEdit: "Editar",
   promptClose: "Fechar editor",
   // Grafo
@@ -187,6 +189,8 @@ const en: SettingsText = {
   promptRestore: "Restore original",
   promptSaved: "Override saved.",
   promptRestored: "Original restored.",
+  promptDirty: "Unsaved changes",
+  promptDiscard: "Discard",
   promptEdit: "Edit",
   promptClose: "Close editor",
   graphHeading: "Graph",

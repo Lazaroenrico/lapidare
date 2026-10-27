@@ -58,6 +58,7 @@ import {
   type RoadmapScope,
 } from "@/lib/tracks";
 import { tracksText } from "@/lib/tracks-i18n";
+import { NavDrawerButton } from "@/components/nav-drawer";
 
 const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
 const GRAPH_EVENTS: SseEventType[] = ["graph:updated", "vault:changed"];
@@ -426,10 +427,11 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       {/* Floating top chrome */}
       <div className="absolute top-4 left-4 right-4 flex flex-wrap items-start justify-between gap-2 pointer-events-none z-10">
         <div className="flex items-center gap-2 pointer-events-auto">
+          <NavDrawerButton className="bg-card/90 backdrop-blur border border-border shadow-lg" />
           <div className="flex items-center gap-3 bg-card/90 backdrop-blur border border-border rounded-lg px-3.5 py-1.5 shadow-lg">
-            <span className="font-ui font-semibold text-xs text-foreground">{t.graphTitle}</span>
-            <span className="text-border text-xs">|</span>
-            <span className="font-ui text-[11px] text-muted-foreground">
+            <span className="font-ui font-semibold text-xs text-foreground whitespace-nowrap">{t.graphTitle}</span>
+            <span className="text-border text-xs max-sm:hidden">|</span>
+            <span className="font-ui text-[11px] text-muted-foreground max-sm:hidden">
               {t.graphStats(snapshot.nodes.length, snapshot.edges.length, snapshot.chains.length)}
             </span>
           </div>

@@ -132,7 +132,7 @@ const messages = {
     noteNotFoundBody: (path: string) => `O backend ainda não expõe ${path} (GET /api/graph/concepts/{id}/note). Ative "Abrir no Obsidian" para abrir direto no Vault.`,
     // Sidebar
     newTeachTopic: 'Nova sessão de ensino', newPracticeTopic: 'Prática de recuperação a frio',
-    expandSidebar: 'Expandir barra lateral', collapseSidebar: 'Recolher barra lateral', settingsNav: 'Configurações',
+    expandSidebar: 'Expandir barra lateral', openNav: 'Abrir navegação', closeNav: 'Fechar navegação', collapseSidebar: 'Recolher barra lateral', settingsNav: 'Configurações',
     agentsRunning: (n: number) => `${n} agente(s) em segundo plano rodando`,
     newTeachTitle: 'Nova sessão de ensino', newPracticeTitle: 'Nova sessão de prática', newDrawTitle: 'Desenho de recuperação de memória',
     drawShort: 'DESENHO', searchSessions: '⌕ Buscar sessões...', filterAll: 'TODAS',
@@ -498,7 +498,7 @@ const messages = {
     noteNotFoundBody: (path: string) => `The backend does not expose ${path} yet (GET /api/graph/concepts/{id}/note). Enable "Open in Obsidian" to open it straight from the Vault.`,
     // Sidebar
     newTeachTopic: 'New teaching session', newPracticeTopic: 'Cold retrieval practice',
-    expandSidebar: 'Expand sidebar', collapseSidebar: 'Collapse sidebar', settingsNav: 'Settings',
+    expandSidebar: 'Expand sidebar', openNav: 'Open navigation', closeNav: 'Close navigation', collapseSidebar: 'Collapse sidebar', settingsNav: 'Settings',
     agentsRunning: (n: number) => `${n} background agent(s) running`,
     newTeachTitle: 'New teaching session', newPracticeTitle: 'New practice session', newDrawTitle: 'Memory retrieval drawing',
     drawShort: 'DRAW', searchSessions: '⌕ Search sessions...', filterAll: 'ALL',
