@@ -1,7 +1,7 @@
 // Fase 14: várias trilhas — decoding, progress, ordering, colours, sidebar filter, roadmap, creation.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const OUT = '/tmp/learnharness-frontend-tests';
+const OUT = require('node:path').join(__dirname, '..', '.test-build');
 const tr = require(`${OUT}/tracks.js`);
 const i18n = require(`${OUT}/tracks-i18n.js`);
 const gw = require(`${OUT}/graph-wire.js`);

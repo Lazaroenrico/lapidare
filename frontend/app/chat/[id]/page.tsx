@@ -12,7 +12,6 @@ import {
   Edit3,
   FileText,
   GitBranch,
-  Layers,
   Loader2,
   Mic,
   MicOff,

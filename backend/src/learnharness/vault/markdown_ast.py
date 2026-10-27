@@ -13,6 +13,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -52,7 +53,7 @@ def _format_wikilinks(links: list[str]) -> str:
     return ", ".join(f"[[{link}]]" for link in unique_links)
 
 
-def _split_frontmatter(content: str) -> tuple[dict[str, any], str, str]:
+def _split_frontmatter(content: str) -> tuple[dict[str, Any], str, str]:
     """Split markdown into frontmatter dict, raw frontmatter text, and body.
 
     Returns:

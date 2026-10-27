@@ -5,7 +5,6 @@ import {
   BookOpen,
   Check,
   Copy,
-  ExternalLink,
   FileText,
   Loader2,
   Lock,

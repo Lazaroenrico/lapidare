@@ -1,21 +1,7 @@
-const {test, before} = require('node:test');
+const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
-const os = require('node:os');
-const {execFileSync} = require('node:child_process');
-
-// Compila só os construtores puros (lib/import-wire.ts) para CommonJS.
-const root = path.join(__dirname, '..');
-const outDir = path.join(os.tmpdir(), 'learnharness-frontend-tests', 'import-wire');
-let wire;
-before(() => {
-  execFileSync(process.execPath, [
-    require.resolve('typescript/bin/tsc', {paths: [root]}),
-    path.join(root, 'lib/import-wire.ts'),
-    '--outDir', outDir, '--module', 'commonjs', '--target', 'es2020', '--skipLibCheck',
-  ], {cwd: root, stdio: 'inherit'});
-  wire = require(path.join(outDir, 'import-wire.js'));
-});
+// lib/import-wire.ts compiled by `npm test` (tsconfig.test.json).
+const wire = require('../.test-build/import-wire.js');
 
 test('MCP routes follow the contract and escape server names', () => {
   assert.deepEqual(wire.buildListMcpServers(), {path: '/api/import/mcp/servers', method: 'GET'});

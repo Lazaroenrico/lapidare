@@ -322,13 +322,11 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
       return;
     }
     if (fitDoneRef.current) applyFocusParam();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
   // A new `?focus=` while the graph is already laid out.
   useEffect(() => {
     if (fitDoneRef.current) applyFocusParam();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId]);
 
   // ⇶ Roteiro (Fase 14): one colour per track; "Só a trilha em foco" or "Todas".

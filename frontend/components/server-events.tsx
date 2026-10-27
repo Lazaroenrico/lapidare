@@ -176,7 +176,7 @@ export function ServerEventsProvider({
         }
       }, delay);
     }
-  }, [dispatchEvent, fetchJobs]);
+  }, [dispatchEvent]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -195,7 +195,7 @@ export function ServerEventsProvider({
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, [connect]);
+  }, [connect, dispatchEvent]);
 
   const subscribe = useCallback(
     (

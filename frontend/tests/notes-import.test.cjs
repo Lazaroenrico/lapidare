@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const ni = require('/tmp/learnharness-frontend-tests/notes-import.js');
-const gw = require('/tmp/learnharness-frontend-tests/graph-wire.js');
+const ni = require('../.test-build/notes-import.js');
+const gw = require('../.test-build/graph-wire.js');
 
 test('requests: multipart files[], vault paths deduped, source deletion modes', () => {
   const up = ni.buildNotesUpload([{blob: new Blob(['# a']), name: 'a.md'}, {blob: new Blob(['b']), name: 'b.txt'}]);

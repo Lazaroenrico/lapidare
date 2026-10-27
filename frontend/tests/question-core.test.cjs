@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const qc = require('/tmp/learnharness-frontend-tests/question-core.js');
+const qc = require('../.test-build/question-core.js');
 
 test('shuffle is deterministic per quiz_id and a permutation', () => {
   const a = qc.shuffleOrder(5, 'quiz-abc');

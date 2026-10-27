@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const tr = require('/tmp/learnharness-frontend-tests/session-trash.js');
+const tr = require('../.test-build/session-trash.js');
 
 test('trash entries decode, drop invalid rows and sort by deletion time', () => {
   const list = tr.decodeTrashList([

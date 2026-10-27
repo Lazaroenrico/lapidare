@@ -10,4 +10,4 @@ check-backend:
 	cd backend && uv run pytest -q && uv run ruff check src tests
 
 check-frontend:
-	cd frontend && npm run typecheck && npm test && npm run build
+	cd frontend && npm run typecheck && npm run lint && npm test && npm run build

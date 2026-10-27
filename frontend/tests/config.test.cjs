@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {encodeConfig, decodeSetup} = require('/tmp/learnharness-frontend-tests/config-wire.js');
+const {encodeConfig, decodeSetup} = require('../.test-build/config-wire.js');
 test('canonical setup carries credentials only in request and translates each model slot', () => {
   const slot = {engine: 'gemini', model: 'chosen-model', effort: 'high'};
   const wire = encodeConfig({initialized:true, language:'pt-br', slots:{strong:slot,fast:{...slot,engine:'sdk'},background:slot},track:{mode:'repo_binary',active:true}, content_mcps:[{name:'content',url:'http://localhost/mcp',active:true}]}, 'secret');
@@ -22,7 +22,7 @@ test('canonical status restores selected models and active track source', () => 
   assert.deepEqual(value.connectors[0].available_models,['custom']);
 });
 test('settings save round-trips the chosen model_id per slot (agy model picker)', () => {
-  const {encodeConfig, decodeConfig, encodeSlot, modelPinsEffort} = require('/tmp/learnharness-frontend-tests/config-wire.js');
+  const {encodeConfig, decodeConfig, encodeSlot, modelPinsEffort} = require('../.test-build/config-wire.js');
   const slots = {
     strong: {engine: 'agy', model: 'gemini-3.8-flash-low', effort: 'high'},
     fast: {engine: 'agy', model: 'auto', effort: 'low'},
@@ -42,7 +42,7 @@ test('settings save round-trips the chosen model_id per slot (agy model picker)'
   assert.equal(modelPinsEffort('auto'), false);
 });
 test('missing or legacy agy models fall back to auto, never gemini-2.5-*', () => {
-  const {normalizeSlots} = require('/tmp/learnharness-frontend-tests/config-wire.js');
+  const {normalizeSlots} = require('../.test-build/config-wire.js');
   const empty = normalizeSlots(undefined);
   for (const name of ['strong', 'fast', 'background']) {
     assert.equal(empty[name].engine, 'agy');

@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const kb = require('/tmp/learnharness-frontend-tests/keyboard.js');
+const kb = require('../.test-build/keyboard.js');
 
 const ev = (key, mods = {}) => ({key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods});
 

@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const he = require('/tmp/learnharness-frontend-tests/home-empty.js');
+const he = require('../.test-build/home-empty.js');
 
 const base = {graphLoaded: true, nodeCount: 0, trashCount: 0, activeTrackId: null, activeRoadmapSteps: 0};
 

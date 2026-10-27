@@ -1,7 +1,7 @@
 // Fase 15: nivelamento de trilha — button visibility, card decoding, transcript placement.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const OUT = '/tmp/learnharness-frontend-tests';
+const OUT = require('node:path').join(__dirname, '..', '.test-build');
 const lv = require(`${OUT}/leveling.js`);
 const sw = require(`${OUT}/session-wire.js`);
 const i18n = require(`${OUT}/tracks-i18n.js`);

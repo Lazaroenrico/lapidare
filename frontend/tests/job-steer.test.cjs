@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const OUT = '/tmp/learnharness-frontend-tests';
+const OUT = require('node:path').join(__dirname, '..', '.test-build');
 const js = require(`${OUT}/job-steer.js`);
 const sw = require(`${OUT}/session-wire.js`);
 const pr = require(`${OUT}/practice.js`);

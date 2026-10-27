@@ -18,6 +18,8 @@ type T = ReturnType<typeof useLocale>["t"];
 type SlotName = keyof ModelSlots;
 
 const OTHER = "__other__";
+// Stable empty list: a fresh [] per render would recompute the grouped options every time.
+const NO_MODELS: ModelOption[] = [];
 const SLOT_NAMES: SlotName[] = ["strong", "fast", "background"];
 
 export type CatalogState =
@@ -152,7 +154,7 @@ export function SlotEditor({
   useEffect(() => ensureCatalog(slot.engine), [slot.engine, ensureCatalog]);
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const models = catalog?.status === "ready" ? catalog.data.models : [];
+  const models = catalog?.status === "ready" ? catalog.data.models : NO_MODELS;
   const groups = useMemo(() => groupModels(models, t), [models, t]);
   const model = slot.model || AUTO_MODEL;
   const known = model === AUTO_MODEL || models.some((m) => m.id === model);
