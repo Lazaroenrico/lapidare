@@ -10,8 +10,10 @@ from fastapi import FastAPI
 
 from learnharness.api.sse import SseHub
 from learnharness.core.contracts.config import HarnessConfig
+from learnharness.core.events import SseEventType
 from learnharness.core.schema_gate import check_schema
 from learnharness.mcp.content_client import ContentMcpClient
+from learnharness.mcp.oauth_flow import McpOAuthManager
 from learnharness.mcp.pending_dock import PendingDockRegistry
 from learnharness.vault.bootstrap import load_config
 from learnharness.vault.ownership import acquire_vault, release_vault, snapshot_on_version_change
@@ -45,6 +47,11 @@ class AppState:
         self.held_vault: Path | None = None
         self.startup_error: BaseException | None = None
         self.refresh_content_mcp_client()
+        self.mcp_oauth = McpOAuthManager(
+            notify=lambda name: self.sse_hub.broadcast(
+                SseEventType.CONFIG_UPDATED, {"kind": "mcp_oauth", "server": name}
+            )
+        )
         from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
         from learnharness.services.leveling import LevelingService

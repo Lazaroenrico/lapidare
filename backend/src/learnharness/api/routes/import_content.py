@@ -13,6 +13,7 @@ from learnharness.api.state import get_app_state
 from learnharness.core.contracts.config import McpServerConfig
 from learnharness.core.events import SseEventType
 from learnharness.mcp.content_client import ContentMcpError, UnknownMcpServer
+from learnharness.mcp.oauth_flow import McpOAuthManager, OAuthLoginError
 from learnharness.services.secrets import (
     ENV_PREFIX,
     delete_secret,
@@ -54,6 +55,9 @@ class McpServerPayload(BaseModel):
     auth_ref: str | None = None
     # stdio only: env var through which the token is handed to the child process.
     auth_env_var: str | None = None
+    # "oauth" is only valid for http/sse. Omitted: keep the stored mode (or derive from the token).
+    auth_mode: Literal["none", "token", "oauth"] | None = None
+    oauth_scopes: list[str] | None = None
     catalog_tool: str | None = None
     content_tool: str | None = None
     content_id_argument: str | None = None
@@ -105,16 +109,19 @@ async def get_paragraph(
 
 
 # --------------------------------------------------------------------------- helpers
-def _public_server(server: McpServerConfig) -> dict[str, Any]:
+def _public_server(server: McpServerConfig, oauth: McpOAuthManager | None = None) -> dict[str, Any]:
     """Serialize a server for API responses. Tokens never leave the backend."""
     return {
+        "auth_mode": server.auth_mode,
+        "oauth_scopes": list(server.oauth_scopes),
+        "oauth": oauth.status(server) if oauth is not None and server.auth_mode == "oauth" else None,
         "name": server.name,
         "transport": server.transport,
         "url": server.url,
         "command": server.command,
         "args": list(server.args),
         "enabled": server.enabled,
-        "has_auth": bool(resolve_auth(server.auth_ref)),
+        "has_auth": bool(resolve_auth(server.auth_ref)) if server.auth_mode != "oauth" else False,
         "auth_env_var": server.auth_env_var,
         "catalog_tool": server.catalog_tool,
         "content_tool": server.content_tool,
@@ -176,7 +183,7 @@ async def _teach_session(request: Request, title: str, source_path: str) -> str 
 @import_router.get("/api/import/mcp/servers")
 async def list_mcp_servers(request: Request) -> list[dict[str, Any]]:
     state = get_app_state(request.app)
-    return [_public_server(s) for s in state.get_config().content_mcps]
+    return [_public_server(s, state.mcp_oauth) for s in state.get_config().content_mcps]
 
 
 @import_router.post("/api/import/mcp/servers")
@@ -199,6 +206,14 @@ async def upsert_mcp_server(payload: McpServerPayload, request: Request) -> dict
     auth_ref = existing.auth_ref if existing else None
     if payload.auth_ref:
         auth_ref = payload.auth_ref
+    if payload.auth_mode:
+        auth_mode = payload.auth_mode
+    elif existing is not None:
+        auth_mode = "token" if existing.auth_mode == "none" and payload.auth_token else existing.auth_mode
+    else:
+        auth_mode = "token" if payload.auth_token or payload.auth_ref else "none"
+    if auth_mode != "token":
+        auth_ref = None  # only token servers carry a token reference
     fields: dict[str, Any] = {
         "name": payload.name,
         "transport": payload.transport,
@@ -207,8 +222,12 @@ async def upsert_mcp_server(payload: McpServerPayload, request: Request) -> dict
         "args": payload.args,
         "env": payload.env,
         "enabled": payload.enabled,
-        "auth_ref": secret_key if payload.auth_token else auth_ref,
+        "auth_ref": secret_key if payload.auth_token and auth_mode == "token" else auth_ref,
         "auth_env_var": payload.auth_env_var,
+        "auth_mode": auth_mode,
+        "oauth_scopes": (
+            payload.oauth_scopes if payload.oauth_scopes is not None else (existing.oauth_scopes if existing else [])
+        ),
     }
     if payload.auth_token == "" and auth_ref == secret_key:
         fields["auth_ref"] = None
@@ -225,13 +244,19 @@ async def upsert_mcp_server(payload: McpServerPayload, request: Request) -> dict
         raise HTTPException(status_code=422, detail=errors or "Invalid MCP server") from None
 
     # Secrets are written only after validation, and never into the Vault.
-    if payload.auth_token:
+    if auth_mode != "token":
+        delete_secret(secret_key)
+    elif payload.auth_token:
         set_secret(secret_key, payload.auth_token)
     elif payload.auth_token == "":
         delete_secret(secret_key)
+    if existing is not None and existing.auth_mode == "oauth" and (
+        server.auth_mode != "oauth" or server.url != existing.url
+    ):
+        await state.mcp_oauth.logout(existing)  # stale login: other mode or another endpoint
     servers = [s for s in servers if s.name != payload.name] + [server]
     _persist_servers(state, servers)
-    return _public_server(server)
+    return _public_server(server, state.mcp_oauth)
 
 
 @import_router.delete("/api/import/mcp/servers/{name}", status_code=204)
@@ -240,9 +265,34 @@ async def delete_mcp_server(name: str, request: Request) -> Response:
     servers = list(state.get_config().content_mcps)
     if not any(s.name == name for s in servers):
         raise HTTPException(status_code=404, detail=f"Unknown MCP server '{name}'")
+    removed = next(s for s in servers if s.name == name)
     _persist_servers(state, [s for s in servers if s.name != name])
     delete_secret(mcp_secret_key(name))
+    if removed.auth_mode == "oauth":
+        await state.mcp_oauth.logout(removed)
     return Response(status_code=204)
+
+
+@import_router.post("/api/import/mcp/servers/{name}/oauth/login")
+async def oauth_login(name: str, request: Request) -> dict[str, Any]:
+    """Start the OAuth login in the background; the UI opens ``authorization_url`` itself."""
+    state = get_app_state(request.app)
+    server = _server_or_404(state, name)
+    if server.auth_mode != "oauth":
+        raise HTTPException(status_code=400, detail="This MCP server is not configured for OAuth login")
+    try:
+        url = await state.mcp_oauth.start(server)
+    except OAuthLoginError as exc:
+        raise HTTPException(status_code=502, detail=state.redact(str(exc))) from None
+    return {"authorization_url": url, "oauth": state.mcp_oauth.status(server)}
+
+
+@import_router.post("/api/import/mcp/servers/{name}/oauth/logout")
+async def oauth_logout(name: str, request: Request) -> dict[str, Any]:
+    state = get_app_state(request.app)
+    server = _server_or_404(state, name)
+    await state.mcp_oauth.logout(server)
+    return {"oauth": state.mcp_oauth.status(server)}
 
 
 @import_router.post("/api/import/mcp/servers/{name}/test")

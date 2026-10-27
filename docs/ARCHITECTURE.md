@@ -742,7 +742,7 @@ O watcher (`vault/watcher.py`, `watchfiles`) ignora tudo em `.harness/` exceto `
 |---|---|
 | `configured`, `language` (`pt-BR`\|`en`), `vault_path`, `folders` | Básico |
 | `slots.{strong,fast,background}` | `{engine, model_id, effort}` (5.5) |
-| `content_mcps[]` | `McpServerConfig {name, transport: stdio\|http\|sse, url \| command+args, env, enabled, catalog_tool, content_tool, content_id_argument, auth_ref, auth_env_var}` |
+| `content_mcps[]` | `McpServerConfig {name, transport: stdio\|http\|sse, url \| command+args, env, enabled, catalog_tool, content_tool, content_id_argument, auth_ref, auth_env_var, auth_mode: none\|token\|oauth, oauth_scopes}` |
 | `tracks[]`, `active_track_id` | Seção 10 |
 | `prompt_overrides` | `{path: bool}` |
 | `graph.extraction_chunk_tokens` | Padrão 4096 (mínimo 500 na rota) |
@@ -762,6 +762,7 @@ A gravação usa só o formato novo.
 ### 11.5 Segredos (fora do Vault)
 
 - Tokens de MCP de conteúdo ficam em `$XDG_CONFIG_HOME/learnharness/secrets.json` (padrão `~/.config`, modo `0600`, `services/secrets.py`). O `config.json` guarda só o `auth_ref`: uma chave nesse arquivo ou `env:VAR`. O token nunca volta nas respostas da API, e em `stdio` chega ao processo só por variável de ambiente.
+- Login OAuth de MCP remoto (`auth_mode: "oauth"`, só `http`/`sse`): tokens e o registro dinâmico do cliente ficam em `$XDG_CONFIG_HOME/learnharness/mcp-oauth/<hash(nome,url)>.json` (diretório `0700`, arquivo `0600`, escrita atômica; `services/mcp_oauth_store.py`), nunca no Vault. `POST /api/import/mcp/servers/{name}/oauth/login` inicia o fluxo em segundo plano (`mcp/oauth_flow.py`) e devolve `authorization_url`; a UI a abre com `window.open` (no desktop o Electron a encaminha ao navegador do sistema). O redirect chega a um receptor só em `127.0.0.1:<porta efêmera>/callback` (timeout de 5 min, um fluxo por servidor, `state` e `Host` verificados). Ao terminar, `config:updated {kind:"mcp_oauth"}` faz a UI rebuscar `oauth.status` (`signed_out|pending|signed_in|error`) em `GET /api/import/mcp/servers`. `POST .../oauth/logout` apaga os tokens.
 - A chave do `google-genai` vem de `GEMINI_API_KEY` ou da memória do processo (`AppState.api_key`).
 - O token do GitHub vem de `GITHUB_TOKEN`/`GH_TOKEN` ou de `gh auth token`.
 - O token MCP do agy fica só no work dir da sessão (`0600`).

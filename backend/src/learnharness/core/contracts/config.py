@@ -122,6 +122,11 @@ class McpServerConfig(BaseModel):
     auth_ref: str | None = None
     # stdio only: name of the env var through which the token is passed to the child process.
     auth_env_var: str | None = None
+    # How the server authenticates: nothing, a pasted/env Bearer token (``auth_ref``) or an OAuth
+    # login (tokens live outside the Vault, see services/mcp_oauth_store.py). Older configs have
+    # no field: "token" when an ``auth_ref`` exists, else "none".
+    auth_mode: Literal["none", "token", "oauth"] = "none"
+    oauth_scopes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -131,6 +136,8 @@ class McpServerConfig(BaseModel):
                 data["enabled"] = data["active"]
             if data.get("url") and "transport" not in data:
                 data["transport"] = "http"
+            if "auth_mode" not in data:
+                data["auth_mode"] = "token" if data.get("auth_ref") else "none"
             return data
         return values
 
@@ -138,6 +145,8 @@ class McpServerConfig(BaseModel):
     def valid_transport(self):
         if self.enabled and not (self.command if self.transport == "stdio" else self.url):
             raise ValueError("Enabled MCP requires a command or a URL matching its transport")
+        if self.auth_mode == "oauth" and self.transport == "stdio":
+            raise ValueError("OAuth login is only available for http and sse MCP servers")
         return self
 
 

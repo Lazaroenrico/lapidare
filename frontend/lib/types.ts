@@ -632,9 +632,22 @@ export interface McpImportServer {
   args: string[];
   enabled: boolean;
   has_auth: boolean;
+  /** Como o servidor autentica; ausente em backends antigos (equivale a token/none via has_auth). */
+  auth_mode?: McpAuthMode;
+  oauth_scopes?: string[];
+  /** Presente só quando `auth_mode === "oauth"`. */
+  oauth?: McpOAuthState | null;
   catalog_tool?: string | null;
   content_tool?: string | null;
   content_id_argument?: string | null;
+}
+
+export type McpAuthMode = "none" | "token" | "oauth";
+export type McpOAuthStatus = "signed_out" | "pending" | "signed_in" | "error";
+
+export interface McpOAuthState {
+  status: McpOAuthStatus;
+  error?: string;
 }
 
 /** Corpo de `POST /api/import/mcp/servers` (cria ou substitui por `name`). */
@@ -646,6 +659,8 @@ export interface McpServerUpsert {
   args?: string[];
   enabled?: boolean;
   auth_token?: string;
+  auth_mode?: McpAuthMode;
+  oauth_scopes?: string[];
   catalog_tool?: string;
   content_tool?: string;
   content_id_argument?: string;

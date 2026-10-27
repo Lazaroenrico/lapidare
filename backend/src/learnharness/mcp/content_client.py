@@ -21,6 +21,8 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 
 from learnharness.core.contracts.config import McpServerConfig
 from learnharness.core.frontmatter import frontmatter_data
+from learnharness.mcp.oauth_flow import LOGIN_REQUIRED, contains_login_required, stored_provider
+from learnharness.services.mcp_oauth_store import FileOAuthStorage
 from learnharness.services.secrets import resolve_auth
 from learnharness.vault.safety import folder_map, safe_path
 
@@ -82,12 +84,18 @@ class ContentMcpClient:
         return [s for s in self.servers if s.enabled]
 
     def _transport(self, server: McpServerConfig):
-        token = resolve_auth(server.auth_ref)
+        oauth = server.auth_mode == "oauth" and server.transport in ("http", "sse")
+        token = None if oauth else resolve_auth(server.auth_ref)
         if server.transport in ("http", "sse"):
             if not server.url or not server.url.startswith(("http://", "https://")):
                 raise ContentMcpError(f"MCP '{server.name}' has no valid http(s) URL")
-            headers = {"Authorization": f"Bearer {token}"} if token else None
             cls = StreamableHttpTransport if server.transport == "http" else SSETransport
+            if oauth:
+                storage = FileOAuthStorage(server.name, server.url)
+                if not storage.usable():
+                    raise ContentMcpError(f"MCP '{server.name}': {LOGIN_REQUIRED}")
+                return cls(server.url, auth=stored_provider(server, storage)), "\0".join(storage.secrets()) or None
+            headers = {"Authorization": f"Bearer {token}"} if token else None
             return cls(server.url, headers=headers), token
         if not server.command:
             raise ContentMcpError(f"MCP '{server.name}' has no command")
@@ -98,9 +106,12 @@ class ContentMcpClient:
         return StdioTransport(server.command, list(server.args), env=env or None, keep_alive=False), token
 
     def _error(self, server: McpServerConfig, action: str, exc: BaseException, token: str | None) -> ContentMcpError:
+        if contains_login_required(exc):
+            return ContentMcpError(f"MCP '{server.name}': {LOGIN_REQUIRED}")
         detail = _describe(exc)
-        if token:
-            detail = detail.replace(token, "[redacted]")
+        for secret in (token or "").split("\0"):
+            if secret:
+                detail = detail.replace(secret, "[redacted]")
         return ContentMcpError(f"MCP '{server.name}' {action} failed: {detail}"[:500])
 
     async def _run(self, server: McpServerConfig, action: str, timeout: float, op):
