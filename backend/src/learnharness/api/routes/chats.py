@@ -131,6 +131,35 @@ async def create_chat(payload: CreateChatPayload, request: Request):
     return _with_slot(state, session)
 
 
+# Trash routes are declared before ``/{chat_id}`` so "trash" never reads as a session id.
+@chats_router.get("/trash")
+async def get_trash(request: Request):
+    """Sessions moved to ``.harness/trash/`` by DELETE, most recently deleted first."""
+    state = get_app_state(request.app)
+    return state.sessions.list_trash()
+
+
+@chats_router.post("/trash/{file}/restore")
+async def restore_trash(file: str, request: Request):
+    """Move a trash entry back to ``.harness/sessions/``; 409 if that id is live again.
+
+    Graph provenance removed by a ``delete-nodes`` deletion is not brought back
+    (``graph_restored`` is always false); the Aulas/ note was never deleted.
+    """
+    state = get_app_state(request.app)
+    session = await state.sessions.restore_from_trash(file)
+    return {"session": _with_slot(state, session), "graph_restored": False}
+
+
+@chats_router.delete("/trash/{file}")
+async def purge_trash(file: str, request: Request, confirm: bool = False):
+    """Permanently delete one trash file; requires ``?confirm=true``."""
+    if not confirm:
+        raise HTTPException(status_code=422, detail="Permanent deletion requires confirm=true")
+    state = get_app_state(request.app)
+    return state.sessions.purge_trash(file)
+
+
 @chats_router.get("/{chat_id}")
 async def get_chat(chat_id: str, request: Request):
     state = get_app_state(request.app)

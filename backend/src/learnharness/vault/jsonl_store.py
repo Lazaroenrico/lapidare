@@ -71,7 +71,11 @@ def load_session(vault_path: Path, session_id: str) -> SessionRecord | None:
     """Reconstruct a SessionRecord from its append-only event stream."""
     _, sessions_dir = _ensure_harness_dir(vault_path)
     file_path = safe_path(sessions_dir, f"{safe_component(session_id)}.jsonl")
+    return load_session_file(file_path)
 
+
+def load_session_file(file_path: Path) -> SessionRecord | None:
+    """Replay one session JSONL (live or trashed); unknown events are ignored."""
     if not file_path.exists():
         return None
 
@@ -141,6 +145,93 @@ def list_sessions(vault_path: Path) -> list[SessionRecord]:
 
     records.sort(key=lambda r: r.updated_at or r.created_at or "", reverse=True)
     return records
+
+
+# ------------------------------------------
+# 1b. Session trash (.harness/trash/)
+# ------------------------------------------
+
+TRASHED_EVENT = "trashed"
+
+
+def trash_dir(vault_path: Path) -> Path:
+    return safe_path(Path(vault_path).resolve(), ".harness/trash")
+
+
+def trash_file_path(vault_path: Path, file_name: str) -> Path:
+    """A trash entry by basename; anything but a plain ``*.jsonl`` name is refused."""
+    if not file_name.endswith(".jsonl") or file_name.startswith("."):
+        raise PermissionError("Trash entries are .jsonl files inside .harness/trash")
+    try:
+        component = safe_component(file_name)
+    except ValueError:
+        raise PermissionError("Trash entries are .jsonl files inside .harness/trash") from None
+    return safe_path(trash_dir(vault_path), component)
+
+
+def last_trashed_event(file_path: Path) -> dict[str, Any] | None:
+    """The most recent ``{"event": "trashed"}`` line (absent on pre-trash-index files)."""
+    found = None
+    for raw in file_path.read_text(encoding="utf-8").splitlines():
+        if TRASHED_EVENT not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict) and entry.get("event") == TRASHED_EVENT:
+            found = entry
+    return found
+
+
+def trash_entry(file_path: Path) -> dict[str, Any] | None:
+    """The listing shape of one trash file, or None when it holds no session snapshot."""
+    record = load_session_file(file_path)
+    if record is None:
+        return None
+    event = last_trashed_event(file_path) or {}
+    deleted_at = event.get("deleted_at")
+    if not isinstance(deleted_at, str):
+        # Legacy entry (deleted before the trashed event existed): the rename into
+        # trash/ updated the inode's ctime, which is the best available move time.
+        deleted_at = datetime.fromtimestamp(file_path.stat().st_ctime).astimezone().isoformat()
+    return {
+        "id": record.id, "file": file_path.name, "title": record.title, "mode": record.mode,
+        "deleted_at": deleted_at, "updated_at": record.updated_at,
+        "message_count": len(record.messages),
+        "graph_unlinked": bool(event.get("graph_unlinked", False)),
+        "delete_mode": event.get("mode"),
+    }
+
+
+def list_trash(vault_path: Path) -> list[dict[str, Any]]:
+    """Trashed sessions, most recently deleted first; unreadable files are skipped."""
+    folder = trash_dir(vault_path)
+    if not folder.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for f in folder.glob("*.jsonl"):
+        if f.is_symlink() or not f.is_file():
+            continue
+        try:
+            entry = trash_entry(f)
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Skipping unreadable trash file %s: %s", f, exc)
+            continue
+        if entry is not None:
+            entries.append(entry)
+    entries.sort(key=lambda e: _sort_instant(e["deleted_at"]), reverse=True)
+    return entries
+
+
+def _sort_instant(value: str) -> float:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.timestamp()
 
 
 # ==========================================

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
@@ -38,10 +39,14 @@ from learnharness.core.text_hygiene import is_stray_fragment, strip_stray_tail
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
+    TRASHED_EVENT,
     append_quiz_log,
     append_session_event,
     list_sessions,
+    list_trash,
     load_session,
+    load_session_file,
+    trash_file_path,
 )
 from learnharness.vault.lesson_layout import (
     current_node_id,
@@ -802,6 +807,11 @@ class SessionService:
             if target.exists():
                 stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
                 target = trash / f"{source.stem}.{stamp}.jsonl"
+            # Append-only record of the deletion, read back by the trash listing
+            # (load_session ignores unknown events, so a restore replays unchanged).
+            append_session_event(self.state.vault_path, session_id, {
+                "event": TRASHED_EVENT, "deleted_at": now(), "mode": mode,
+                "graph_unlinked": mode == "delete-nodes"})
             source.rename(target)
         self.state.dock_registry.cancel_dock(session_id)
         await self._release_runtime(session_id)
@@ -810,6 +820,48 @@ class SessionService:
         self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id, "deleted": True})
         return {"ok": True, "id": session_id, "mode": mode,
                 "trash_path": str(target.relative_to(self.state.vault_path)), "graph": graph}
+
+    def list_trash(self) -> list[dict[str, Any]]:
+        return list_trash(self.state.vault_path)
+
+    async def restore_from_trash(self, file_name: str) -> SessionRecord:
+        """Move a trash entry back to ``.harness/sessions/<id>.jsonl``.
+
+        409 when a live session already owns that id. Graph provenance unlinked by a
+        ``delete-nodes`` deletion is not restored; the Aulas/ note was never touched.
+        A session trashed mid-turn comes back normalized as ``recover()`` would.
+        """
+        path = trash_file_path(self.state.vault_path, file_name)
+        if not path.is_file():
+            raise FileNotFoundError("Unknown trash entry")
+        record = load_session_file(path)
+        if record is None:
+            raise ValueError("Trash entry holds no session snapshot")
+        session_id = safe_component(record.id)
+        async with self.lock(session_id):
+            target = safe_path(self.state.vault_path, f".harness/sessions/{session_id}.jsonl")
+            if target.exists() or self.is_running(session_id):
+                raise SessionConflict("A live session with this id already exists")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # link + unlink never overwrites a session created in between (unlike rename).
+            os.link(path, target)
+            path.unlink()
+            session = self.get(session_id)
+            if session.execution_status in ("running", "queued", "waiting", "compacting"):
+                session.execution_status = "waiting" if session.pending_quiz else "interrupted"
+                self.save(session)
+            self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED,
+                                         {"session_id": session_id, "restored": True})
+        return session
+
+    def purge_trash(self, file_name: str) -> dict[str, Any]:
+        """Permanently remove one trash file (only inside ``.harness/trash``)."""
+        path = trash_file_path(self.state.vault_path, file_name)
+        if not path.is_file():
+            raise FileNotFoundError("Unknown trash entry")
+        path.unlink()
+        self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"trash_file": file_name, "purged": True})
+        return {"ok": True, "file": file_name}
 
     @staticmethod
     def _steers_due(session: SessionRecord) -> bool:

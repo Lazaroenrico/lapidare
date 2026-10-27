@@ -41,6 +41,8 @@ import { useEventSubscription, useServerEvents } from "./server-events";
 import { useLocale } from "./locale-provider";
 import { useShortcut } from "./use-shortcut";
 import { ConfirmDialog } from "./session-ux";
+import { SessionTrashDialog, useSessionTrash } from "./session-trash";
+import { trashText } from "@/lib/session-trash";
 import { requestComposerFocus } from "./composer-focus";
 import { SettingsComboHint } from "./use-combo-label";
 import { useTracks } from "./use-tracks";
@@ -114,6 +116,8 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   const { activeJobs } = useServerEvents();
   const { locale, t } = useLocale();
   const tt = tracksText(locale);
+  const trash = useSessionTrash();
+  const [trashOpen, setTrashOpen] = useState(false);
   const { tracks, loaded: tracksLoaded, error: tracksError } = useTracks();
   const trackOptions = useMemo(() => orderTracks(tracks), [tracks]);
   const tones = useMemo(() => trackTones(tracks), [tracks]);
@@ -1003,6 +1007,18 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           )}
         </div>
 
+        {/* Session trash: only while it holds something */}
+        {trash.entries.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setTrashOpen(true)}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-card border border-transparent hover:border-border cursor-pointer transition-colors text-[11px]"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="tracking-wider text-[10.5px]">{trashText(locale).entry(trash.entries.length)}</span>
+          </button>
+        )}
+
         {/* Settings Navigation Link */}
         <Link
           href="/settings"
@@ -1013,6 +1029,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
           <SettingsComboHint />
         </Link>
       </div>
+      <SessionTrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} trash={trash} />
       <ConfirmDialog
         open={deleteTarget !== null}
         fixed

@@ -1,4 +1,13 @@
 import { decodeConfig, decodeSetup, encodeConfig, encodeSlot, engineWire } from "./config-wire";
+import {
+  decodeRestoreResult,
+  decodeTrashList,
+  TRASH_LIST_PATH,
+  trashPurgePath,
+  trashRestorePath,
+  type RestoreResult,
+  type TrashEntry,
+} from "./session-trash";
 /**
  * Typed HTTP client helper functions calling the /api/* backend routes.
  * Follows notify -> fetch architecture without polling.
@@ -476,6 +485,23 @@ export type DeleteChatMode = "preserve-graph" | "delete-nodes";
 /** DELETE /api/chats/{id}?mode=…: the session goes to `.harness/trash/`; the Aulas/ note stays. */
 export async function deleteChat(id: string, mode: DeleteChatMode): Promise<void> {
   await fetchJson<unknown>(chatPath(id, `?mode=${mode}`), { method: "DELETE" }, { silent: true });
+}
+
+// --- Session trash (`.harness/trash/`) ---
+
+/** GET /api/chats/trash: deleted sessions, most recently deleted first. */
+export async function listTrash(): Promise<TrashEntry[]> {
+  return decodeTrashList(await fetchJson<unknown>(TRASH_LIST_PATH, {}, { silent: true }));
+}
+
+/** POST /api/chats/trash/{file}/restore (409 when a live session already has that id). */
+export async function restoreTrash(file: string): Promise<RestoreResult> {
+  return decodeRestoreResult(await fetchJson<unknown>(trashRestorePath(file), { method: "POST" }, { silent: true }));
+}
+
+/** DELETE /api/chats/trash/{file}?confirm=true: permanent; only that trash file is removed. */
+export async function purgeTrash(file: string): Promise<void> {
+  await fetchJson<unknown>(trashPurgePath(file), { method: "DELETE" }, { silent: true });
 }
 
 /** POST /api/chats/{id}/abort: cancels the running turn (a pending question becomes dismissed). */
