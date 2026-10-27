@@ -116,7 +116,7 @@ test('buildPracticeTranscript: same timestamp puts the problem first; pending qu
 
 test('dockState / dockSubmission: attempt, next, free text and busy', () => {
   const active = pr.dockState({activeProblemId: 'p', executionStatus: 'idle'});
-  assert.deepEqual(active, {mode: 'attempt', busy: false, canNext: false, canDismiss: true});
+  assert.deepEqual(active, {mode: 'attempt', busy: false, working: false, awaitingAnswer: false, canNext: false, canDismiss: true});
   assert.deepEqual(pr.dockSubmission(active, '  my try '), {kind: 'attempt', content: 'my try'});
   assert.equal(pr.dockSubmission(active, '   '), null);
 
@@ -163,4 +163,22 @@ test('labels exist for every enum value in both locales', () => {
   assert.equal(pr.outcomeTone('solved'), 'success');
   assert.equal(pr.outcomeTone('surrendered'), 'danger');
   assert.equal(pr.outcomeTone('dismissed'), 'muted');
+});
+
+test('a pending question blocks the dock without a spinner; running work spins', () => {
+  const waiting = pr.dockState({activeProblemId: null, executionStatus: 'waiting', pendingQuiz: true});
+  assert.equal(waiting.busy, true);
+  assert.equal(waiting.working, false);
+  assert.equal(waiting.awaitingAnswer, true);
+  const running = pr.dockState({activeProblemId: null, executionStatus: 'running', pendingQuiz: false});
+  assert.equal(running.working, true);
+  assert.equal(running.awaitingAnswer, false);
+});
+
+test('doubly escaped LaTeX in stored questions is healed for display', () => {
+  const q = sw.decodeQuiz({quiz_id: 'q1', question: 'Papel de $\\\\frac{1}{\\\\sqrt{d_k}}$?',
+    choices: [{value: 'A', label: '$\\\\sqrt{x}$'}, {value: 'B', label: 'a \\\\ b'}]});
+  assert.equal(q.question, 'Papel de $\\frac{1}{\\sqrt{d_k}}$?');
+  assert.equal(q.choices[0].label, '$\\sqrt{x}$');
+  assert.equal(q.choices[1].label, 'a \\\\ b');
 });

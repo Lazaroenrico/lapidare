@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Compass, HelpCircle, XCircle } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
-import { LessonProse } from "@/components/lesson-prose";
+import { InlineMath, LessonProse } from "@/components/lesson-prose";
 import { optionLetter } from "@/lib/session-wire";
 import { recallQuiz } from "@/lib/quiz-memory";
 import type { CalibrationResult, ProbeAssessment, QuizMode, QuizOption, TeachPhase } from "@/lib/types";
@@ -120,7 +120,9 @@ export function AnsweredQuestionCard({ answer, className = "" }: { answer: Calib
           <ul className="flex flex-col gap-0.5">
             {chosen.map((label, i) => (
               <li key={i}>
-                <span className={answer.correct === false ? "text-danger" : ""}>{label}</span>
+                <span className={answer.correct === false ? "text-danger" : ""}>
+                  <InlineMath content={String(label)} />
+                </span>
               </li>
             ))}
           </ul>
@@ -129,7 +131,9 @@ export function AnsweredQuestionCard({ answer, className = "" }: { answer: Calib
       {answer.other_text && <Labeled label={t.aOther}>{answer.other_text}</Labeled>}
       {showCorrect && (
         <Labeled label={t.aCorrectAnswer}>
-          <span className="text-success">{answer.correct_indices.map(labelOf).join(" · ")}</span>
+          <span className="text-success">
+            <InlineMath content={answer.correct_indices.map(labelOf).join(" · ")} />
+          </span>
         </Labeled>
       )}
       {answer.text && <Labeled label={t.aAnswer}>{answer.text}</Labeled>}

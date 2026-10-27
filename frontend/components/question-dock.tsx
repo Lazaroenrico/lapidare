@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, HelpCircle, Mic, MicOff, PenLine, Send } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
-import { LessonProse } from "@/components/lesson-prose";
+import { InlineMath, LessonProse } from "@/components/lesson-prose";
 import { AnsweredQuestionCard, modeLabel } from "@/components/transcript-cards";
 import { appendDictation, useDictation } from "@/components/use-dictation";
 import { submitQuizAnswer } from "@/lib/api";
@@ -379,10 +379,12 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
                           : "font-prose text-[15px] leading-snug select-text"
                       }
                     >
-                      {rowText}
+                      {row.type === "dont_know" ? rowText : <InlineMath content={String(rowText ?? "")} />}
                     </span>
                     {option?.description && (
-                      <span className="font-prose text-[13px] text-muted-foreground leading-snug">{option.description}</span>
+                      <span className="font-prose text-[13px] text-muted-foreground leading-snug">
+                        <InlineMath content={option.description} />
+                      </span>
                     )}
                     {row.type === "other" && otherSelected && (
                       <input

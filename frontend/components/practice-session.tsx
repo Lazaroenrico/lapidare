@@ -184,7 +184,11 @@ export function PracticeTranscript({
           case "answer":
             return <AnsweredQuestionCard key={item.key} answer={item.answer} />;
           case "pending":
-            return <QuestionDock key={item.key} quiz={item.quiz} sessionId={sessionId} onAnswerSubmitted={onAnswerSubmitted} />;
+            return (
+              <div key={item.key} data-pending-question>
+                <QuestionDock quiz={item.quiz} sessionId={sessionId} onAnswerSubmitted={onAnswerSubmitted} />
+              </div>
+            );
           case "job":
             return <JobCard key={item.key} job={item.job} message={item.message} />;
           case "message":
@@ -292,7 +296,16 @@ export function PracticeDock({
             disabled={pendingQuiz}
             className={`flex-1 resize-none bg-card border border-border rounded-lg px-4 py-2.5 font-prose text-[15px] leading-relaxed text-foreground placeholder-muted-foreground focus:border-foreground transition-colors disabled:opacity-60 ${attempt ? "min-h-[84px]" : ""}`}
           />
-          {state.canNext && !draft.trim() ? (
+          {state.awaitingAnswer && !steerable ? (
+            <button
+              type="button"
+              onClick={() => document.querySelector("[data-pending-question]")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-border bg-accent hover:bg-border text-foreground font-ui text-[11.5px] font-semibold cursor-pointer active:scale-95 transition-all shrink-0"
+            >
+              <ChevronRight className="w-4 h-4 rotate-90" />
+              <span>{t.dockGoToQuestion}</span>
+            </button>
+          ) : state.canNext && !draft.trim() ? (
             <button
               type="button"
               onClick={() => void submit()}
@@ -313,7 +326,7 @@ export function PracticeDock({
               }`}
               aria-label={t.dockSend}
             >
-              {state.busy && !steerable ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {state.working && !steerable ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               <span>{t.dockSend}</span>
             </button>
           )}

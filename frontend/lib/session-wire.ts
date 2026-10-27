@@ -58,14 +58,21 @@ const BANDS = [
 /** Default option value: A, B, C… */
 export const optionLetter = (i: number) => String.fromCharCode(65 + i);
 
+/**
+ * Collapse LaTeX commands escaped twice ("\\frac" → "\frac"). The backend heals new
+ * tool arguments; questions stored before that fix still carry the doubled form.
+ * A real LaTeX line break ("\\") is never directly followed by a letter.
+ */
+export const healLatex = (text: string): string => text.replace(/\\\\(?=[A-Za-z])/g, "\\");
+
 export function decodeOptions(raw: unknown): QuizOption[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((c, i) => {
-    if (typeof c === "string") return { value: optionLetter(i), label: c };
+    if (typeof c === "string") return { value: optionLetter(i), label: healLatex(c) };
     const o = isObj(c) ? c : {};
     return {
       value: str(o.value) || optionLetter(i),
-      label: str(o.label ?? o.text),
+      label: healLatex(str(o.label ?? o.text)),
       description: strOrNull(o.description),
     };
   });
@@ -80,7 +87,7 @@ export function decodeQuiz(raw: unknown): QuizPayload | null {
     // Legacy alias: [{index, label: "A", text}]
     choices = raw.options.map((o, i) => {
       const r = isObj(o) ? o : {};
-      return { value: str(r.label) || optionLetter(i), label: str(r.text ?? r.label) };
+      return { value: str(r.label) || optionLetter(i), label: healLatex(str(r.text ?? r.label)) };
     });
   }
   return {
@@ -88,7 +95,7 @@ export function decodeQuiz(raw: unknown): QuizPayload | null {
     session_id: str(raw.session_id),
     node_id: strOrNull(raw.node_id ?? raw.plan_node_id),
     topic: str(raw.topic ?? raw.target_concept),
-    question: str(raw.question),
+    question: healLatex(str(raw.question)),
     details: strOrNull(raw.details),
     kind: oneOf(raw.kind, KINDS) ?? (choices.length > 0 ? "quiz" : "explain"),
     mode: oneOf(raw.mode, MODES),
@@ -173,11 +180,23 @@ export function decodePlan(raw: unknown): PlanDag {
   return { approach_prose: str(r.approach_prose), nodes, updated_at: str(r.updated_at) || undefined };
 }
 
+// CJK ideographs, kana and hangul (mirrors backend core/text_hygiene.py).
+const CJK = "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff";
+const STRAY_TAIL = new RegExp(`\\s*[${CJK}]\\s*$`);
+const ANY_CJK = new RegExp(`[${CJK}]`);
+
+/** Drop a lone ideograph the model glued to the end of non-CJK prose ("… brutos. 噓"). */
+export function stripStrayTail(text: string): string {
+  const match = STRAY_TAIL.exec(text);
+  if (!match || ANY_CJK.test(text.slice(0, match.index))) return text;
+  return text.slice(0, match.index).trimEnd();
+}
+
 function decodeMessage(raw: Raw): SessionMessage {
   const ts = str(raw.timestamp ?? raw.created_at);
   return {
     ...(raw as unknown as SessionMessage),
-    content: str(raw.content),
+    content: raw.role === "assistant" ? stripStrayTail(str(raw.content)) : str(raw.content),
     timestamp: ts,
     created_at: str(raw.created_at) || ts,
     steer_kind: raw.steer_kind === "learner" || raw.steer_kind === "job" ? raw.steer_kind : null,

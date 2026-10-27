@@ -80,3 +80,10 @@ test('answers sent as a list (current API) are keyed by quiz_id', () => {
   assert.equal(Object.keys(s.answers).join(), 'q9');
   assert.equal(s.answers.q9.correct, true);
 });
+
+test('a stray ideograph at the end of assistant prose is hidden', () => {
+  assert.equal(sw.stripStrayTail('scores brutos. 噓'), 'scores brutos.');
+  assert.equal(sw.stripStrayTail('日本語です'), '日本語です');
+  const s = sw.decodeSession({messages: [{id: 'm', role: 'assistant', content: 'fim. 詰', created_at: 't'}]});
+  assert.equal(s.messages[0].content, 'fim.');
+});

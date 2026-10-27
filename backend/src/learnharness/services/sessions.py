@@ -34,7 +34,7 @@ from learnharness.core.plan_mermaid import (
     derive_plan_statuses,
     mermaid_to_plan_nodes,
 )
-from learnharness.core.text_hygiene import is_stray_fragment
+from learnharness.core.text_hygiene import is_stray_fragment, strip_stray_tail
 from learnharness.engines.cli_protocol import EngineError
 from learnharness.prompts.loader import build_handoff_prompt, build_system_prompt, load_overrides
 from learnharness.vault.jsonl_store import (
@@ -1006,6 +1006,7 @@ class SessionService:
             logger.warning("Could not close engine processes for %s", session_id, exc_info=True)
 
     async def _flush(self, session_id, message_id, text):
+        text = strip_stray_tail(text)
         async with self.lock(session_id):
             session = self.get(session_id)
             node_id = current_node_id(session.plan)

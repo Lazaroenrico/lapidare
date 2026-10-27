@@ -294,3 +294,24 @@ export function LessonProse({
     </div>
   );
 }
+
+/**
+ * Short text with inline Markdown and KaTeX (quiz options, descriptions, chosen answers):
+ * no block margins, inherits the surrounding font and colour.
+ */
+export function InlineMath({ content, className = "" }: { content: string; className?: string }) {
+  return (
+    <span className={`inline-math ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          p: ({ children }) => <span>{children}</span>,
+          a: ({ children }) => <span>{children}</span>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </span>
+  );
+}

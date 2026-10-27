@@ -250,8 +250,12 @@ export type DockMode = "attempt" | "free";
 export interface DockState {
   /** `attempt` while a problem is active; `free` otherwise. */
   mode: DockMode;
-  /** The agent is running (or a send is in flight): no submission allowed. */
+  /** No submission allowed: the agent is working or a question waits for an answer. */
   busy: boolean;
+  /** The agent is running or a send is in flight (shows a spinner; a pending question does not). */
+  working: boolean;
+  /** A question in the transcript waits for the learner: point at it instead of spinning. */
+  awaitingAnswer: boolean;
   /** Shows the "Próximo problema" button (no active problem, agent idle). */
   canNext: boolean;
   /** Esc opens the "Descartar problema?" dialog. */
@@ -265,11 +269,15 @@ export function dockState(input: {
   pendingQuiz?: boolean;
 }): DockState {
   const running = input.executionStatus === "queued" || input.executionStatus === "running";
-  const busy = running || Boolean(input.sending) || Boolean(input.pendingQuiz);
+  const working = running || Boolean(input.sending);
+  const awaitingAnswer = Boolean(input.pendingQuiz) && !working;
+  const busy = working || Boolean(input.pendingQuiz);
   const mode: DockMode = input.activeProblemId ? "attempt" : "free";
   return {
     mode,
     busy,
+    working,
+    awaitingAnswer,
     canNext: mode === "free" && !busy,
     canDismiss: mode === "attempt" && !input.sending,
   };
