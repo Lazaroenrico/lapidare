@@ -6,6 +6,7 @@ through the persistent ``gemini --acp`` adapter in ``gemini_acp.py``.
 
 import contextlib
 import json
+import re
 import tempfile
 from contextlib import aclosing
 from pathlib import Path
@@ -161,6 +162,10 @@ class GeminiHeadlessEngine:
             return False
         return bool(self.is_waiting_on_learner(self._session_id))
 
+    def _env(self):
+        """Child environment; ``None`` inherits the backend's (subclasses add their own)."""
+        return None
+
     async def _events(self, prompt, slot=None, schema=None):
         command, stdin = self._command(prompt, slot, schema)
         async with aclosing(
@@ -170,6 +175,7 @@ class GeminiHeadlessEngine:
                 cwd=self.work_dir,
                 timeout=self.timeout,
                 is_suspended=self._learner_pending,
+                env=self._env(),
             )
         ) as events:
             async for event in events:
@@ -218,9 +224,9 @@ class GeminiHeadlessEngine:
                     result = value
         if result is None:
             raise EngineError("Provider stream ended without a result")
-        if "structured_output" in result:
-            return schema.model_validate(result["structured_output"])
         text = "".join(parts) or result.get("response", "")
+        if "structured_output" in result:
+            return pick_structured(schema, result["structured_output"], text)
         return schema.model_validate_json(_strip_fence(text))
 
     def research_ready(self):
@@ -295,6 +301,30 @@ class GeminiHeadlessEngine:
             return await self.run_structured(
                 prompt, schema=DrawingReviewResult, system_instruction=DRAWING_REVIEW_INSTRUCTION
             )
+
+
+_FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n?```", re.DOTALL)
+
+
+def pick_structured(schema, structured_output, text):
+    """The schema answer from a ``--json-schema`` run.
+
+    agy 1.4.8 (``agy-1.4.8-track-collapsed-result-real.ndjson``) can write the full answer
+    as a fenced JSON block in its text and then call ``finish`` with a lossy summary of it
+    (a 21-item track became one item named after the track). When a fenced block in the text
+    also validates and carries more content than ``structured_output``, the text wins.
+    """
+    chosen = schema.model_validate(structured_output)
+    size = len(chosen.model_dump_json())
+    for block in _FENCED_JSON.findall(text or ""):
+        try:
+            candidate = schema.model_validate_json(block)
+        except ValueError:
+            continue
+        candidate_size = len(candidate.model_dump_json())
+        if candidate_size > size:
+            chosen, size = candidate, candidate_size
+    return chosen
 
 
 def _strip_fence(text):

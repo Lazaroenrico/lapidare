@@ -12,6 +12,11 @@ A research workspace writes ``gate_policy.json`` (``{"policy": "research"}``) ne
 copied script. The gate then allows only agy's web-read tools (``search_web`` and
 ``read_url_content``, names taken from a real agy 1.4.8 ``init`` event) plus the
 structured-output ``finish``; every MCP server, file, shell and browser tool is denied.
+
+A vision workspace (``{"policy": "vision"}``) allows only agy's file-read tools
+(``read_file`` / ``view_file``; agy 1.4.8 returns a PNG read this way to the model as an
+image) on paths inside the workspace itself, plus ``finish``. The drawing review uses it to
+hand agy the exported PNG without opening anything else on disk.
 """
 
 import json
@@ -25,7 +30,7 @@ READ_TOOLS = {"read_file", "view_file"}
 PATH_KEYS = ("Path", "AbsolutePath", "File", "FilePath", "Uri")
 WEB_READ_TOOLS = {"search_web", "read_url_content"}
 POLICY_FILE = "gate_policy.json"
-POLICIES = ("harness", "research")
+POLICIES = ("harness", "research", "vision")
 
 
 def _within(path, root):
@@ -46,9 +51,27 @@ def decide_research(payload):
     }
 
 
-def decide(payload, schema_dir=MCP_SCHEMA_DIR, server=SERVER, policy="harness"):
+def decide_vision(payload, workspace):
+    call = payload.get("toolCall") or {}
+    name = call.get("name") or ""
+    args = call.get("args") or {}
+    if name == "finish":
+        return {"decision": "allow"}
+    if name in READ_TOOLS and workspace:
+        paths = [args[k] for k in PATH_KEYS if isinstance(args.get(k), str)]
+        if paths and all(_within(p, workspace) for p in paths):
+            return {"decision": "allow"}
+    return {
+        "decision": "deny",
+        "reason": "Drawing review: only reading the attached image in this workspace is allowed.",
+    }
+
+
+def decide(payload, schema_dir=MCP_SCHEMA_DIR, server=SERVER, policy="harness", workspace=None):
     if policy == "research":
         return decide_research(payload)
+    if policy == "vision":
+        return decide_vision(payload, workspace)
     call = payload.get("toolCall") or {}
     name = call.get("name") or ""
     args = call.get("args") or {}
@@ -83,8 +106,14 @@ def main():
         payload = json.load(sys.stdin)
     except ValueError:
         payload = {}
-    policy = read_policy(os.path.dirname(os.path.abspath(__file__)))
-    json.dump(decide(payload if isinstance(payload, dict) else {}, policy=policy), sys.stdout)
+    agents_dir = os.path.dirname(os.path.abspath(__file__))
+    policy = read_policy(agents_dir)
+    # The gate is copied to <workspace>/.agents/; the vision policy confines reads to <workspace>.
+    workspace = os.path.dirname(agents_dir)
+    json.dump(
+        decide(payload if isinstance(payload, dict) else {}, policy=policy, workspace=workspace),
+        sys.stdout,
+    )
 
 
 if __name__ == "__main__":
