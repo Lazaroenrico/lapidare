@@ -930,6 +930,69 @@ Na época desta revisão:
 
 Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
 
+### 15.1 Distribuição desktop (AppImage)
+
+`make desktop` gera `desktop/dist/Lapidare-<versão>-x86_64.AppImage`: Electron como casca e um CPython 3.12 relocável ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) rodando o backend, que também serve o `next export`. Ninguém precisa ter Python, Node ou `uv` instalado. A inferência continua nos conectores Google (`agy`/`gemini` detectados no sistema; `google-genai` embutido).
+
+```
+resources/
+├─ app.asar  → desktop/main.cjs, desktop/policy.cjs (casca; sem lógica do app)
+├─ python/   → CPython + dependências exatas do uv.lock + learnharness
+└─ web/      → frontend/out (LAPIDARE_EXPORT=1 next build) + fontes do Excalidraw
+```
+
+**Processo.** O `main.cjs`:
+
+1. pega o lock de instância única (a segunda abertura só foca a janela);
+2. resolve o `PATH` do login shell, porque um AppImage aberto pelo menu herda um `PATH` mínimo e a detecção de `agy`/`gemini`/`git` depende dele;
+3. escolhe uma porta livre em `127.0.0.1` e gera um segredo aleatório por execução;
+4. inicia `python3 -I -m learnharness.desktop` num grupo de processos próprio, com o log em `~/.config/Lapidare/logs/main.log`;
+5. espera `GET /api/health` e só então abre a janela (`sandbox`, `contextIsolation`, sem preload).
+
+Ao sair, manda `SIGTERM` ao grupo e `SIGKILL` 6 s depois.
+
+| Variável (definida pela casca) | Papel |
+|---|---|
+| `LEARNHARNESS_PORT` | Porta do uvicorn e da URL do MCP interno |
+| `LEARNHARNESS_STATIC_DIR` | Liga o `StaticSite` (`api/static_site.py`) em `/`, depois de todas as rotas |
+| `LEARNHARNESS_CORS_ORIGINS` | `http://127.0.0.1:<porta>`, a própria origem |
+| `LEARNHARNESS_DESKTOP_SECRET` | Exige o header `x-lapidare-desktop` em todo `/api` |
+| `LEARNHARNESS_APP_VERSION` | Dispara o snapshot do `.harness/` quando a versão muda |
+| `LEARNHARNESS_ORIG_LD_LIBRARY_PATH` | Valor original, restaurado só nos processos filhos |
+
+**Segredo por execução.** Só o processo main do Electron conhece o segredo. Ele o injeta (`session.webRequest`) apenas em requisições `/api` da própria origem, vindas do frame principal de uma janela do app (`desktop/policy.cjs`). Outro processo local que descubra a porta recebe `403`. `/internal/mcp` continua protegido pelo Bearer por execução.
+
+**Ambiente dos filhos.** Todo subprocesso do backend parte de `child_env()` (`learnharness/child_env.py`): sem `APPDIR`, `APPIMAGE`, `ELECTRON_*`, `PYTHONHOME`/`PYTHONPATH`, sem o `LD_LIBRARY_PATH` do AppImage e sem o segredo. O stdio de MCP de conteúdo continua com a sua allow-list própria.
+
+**Rotas dinâmicas.** `/chat/[id]` e `/draw/[slug]` são exportadas uma vez com o placeholder `_`. O `StaticSite` serve `chat/_.html` para qualquer `/chat/<id>`, e a página lê o id real da URL (`lib/route-param.ts`), nunca de `params`.
+
+**Dados e banco.** Nada do usuário vai no AppImage: `langgraph.sqlite`, `*.jsonl` e `config.json` ficam em `<vault>/.harness/`.
+
+- **Um processo por Vault.** `vault/ownership.py` mantém um `flock` em `$TMPDIR/learnharness-locks-<uid>/vault-<hash>` durante a vida do processo. Sem isso, o `recover` de um segundo backend marcaria como interrompido o trabalho vivo do primeiro.
+- **Barreira de schema.** `core/schema_gate.py` recusa um `config.json` com `schema_version` maior que o suportado.
+- **Snapshot por versão.** Quando `LEARNHARNESS_APP_VERSION` difere de `.harness/app-version`, o `langgraph.sqlite` (API de backup do SQLite, segura com WAL) e o `config.json` são copiados para `.harness/backups/<versão-anterior>/`, guardando os dois últimos. Voltar de versão = restaurar esse snapshot.
+- **Versões fixas.** O SQLite vem do próprio CPython embutido. O `langgraph-checkpoint-sqlite` vem do `uv.lock`, e `tests/integration/test_langgraph_compat.py` abre uma fixture gravada pela versão atual.
+- **Pasta sincronizada.** `GET /api/setup/status` devolve `vault_warning` quando o Vault está em Dropbox/Syncthing/rede, onde o WAL do SQLite não é seguro.
+
+| Código de saída de `learnharness.desktop` | Significado (diálogo da casca) |
+|---|---|
+| `75` | Vault já aberto em outra instância (app ou `make dev`) |
+| `76` | Dados gravados por uma versão mais nova |
+| `2` | `LEARNHARNESS_PORT` ausente ou inválida |
+| `3` | Outra falha de startup (código do uvicorn) |
+
+**Build.** `make desktop`:
+
+1. `desktop/scripts/build-web.sh`: export do frontend;
+2. `desktop/scripts/build-python.sh`: CPython com URL e sha256 fixos, `uv export --frozen` + `pip install --require-hashes`, `compileall`;
+3. `desktop/scripts/guard-payload.mjs`: falha se o bundle tiver `.env*`, `secrets.json`, `active-vault`, `.harness`/`.gemini`/`.agents`, `*.jsonl`, `*.sqlite` ou o `$HOME` do dev em texto;
+4. `desktop/scripts/smoke.mjs`: sobe o Python empacotado com um Vault descartável e testa as rotas;
+5. `electron-builder` (`desktop/electron-builder.yml`, fuses `runAsNode`/`NODE_OPTIONS`/inspect desligados, `onlyLoadAppFromAsar`).
+
+`make desktop-clean` apaga `desktop/build` e `desktop/dist`.
+
+**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em `ubuntu-22.04`. Depois faz o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`) e o backend em `ubuntu:22.04` e `debian:12`. Por fim sobe para um release **draft** e confere os assets. Publicar o draft é manual. O auto-update (`electron-updater`, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
+
 ---
 
 ## 16. Histórico de fases

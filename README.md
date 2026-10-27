@@ -40,6 +40,23 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 
 ---
 
+## Baixando o App (Linux)
+
+Baixe `Lapidare-<versão>-x86_64.AppImage` na página de *Releases*, torne-o executável e abra:
+
+```bash
+chmod +x Lapidare-*-x86_64.AppImage
+./Lapidare-*-x86_64.AppImage
+```
+
+O AppImage já traz o backend e a interface. Ninguém precisa instalar Python, Node ou `uv`. Ainda é preciso **um conector Google**: `agy`, `gemini` ou uma `GEMINI_API_KEY` em *Setup*. O app se atualiza sozinho quando sai uma versão nova.
+
+- **Sem FUSE** (algumas distros novas não trazem `libfuse2`): rode com `--appimage-extract-and-run`.
+- **Ubuntu 24.04+**: se a janela não abrir por causa do sandbox do Chromium (restrição do AppArmor a *user namespaces*), rode com `--no-sandbox`.
+- **Logs**: `~/.config/Lapidare/logs/main.log`. Seus dados continuam no Vault. Antes de cada atualização, o app guarda uma cópia do banco em `.harness/backups/`.
+
+Para gerar o AppImage a partir do código: `make desktop` (detalhes em [`docs/ARCHITECTURE.md` §15.1](docs/ARCHITECTURE.md)).
+
 ## Rodando Localmente
 
 Pré-requisitos: Python 3.12+ com [`uv`](https://docs.astral.sh/uv/), Node.js 20+, `git` e pelo menos um conector Google (`agy`, `gemini` ou uma `GEMINI_API_KEY`).
