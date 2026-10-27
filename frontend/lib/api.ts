@@ -236,6 +236,8 @@ export async function createChat(payload: {
   topic?: string;
   source_file?: string;
   track_item_id?: string;
+  /** Fase 14: track of `track_item_id` (omitted = the active track). */
+  track_id?: string;
   /** Per-session model override (omitted = strong slot). */
   model_id?: string;
   effort?: ModelChoicePayload["effort"];

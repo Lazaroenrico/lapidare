@@ -1,3 +1,4 @@
+import type { TrackSummary } from "./tracks";
 /**
  * Core TypeScript definitions for learnharness.
  * Strictly aligned with backend Pydantic v2 schemas and product invariants.
@@ -99,7 +100,11 @@ export interface HarnessConfig {
   vault_path: string;
   vault_folders: VaultFolderMap;
   slots: ModelSlots;
+  /** Active track in the pre-Fase 14 shape (kept by the backend for compatibility). */
   track: TrackConfig;
+  /** Fase 14: every saved track (one in focus). */
+  tracks?: TrackSummary[];
+  active_track_id?: string | null;
   content_mcps: McpServerConfig[];
 }
 
@@ -245,6 +250,8 @@ export interface SessionRecord {
   recovery_required: boolean;
   source_file?: string;
   track_item_id?: string;
+  /** Fase 14: track the session belongs to (may point to a removed track). */
+  track_id?: string | null;
   pending_quiz?: QuizPayload | null;
   /** Answered questions by quiz_id (extended CalibrationResult). */
   answers: Record<string, CalibrationResult>;
@@ -410,10 +417,12 @@ export interface GraphCluster {
 
 /** Track item not yet completed, rendered as a ghost node when ⇶ Roteiro is on. */
 export interface RoadmapItem {
-  /** "track:<item_id>". */
+  /** "track:<track_id>:<item_id>" (Fase 14) or legacy "track:<item_id>". */
   id: string;
   title: string;
   status: string;
+  track_id?: string | null;
+  track_title?: string | null;
   linked_node_ids: string[];
   depends_on: string[];
 }
@@ -629,8 +638,6 @@ export interface GithubImportRequest {
   paths: string[];
   start_session: boolean;
   use_as_track: boolean;
-  /** Confirma a substituição de uma Trilha existente após um 409. */
-  replace_track?: boolean;
 }
 
 export interface GithubImportResult extends ImportResult {

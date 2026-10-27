@@ -11,10 +11,8 @@ import {
   Cpu,
   FolderOpen,
   Globe,
-  HardDrive,
   Keyboard,
   Key,
-  Layers,
   Loader2,
   Network,
   Palette,
@@ -30,31 +28,29 @@ import type {
   EngineKind,
   HarnessConfig,
   ModelSlots,
-  TrackConfig,
-  TrackMode,
 } from "@/lib/types";
 import { completeSetup, getSetupStatus } from "@/lib/api";
 import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
-import { GithubTrackLinker } from "@/components/github-track-linker";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
 import { openSetup } from "@/components/setup-gate";
 import { AgentSection } from "@/components/settings/agent-section";
 import { GraphSection } from "@/components/settings/graph-section";
 import { AppearanceSection } from "@/components/settings/appearance-section";
 import { KeyboardSection } from "@/components/settings/keyboard-section";
+import { TracksSection } from "@/components/settings/tracks-section";
 import { buttonClass, SectionHeader } from "@/components/settings/ui";
 import { normalizeSlots } from "@/lib/config-wire";
 import { settingsText } from "@/lib/settings-i18n";
+import { tracksText } from "@/lib/tracks-i18n";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
-const DEFAULT_REPO_PATH = "";
-
-const SECTIONS = ["connectors", "agent", "graph", "appearance", "keyboard", "general"] as const;
+const SECTIONS = ["connectors", "tracks", "agent", "graph", "appearance", "keyboard", "general"] as const;
 type SettingsSection = (typeof SECTIONS)[number];
 
 const SECTION_ICONS: Record<SettingsSection, React.ComponentType<{ className?: string }>> = {
   connectors: Plug,
+  tracks: Route,
   agent: Bot,
   graph: Network,
   appearance: Palette,
@@ -70,6 +66,7 @@ const isSection = (value: string): value is SettingsSection => (SECTIONS as read
 export default function SettingsPage() {
   const {t, locale} = useLocale();
   const s = settingsText(locale);
+  const navLabel = (section: SettingsSection) => (section === "tracks" ? tracksText(locale).navTracks : s.nav[section]);
   const [activeSection, setActiveSection] = useState<SettingsSection>("connectors");
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
@@ -95,10 +92,6 @@ export default function SettingsPage() {
 
   // Servidores MCP são geridos pelas rotas /api/import/mcp/servers (McpServerManager).
   const [selectedMcp, setSelectedMcp] = useState<string | null>(null);
-
-  const [trackMode, setTrackMode] = useState<TrackMode>("free");
-  const [trackRepoPath, setTrackRepoPath] = useState<string>(DEFAULT_REPO_PATH);
-  const [goalDescription, setGoalDescription] = useState<string>(t.defaultGoal);
 
   // Deep link: /settings#keyboard opens that section (the `?` cheat sheet links there).
   useEffect(() => {
@@ -130,13 +123,6 @@ export default function SettingsPage() {
         if (res.config.language) setLanguage(res.config.language);
         if (res.config.vault_path) setVaultPath(res.config.vault_path);
         if (res.config.slots) setSlots(normalizeSlots(res.config.slots));
-        if (res.config.track) {
-          setTrackMode(res.config.track.mode);
-          if (res.config.track.repo_path)
-            setTrackRepoPath(res.config.track.repo_path);
-          if (res.config.track.goal_description)
-            setGoalDescription(res.config.track.goal_description);
-        }
       }
     } catch (err) {
       console.error("Failed to load settings:", err);
@@ -153,31 +139,9 @@ export default function SettingsPage() {
     void loadSettings();
   }, []);
 
-  // Após vincular um repositório GitHub como Trilha, o backend já gravou
-  // track.repo_path/mode: relê só a trilha para que "Salvar" não a sobrescreva.
-  const refreshTrack = async () => {
-    try {
-      const res = await getSetupStatus();
-      if (res.config?.track) {
-        setTrackMode(res.config.track.mode);
-        if (res.config.track.repo_path) setTrackRepoPath(res.config.track.repo_path);
-      }
-    } catch {
-      /* O toast global já informa a falha. */
-    }
-  };
-
   const handleSave = async () => {
     setSaving(true);
     setStatusMessage(null);
-
-    const track: TrackConfig = {
-      mode: trackMode,
-      active: trackMode !== "free",
-      repo_path: trackMode === "repo_binary" ? trackRepoPath : undefined,
-      goal_description:
-        trackMode === "goal_generated" ? goalDescription : undefined,
-    };
 
     const finalConfig: Partial<HarnessConfig> = {
       initialized: true,
@@ -192,7 +156,7 @@ export default function SettingsPage() {
         templates: "Templates",
       },
       slots,
-      track,
+      // track is omitted: tracks are managed by Settings → Trilhas (/api/tracks).
       // content_mcps é omitido: os servidores são salvos individualmente pelo McpServerManager.
     };
 
@@ -300,7 +264,7 @@ export default function SettingsPage() {
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5 shrink-0" />
-                    {s.nav[section]}
+                    {navLabel(section)}
                   </button>
                 </li>
               );
@@ -326,6 +290,7 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {activeSection === "tracks" && <TracksSection />}
           {activeSection === "agent" && <AgentSection />}
           {activeSection === "graph" && <GraphSection />}
           {activeSection === "appearance" && <AppearanceSection />}
@@ -442,7 +407,7 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* 6. GENERAL: LANGUAGE, TRACK, VAULT PATH (read-only) */}
+          {/* GENERAL: LANGUAGE, VAULT PATH (read-only). Tracks live in their own section. */}
           {activeSection === "general" && !loading && (
             <div className="space-y-6">
               <SectionHeader title={s.generalHeading} hint={s.generalHint} />
@@ -511,111 +476,6 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <p className="font-ui text-[11px] text-muted-foreground">{s.vaultPathHint}</p>
-              </div>
-
-              {/* Track configuration */}
-              <div className="space-y-3">
-                <SectionHeader title={t.trackHeading} hint={t.trackHint} />
-
-                {/* Repo + Binary Leveling */}
-                <div
-                  onClick={() => setTrackMode("repo_binary")}
-                  className={`p-4 rounded border cursor-pointer transition-all ${
-                    trackMode === "repo_binary"
-                      ? "bg-accent border-foreground"
-                      : "bg-card border-border hover:border-muted-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Route className="w-4 h-4 text-foreground" />
-                    <span className="font-ui text-xs font-semibold text-foreground">
-                      {t.trackOption1}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 font-prose">
-                    {t.trackOption1Before}{" "}
-                    <code className="text-foreground font-ui">
-                      00 Mapa.md / LEARNING.md
-                    </code>
-                    {t.trackOption1After}
-                  </p>
-                  {trackMode === "repo_binary" && (
-                    <div
-                      className="mt-3 pt-3 border-t border-border"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <GithubTrackLinker onLinked={() => void refreshTrack()} />
-                    </div>
-                  )}
-                  {trackMode === "repo_binary" && (
-                    <div className="mt-3 pt-2.5 border-t border-border">
-                      <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                        {t.courseDirectory}
-                      </label>
-                      <input
-                        type="text"
-                        value={trackRepoPath}
-                        onChange={(e) => setTrackRepoPath(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Goal Generated Track */}
-                <div
-                  onClick={() => setTrackMode("goal_generated")}
-                  className={`p-4 rounded border cursor-pointer transition-all ${
-                    trackMode === "goal_generated"
-                      ? "bg-accent border-foreground"
-                      : "bg-card border-border hover:border-muted-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-foreground" />
-                    <span className="font-ui text-xs font-semibold text-foreground">
-                      {t.trackOption2}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 font-prose">
-                    {t.trackOption2Hint}
-                  </p>
-                  {trackMode === "goal_generated" && (
-                    <div className="mt-3 pt-2.5 border-t border-border">
-                      <label className="font-ui text-[10.5px] text-muted-foreground block mb-1">
-                        {t.goalDescription}
-                      </label>
-                      <textarea
-                        value={goalDescription}
-                        onChange={(e) => setGoalDescription(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        rows={3}
-                        className="w-full bg-background border border-border rounded px-3 py-1.5 font-ui text-xs text-foreground resize-none"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Free Mode */}
-                <div
-                  onClick={() => setTrackMode("free")}
-                  className={`p-4 rounded border cursor-pointer transition-all ${
-                    trackMode === "free"
-                      ? "bg-accent border-foreground"
-                      : "bg-card border-border hover:border-muted-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <HardDrive className="w-4 h-4 text-foreground" />
-                    <span className="font-ui text-xs font-semibold text-foreground">
-                      {t.trackOption3}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 font-prose">
-                    {t.trackOption3Hint}
-                  </p>
-                </div>
               </div>
             </div>
           )}

@@ -47,10 +47,22 @@ import { ChainTable } from "./chain-table";
 import { GraphSettingsPanel } from "./graph-settings-panel";
 import { UsagePill } from "./usage-pill";
 import { useLocale } from "./locale-provider";
+import { useTracks } from "./use-tracks";
+import { TrackDot } from "./tracks-ui";
+import {
+  filterRoadmap,
+  findActiveTrack,
+  roadmapLegend,
+  toneForTrack,
+  trackTones,
+  type RoadmapScope,
+} from "@/lib/tracks";
+import { tracksText } from "@/lib/tracks-i18n";
 
 const OBSIDIAN_PREF_KEY = "learnharness:open-notes-in-obsidian";
 const GRAPH_EVENTS: SseEventType[] = ["graph:updated", "vault:changed"];
 const POSITIONS_DEBOUNCE_MS = 600;
+const ROADMAP_SCOPE_KEY = "learnharness:roadmap-scope";
 
 function readStorage(key: string): string | null {
   try {
@@ -95,7 +107,8 @@ interface GraphViewProps {
 
 export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImport, focusId = null, className = "" }: GraphViewProps) {
   const router = useRouter();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const tt = tracksText(locale);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GraphCanvasEngine | null>(null);
@@ -268,11 +281,41 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId]);
 
+  // ⇶ Roteiro (Fase 14): one colour per track; "Só a trilha em foco" or "Todas".
+  const { tracks } = useTracks();
+  const activeTrackId = findActiveTrack(tracks)?.id ?? null;
+  const tones = useMemo(() => trackTones(tracks), [tracks]);
+  const [roadmapScope, setRoadmapScope] = useState<RoadmapScope>("focus");
+  useEffect(() => {
+    const saved = readStorage(ROADMAP_SCOPE_KEY);
+    if (saved === "focus" || saved === "all") setRoadmapScope(saved);
+  }, []);
+  const changeRoadmapScope = (scope: RoadmapScope) => {
+    setRoadmapScope(scope);
+    writeStorage(ROADMAP_SCOPE_KEY, scope);
+  };
+  const roadmapTrackCount = useMemo(
+    () => new Set(snapshot.roadmap.map((r) => r.track_id).filter(Boolean)).size,
+    [snapshot.roadmap],
+  );
+  const visibleRoadmap = useMemo(
+    () => filterRoadmap(snapshot.roadmap, roadmapScope, activeTrackId),
+    [snapshot.roadmap, roadmapScope, activeTrackId],
+  );
+  const legend = useMemo(() => roadmapLegend(visibleRoadmap, tones), [visibleRoadmap, tones]);
+
   const hasRoadmap = snapshot.roadmap.length > 0;
   useEffect(() => {
-    engineRef.current?.setGhosts(roadmapOn && hasRoadmap ? snapshot.roadmap : null);
+    engineRef.current?.setGhosts(roadmapOn && hasRoadmap ? visibleRoadmap : null, (item) =>
+      item.track_id ? toneForTrack(item.track_id, tones) : null,
+    );
     if (!roadmapOn) setGhost(null);
-  }, [roadmapOn, hasRoadmap, snapshot.roadmap]);
+  }, [roadmapOn, hasRoadmap, visibleRoadmap, tones]);
+
+  // A ghost hidden by the scope toggle closes its card.
+  useEffect(() => {
+    if (ghost && !visibleRoadmap.some((r) => r.id === ghost.id)) setGhost(null);
+  }, [ghost, visibleRoadmap]);
 
   useEffect(() => {
     engineRef.current?.setSettings(settings);
@@ -342,7 +385,12 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
   const handleStartGhost = async (item: RoadmapItem) => {
     try {
       setActionLoading("ghost");
-      const session = await createChat({ mode: "TEACH", topic: item.title, track_item_id: trackItemIdOf(item.id) });
+      const session = await createChat({
+        mode: "TEACH",
+        topic: item.title,
+        track_item_id: trackItemIdOf(item.id, item.track_id),
+        ...(item.track_id ? { track_id: item.track_id } : {}),
+      });
       router.push(`/chat/${session.id}`);
     } catch (err) {
       console.error("Failed to start track item:", err);
@@ -491,6 +539,46 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
         </div>
       </div>
 
+      {/* ⇶ Roteiro legend + scope toggle */}
+      {roadmapOn && hasRoadmap && (legend.length > 0 || roadmapTrackCount > 1) && (
+        <div
+          role="group"
+          aria-label={tt.legend}
+          className="absolute top-20 left-4 z-10 w-60 max-w-[calc(100%-32px)] bg-card/90 backdrop-blur border border-border rounded-lg p-2.5 shadow-lg font-ui space-y-2"
+        >
+          {roadmapTrackCount > 1 && activeTrackId && (
+            <div role="group" aria-label={tt.roadmapScope} className="grid grid-cols-2 bg-background p-0.5 border border-border rounded text-[10.5px]">
+              {(["focus", "all"] as const).map((scope) => (
+                <button
+                  key={scope}
+                  type="button"
+                  onClick={() => changeRoadmapScope(scope)}
+                  aria-pressed={roadmapScope === scope}
+                  className={`py-1 px-1 rounded cursor-pointer transition-colors truncate ${
+                    roadmapScope === scope ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {scope === "focus" ? tt.roadmapFocus : tt.roadmapAll}
+                </button>
+              ))}
+            </div>
+          )}
+          {legend.length > 0 && (
+            <ul className="space-y-1">
+              {legend.map((entry) => (
+                <li key={entry.trackId} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <TrackDot tone={entry.tone} />
+                  <span className={`flex-1 min-w-0 truncate ${entry.trackId === activeTrackId ? "text-foreground" : ""}`} title={entry.title}>
+                    {entry.title}
+                  </span>
+                  <span className="tabular-nums text-[10.5px]">{entry.count}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Node card */}
       {focused && !isChainsOpen && (
         <div className="absolute top-20 right-4 w-80 max-h-[calc(100%-14rem)] overflow-y-auto bg-card border border-border rounded-xl p-4 shadow-2xl z-20 select-text font-ui">
@@ -628,6 +716,12 @@ export function GraphView({ selection, onSelectionChange, onSnapshot, onOpenImpo
           <div className="flex items-start justify-between gap-2 mb-2">
             <div className="min-w-0">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.ghostLabel}</span>
+              {ghost.track_title && (
+                <span className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground mt-0.5">
+                  {ghost.track_id && <TrackDot tone={toneForTrack(ghost.track_id, tones)} />}
+                  <span className="truncate">{ghost.track_title}</span>
+                </span>
+              )}
               <h3 className="font-title text-base text-foreground font-bold leading-tight break-words">{ghost.title}</h3>
             </div>
             <button type="button" onClick={() => setGhost(null)} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-accent" title={t.close} aria-label={t.close}>

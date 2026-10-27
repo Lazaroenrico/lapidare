@@ -3,9 +3,12 @@
 import { useLocale } from "@/components/locale-provider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Loader2, Mic, Route, Send, Target, X } from "lucide-react";
-import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig, TrackItem } from "@/lib/types";
+import { BookOpen, Loader2, Mic, Send, Target, X } from "lucide-react";
+import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig } from "@/lib/types";
 import { createChat } from "@/lib/api";
+import { findActiveTrack } from "@/lib/tracks";
+import { TrackChip, type TrackStep } from "./track-chip";
+import { useTracks } from "./use-tracks";
 import { differsFromSlot, modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
 import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
 import { appendDictation, useDictation } from "./use-dictation";
@@ -72,14 +75,24 @@ export function Composer({
     if (initialTopic) setText(initialTopic);
   }, [initialTopic]);
 
-  const nextTrackStep = useMemo<TrackItem | null>(() => {
-    if (!trackConfig?.active || !trackConfig.items || trackConfig.items.length === 0) return null;
-    if (trackConfig.current_step_id) {
-      const current = trackConfig.items.find((it) => it.id === trackConfig.current_step_id);
-      if (current && !current.completed) return current;
+  // Fase 14: several tracks, one in focus. `trackConfig` (old shape = active track)
+  // only supplies `source_path` and the fallback when GET /api/tracks is unavailable.
+  const tracksState = useTracks();
+  const activeTrack = findActiveTrack(tracksState.tracks);
+  const legacyMode = tracksState.tracks.length === 0 && tracksState.error !== null;
+  const nextTrackStep = useMemo<TrackStep | null>(() => {
+    const items = trackConfig?.items ?? [];
+    if (activeTrack) {
+      const next = activeTrack.next_item;
+      if (!next) return null;
+      const legacy = items.find((it) => it.id === next.id);
+      return { id: next.id, title: next.title, trackId: activeTrack.id, sourcePath: legacy?.source_path };
     }
-    return trackConfig.items.find((it) => !it.completed) || null;
-  }, [trackConfig]);
+    if (!legacyMode || !trackConfig?.active || items.length === 0) return null;
+    const current = trackConfig.current_step_id ? items.find((it) => it.id === trackConfig.current_step_id) : undefined;
+    const step = current && !current.completed ? current : items.find((it) => !it.completed);
+    return step ? { id: step.id, title: step.title, trackId: null, sourcePath: step.source_path } : null;
+  }, [activeTrack, legacyMode, trackConfig]);
 
   const startSession = async (payload: Parameters<typeof createChat>[0], clearText: boolean) => {
     try {
@@ -138,7 +151,13 @@ export function Composer({
       return;
     }
     await startSession(
-      { mode: "TEACH", topic: nextTrackStep.title, track_item_id: nextTrackStep.id, source_file: nextTrackStep.source_path },
+      {
+        mode: "TEACH",
+        topic: nextTrackStep.title,
+        track_item_id: nextTrackStep.id,
+        ...(nextTrackStep.trackId ? { track_id: nextTrackStep.trackId } : {}),
+        ...(nextTrackStep.sourcePath ? { source_file: nextTrackStep.sourcePath } : {}),
+      },
       false,
     );
   };
@@ -208,26 +227,14 @@ export function Composer({
         </div>
       )}
 
-      {/* INVARIANT: contextual track chip directly above the composer (only with a track) */}
-      {nextTrackStep && (
-        <div className="w-full flex justify-center">
-          <button
-            type="button"
-            onClick={() => void handleContinueTrack()}
-            disabled={submitting}
-            className="group flex items-center gap-2 bg-card/95 hover:bg-accent backdrop-blur border border-border hover:border-muted-foreground rounded-full px-3.5 py-1.5 shadow-lg transition-all cursor-pointer text-xs font-ui text-muted-foreground hover:text-foreground"
-            title={t.composerContinueTitle(nextTrackStep.title)}
-            aria-keyshortcuts="Control+Enter Meta+Enter"
-          >
-            <Route className="w-3.5 h-3.5 text-success" />
-            <span>{t.composerTrackActive}</span>
-            <span className="text-foreground font-medium max-w-xs truncate">{nextTrackStep.title}</span>
-            <span className="flex items-center gap-1 bg-accent group-hover:bg-border px-2 py-0.5 rounded-full text-[11px] text-foreground border border-border">
-              {t.composerContinue}
-            </span>
-          </button>
-        </div>
-      )}
+      {/* INVARIANT: contextual track chip directly above the composer (hidden without tracks) */}
+      <TrackChip
+        tracks={tracksState.tracks}
+        legacyStep={legacyMode ? nextTrackStep : null}
+        nextStep={nextTrackStep}
+        busy={submitting}
+        onContinue={() => void handleContinueTrack()}
+      />
 
       <div className="w-full bg-card border border-border focus-within:border-muted-foreground rounded-2xl shadow-2xl transition-all duration-200 p-3">
         {/* STRICTLY TWO MODES */}

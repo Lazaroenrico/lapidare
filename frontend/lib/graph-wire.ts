@@ -180,6 +180,8 @@ function decodeRoadmap(raw: unknown): RoadmapItem[] {
       status,
       linked_node_ids: strList(r.linked_node_ids),
       depends_on: strList(r.depends_on),
+      track_id: str(r.track_id) || null,
+      track_title: str(r.track_title) || null,
     });
   }
   return out;
@@ -210,8 +212,14 @@ export function decodeGraph(raw: unknown): GraphSnapshot {
   };
 }
 
-/** Track item id behind a roadmap ghost ("track:<item_id>" → "<item_id>"). */
-export const trackItemIdOf = (roadmapId: string) => roadmapId.replace(/^track:/, "");
+/**
+ * Track item id behind a roadmap ghost: "track:<track_id>:<item_id>" (Fase 14,
+ * pass the item's `track_id`) or legacy "track:<item_id>" → "<item_id>".
+ */
+export const trackItemIdOf = (roadmapId: string, trackId?: string | null) => {
+  const rest = roadmapId.replace(/^track:/, "");
+  return trackId && rest.startsWith(`${trackId}:`) ? rest.slice(trackId.length + 1) : rest;
+};
 
 /** Chat link that scrolls to the message where a node was born. */
 export const sessionMessageHref = (ref: NodeSessionRef) =>
