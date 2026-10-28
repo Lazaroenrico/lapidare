@@ -34,10 +34,11 @@ desktop:
 	node desktop/scripts/guard-payload.mjs
 	node desktop/scripts/smoke.mjs
 	cd desktop && npm ci
+# --publish never: on CI outside PRs electron-builder would publish on its own; the workflow's publish job owns the release.
 ifeq ($(UNAME_S),Darwin)
-	cd desktop && npx electron-builder --mac dmg --$(MAC_ARCH)
+	cd desktop && npx electron-builder --mac dmg --$(MAC_ARCH) --publish never
 else
-	cd desktop && npx electron-builder --linux $(TARGETS) --x64
+	cd desktop && npx electron-builder --linux $(TARGETS) --x64 --publish never
 endif
 # Staging dirs (~1.4 GB) are useless once the packages exist; CI keeps them (KEEP_UNPACKED=1)
 # for its smoke tests on the unpacked app.
