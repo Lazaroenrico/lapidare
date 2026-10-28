@@ -153,7 +153,7 @@ learnharness/
 │   │   │   ├── frontmatter.py        # regra única (Obsidian) de frontmatter: CRLF, BOM, `---` em valores
 │   │   │   ├── turn_prompt.py        # o que um turno envia ao motor (one-shot | persistente)
 │   │   │   ├── events.py             # SseEventType + SseFrame
-│   │   │   └── ports.py              # Protocols: AgentEnginePort, VaultPort, ContentMcpPort
+│   │   │   └── ports.py              # Protocols: AgentEnginePort, ContentMcpPort
 │   │   ├── engines/                  # adaptadores dos 3 caminhos Google
 │   │   │   ├── agy_engine.py · agy_gate.py
 │   │   │   ├── gemini_acp.py · gemini_engine.py
@@ -207,7 +207,7 @@ flowchart LR
 
 - `core/` não importa nada de fora de `core/` (só stdlib pura e Pydantic). Funções como `plan_merge`, `derive_plan_statuses`, `retest_queue`, `choose_first_kept` e `validate_svg` são testadas isoladamente.
 - `AppState` (`api/state.py`) é a raiz de composição: ele instancia `SessionService`, `UsageService`, `JobManager`, `TrackService`, `GraphService` e `PracticeService`, o `SseHub`, o `PendingDockRegistry` e o `ContentMcpClient`, e fabrica motores com `engine(slot)`. Em testes, `engine_factory` injeta um `FakeEngine`.
-- `core/ports.py` documenta as interfaces (`AgentEnginePort`, `ContentMcpPort`). O `VaultPort` descreve o formato legado do grafo; os serviços usam as funções de `vault/*` diretamente.
+- `core/ports.py` documenta as interfaces (`AgentEnginePort`, `ContentMcpPort`). Os serviços usam as funções de `vault/*` diretamente (o antigo `VaultPort` foi removido na Fase 19).
 
 ---
 
@@ -416,7 +416,7 @@ Definidas em `mcp/runtime_server.py: session_tools`. As de pergunta **bloqueiam 
 2. `POST /api/chats/{id}/answer` (`QuizSubmission`: `chosen_indices`, `is_dont_know`, `confidence` 0–100, `learner_thinking`, `reading_thinking`, `text`, `other_text`) passa por `evaluate_calibration`, grava em `.harness/quiz-log.jsonl` (exceto `ask` e dispensadas), resolve o Future e emite `dock:resolved`.
 3. O modelo recebe a **resposta compacta** (`compact_answer`): só o que o aluno acrescentou (`answers`, `correct`, `confidence`, `calibration_band`, `directive`, `thinking`, `thinking_while_reading`). Para `recall`/`explain`, vêm também o `committed_answer` e a instrução de avaliar com `grade_recall`.
 4. **O gabarito não vaza:** enquanto pendente, `GET /api/chats/{id}` serializa a pergunta sem `correct_indices`, `committed_answer` e `explanation` (`_serialize_quiz`).
-5. **Escala de confiança:** paradas `[0,30,50,70,90,100]`, padrão 50, só em `quiz`/`probe`; "Não sei" desliga a confiança e é tratado como lacuna, não como erro. Ao responder, o relógio de inatividade do motor volta a contar do zero.
+5. **Escala de confiança:** slider livre de 0 a 100 (passo 5 no teclado), padrão 50, com rótulos "Pouca/Alguma/Muita certeza", só em `quiz`/`probe`; "Não sei" desliga a confiança e é tratado como lacuna, não como erro. Ao responder, o relógio de inatividade do motor volta a contar do zero.
 
 ### 6.4 Prompts: fragmentos numerados + overrides
 
@@ -808,7 +808,7 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 - **Ajustes (⚙, `lib/graph-settings.ts`, chave `learnharness:graph-settings:v2`):** Exibição (tamanho do nó, espessura/opacidade da aresta, tamanho do rótulo, zoom para rótulos nítidos, nomes das sessões on/off + tamanho), Regiões (opacidade, dilatação, desfoque), Layout radial (raio do anel interno, espaço entre níveis, força dos níveis) e Física (repulsão, atração, comprimento da aresta, atração ao centro, coesão de cluster, atrito). O mesmo componente de controle serve o painel e Configurações → Grafo.
 - **Origem em nota (Fase 16):** o cartão do nó lista "nota: <título>" (com `^pN` quando houver) e abre a nota no mesmo painel somente leitura (`ConceptNotePane` com `sourceId`, via `GET /api/graph/sources/{id}/note`, frontmatter omitido) ou no Obsidian, se ligado. Um nó só de notas não mostra "Sessões de origem".
 - **`import-notes-panel.tsx` (Adicionar ao grafo):** "Notas do Vault" (árvore por pasta com busca sem acento, seleção por pasta, selo "no grafo") ou "Arquivos locais" (vários, arrastar e soltar); resultado por arquivo acompanhado por `jobs:updated` → `GET /api/jobs`; lista "Notas no grafo" com **Tirar do grafo** (manter ou remover os nós). A bandeja BACKGROUND AGENTS mostra uma linha por arquivo dos jobs `notes_import`.
-- **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
+- **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech; desativado temporariamente, volta na Fase 22), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
 - **`question-dock.tsx` + `lib/question-core.ts`:**
   - opções embaralhadas de forma determinística por `quiz_id`;
   - "Não sei" e slider de confiança;
@@ -829,7 +829,7 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 
 ### 13.3 `lib/`: módulos puros e testes
 
-Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com `node --test` (`frontend/tests/*.test.cjs`, cerca de 112 casos):
+Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com `node --test` (`frontend/tests/*.test.cjs`, cerca de 181 casos):
 
 | Módulo | Responsabilidade |
 |---|---|
@@ -864,7 +864,7 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `toggleSidebar` | `Mod+B` | global |
 | `sessionSearch` | `Mod+Shift+F` | global |
 | `goGraph` | `Mod+G` | global |
-| `dictate` | `Mod+D` | global (`learnharness:toggle-dictation`) |
+| `dictate` | `Mod+D` | global (`learnharness:toggle-dictation`); desativado temporariamente (volta na Fase 22) |
 | `modelPicker` | `Mod+K` | global (`learnharness:open-model-picker`) |
 | `find` | `Mod+F` | sessão (busca literal com CSS Custom Highlight API) |
 | `rename` | `F2` | sessão |
@@ -917,17 +917,17 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 
 **`make check`:**
 
-- `check-backend`: `uv run pytest -q` + `uv run ruff check src tests`;
-- `check-frontend`: `npm run typecheck` + `npm test` + `npm run build`.
+- `check-backend`: `uv run pytest -q` + `uv run ruff check src tests` + `uv run basedpyright`;
+- `check-frontend`: `npm run typecheck` + `npm run lint` + `npm test` + `npm run build`.
 
 Na época desta revisão:
 
 | Área | Testes |
 |---|---|
-| Backend · unidade (`tests/unit/`, 27 arquivos) | 328 |
-| Backend · integração (`tests/integration/`, 18 arquivos) | 93 |
-| **Backend total** (`pytest --collect-only`) | **421** |
-| Frontend (`tests/*.test.cjs`, 15 arquivos) | ~112 |
+| Backend · unidade (`tests/unit/`, 47 arquivos) | 457 |
+| Backend · integração (`tests/integration/`, 26 arquivos) | 170 |
+| **Backend total** (`pytest --collect-only`) | **627** |
+| Frontend (`tests/*.test.cjs`, 27 arquivos) | ~181 |
 
 Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
 
@@ -1018,6 +1018,6 @@ As fases 1 a 7 (Ondas 1 e 2: fundação, Setup/Vault, Home, sala de aula TEACH, 
 | 13 | [`fase-13-configuracoes-atalhos.md`](specs/fase-13-configuracoes-atalhos.md) | Configurações com navegação lateral, editor de prompts, aparência, teclado, atalhos globais |
 | 14 | [`fase-14-multiplas-trilhas.md`](specs/fase-14-multiplas-trilhas.md) | Várias trilhas com uma em foco, `/api/tracks`, migração do `track` legado, roteiro por trilha, MCP genérico |
 | 16 | [`fase-16-18-notas-artefatos-onboarding.md`](specs/fase-16-18-notas-artefatos-onboarding.md) | Notas → grafo: `sources.jsonl`, fatias por título/parágrafo, cobertura por fonte, job `notes_import` por arquivo, aba **Adicionar ao grafo**, origem "nota:" no cartão do nó (seção 8.4) |
-| 15 | [`fase-15-nivelamento.md`](specs/fase-15-nivelamento.md) | **Em implementação:** nivelamento de trilha por busca binária (`leveling_done`, desfazer) |
+| 15 | [`fase-15-nivelamento.md`](specs/fase-15-nivelamento.md) | nivelamento de trilha por busca binária (`leveling_done`, desfazer) |
 
 Depois da Fase 14 vieram ainda a paleta roxa escura (`149ba9d`), o seletor de modelo redesenhado (`5b8580a`) e a renomeação do produto para Lapidare (`4ac8746`).

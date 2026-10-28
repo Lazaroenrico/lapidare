@@ -209,3 +209,34 @@ export function pickerNav(
       return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Shift+Tab: cycle the effort of the current choice.
+// ---------------------------------------------------------------------------
+
+export interface EffortCycleResult {
+  model_id: string;
+  /** Next effort for a free-effort model; null when the new model id pins it. */
+  effort: EffortLevel | null;
+}
+
+/**
+ * Next step of the effort cycle. Free-effort models advance through EFFORT_LEVELS;
+ * ids that pin effort by suffix advance through the variants of their family in the
+ * catalog. Null when there is nothing to toggle.
+ */
+export function nextEffort(
+  current: { model_id: string; effort: EffortLevel | null | undefined },
+  models: readonly { id: string; label?: string | null }[],
+): EffortCycleResult | null {
+  const id = (current.model_id ?? "").trim() || "auto";
+  if (effortSelectable(id)) {
+    const at = current.effort ? EFFORT_LEVELS.indexOf(current.effort) : -1;
+    return { model_id: id, effort: EFFORT_LEVELS[(at + 1) % EFFORT_LEVELS.length] };
+  }
+  const family = findFamily(groupModelFamilies(models), id);
+  const variants = family ? effortVariants(family) : [];
+  const at = variants.findIndex((v) => v.id === id);
+  if (at < 0 || variants.length < 2) return null;
+  return { model_id: variants[(at + 1) % variants.length].id, effort: null };
+}

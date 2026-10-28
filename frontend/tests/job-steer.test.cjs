@@ -159,3 +159,9 @@ test('Fase 17 verification flags decode (null when the check did not run)', () =
   assert.equal(vis.result.checked, false);
   assert.equal(vis.result.checkNotes, 'texto cortado');
 });
+
+test('PDF pages skip empty arrays: pages_cited [] falls back to pages_read', () => {
+  const pdf = js.decodeJobSteer({job_id: 'j3', kind: 'read_pdf', status: 'done',
+    result: {path: 'Fontes/paper.pdf', question: 'q', answer: 'a', pages: [], pages_cited: [], pages_read: [3, 2]}}, '');
+  assert.deepEqual(pdf.result.pages, [2, 3]);
+});

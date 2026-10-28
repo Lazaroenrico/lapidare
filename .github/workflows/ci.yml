@@ -1,0 +1,35 @@
+name: CI
+
+# Checks on every push to main and on pull requests. No packaging (see desktop-release.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  # Real-Chromium artifact tests depend on the runner's browser and time out there;
+  # they still run locally wherever a system Chromium exists.
+  LEARNHARNESS_CHROMIUM: "off"
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd frontend && npm ci
+      - run: make check
+      - run: cd desktop && npm ci && npm test

@@ -10,7 +10,7 @@
   "author": "Lazaro Enrico <lazaroenrico@gmail.com>",
   "homepage": "https://github.com/Lazaroenrico/lapidare",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.cjs",
     "dist": "electron-builder --linux AppImage --x64"
   },
   "devDependencies": {

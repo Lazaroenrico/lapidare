@@ -67,6 +67,7 @@ import {
 } from "@/lib/practice";
 import { formatTokens } from "@/lib/usage";
 import { ModelPicker } from "@/components/model-picker";
+import { useCycleEffort } from "@/components/use-cycle-effort";
 import { useEventSubscription } from "@/components/server-events";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
@@ -313,6 +314,14 @@ export function ChatView() {
       setModelBusy(false);
     }
   };
+
+  // Shift+Tab: cycle the session's effort and persist it through the same path as the picker.
+  const effortAnnouncement = useCycleEffort({
+    engine: activeSlot?.engine ?? "agy",
+    value: modelValue,
+    disabled: modelBusy || !id,
+    apply: (next) => void handleModelChange(next),
+  });
 
   // Handle open citation drawer (stable: every memoized LessonProse receives it)
   const handleOpenCitation = useCallback((sourceName: string, paragraphId: string) => {
@@ -759,6 +768,7 @@ export function ChatView() {
             disabled={modelBusy}
             onChange={(next) => void handleModelChange(next)}
           />
+          <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
           {session.usage && session.usage.total_tokens > 0 && (
             <span
               className="font-ui text-[11px] text-muted-foreground px-2 py-1 rounded-md border border-accent"

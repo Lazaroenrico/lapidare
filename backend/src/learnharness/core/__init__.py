@@ -55,7 +55,6 @@ from learnharness.core.events import (
 from learnharness.core.ports import (
     AgentEnginePort,
     ContentMcpPort,
-    VaultPort,
 )
 
 __all__ = [
@@ -103,7 +102,6 @@ __all__ = [
     "TrackItem",
     "TrackMode",
     "VaultFolderMap",
-    "VaultPort",
     # Calibration
     "compute_confidence_band",
     "evaluate_calibration",

@@ -129,3 +129,31 @@ test('computePopoverPosition never overflows across a sweep of triggers/viewport
     }
   }
 });
+
+test('nextEffort cycles free effort low -> medium -> high -> low', () => {
+  const step = (effort) => mc.nextEffort({model_id: 'auto', effort}, []);
+  assert.deepEqual(step('low'), {model_id: 'auto', effort: 'medium'});
+  assert.deepEqual(step('medium'), {model_id: 'auto', effort: 'high'});
+  assert.deepEqual(step('high'), {model_id: 'auto', effort: 'low'});
+  assert.deepEqual(mc.nextEffort({model_id: 'gemini-x', effort: undefined}, []), {model_id: 'gemini-x', effort: 'low'});
+});
+
+test('nextEffort cycles the variants of a family when the id pins effort', () => {
+  const ids = ['gemini-4-argon-low', 'gemini-4-argon-medium', 'gemini-4-argon-high'];
+  const catalog = ids.map((id) => ({id, label: id}));
+  const seen = [];
+  let id = 'gemini-4-argon-low';
+  for (let i = 0; i < 4; i++) {
+    const next = mc.nextEffort({model_id: id, effort: 'medium'}, catalog);
+    assert.equal(next.effort, null);
+    seen.push(next.model_id);
+    id = next.model_id;
+  }
+  assert.deepEqual(seen, ['gemini-4-argon-medium', 'gemini-4-argon-high', 'gemini-4-argon-low', 'gemini-4-argon-medium']);
+});
+
+test('nextEffort is null when there is nothing to toggle', () => {
+  assert.equal(mc.nextEffort({model_id: 'solo-high', effort: 'low'}, []), null);
+  assert.equal(mc.nextEffort({model_id: 'solo-high', effort: 'low'}, [{id: 'solo-high'}]), null);
+  assert.equal(mc.nextEffort({model_id: 'solo-high', effort: 'low'}, [{id: 'solo-high'}, {id: 'other-low'}]), null);
+});

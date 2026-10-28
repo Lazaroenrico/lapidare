@@ -19,7 +19,7 @@ const messages = {
     demoFailed: 'Não foi possível gerar o simulador.', dismiss: 'Dispensar',
     statusFailed: 'Falhou', statusInterrupted: 'Interrompida', statusWaiting: 'Aguardando sua resposta',
     statusTeaching: 'Ensinando...', statusCompleted: 'Concluída', statusIdle: 'Parada',
-    retry: 'Tentar de novo', retrying: 'Reenfileirando...', agentsIdle: 'Ocioso (nenhum pipeline ativo)',
+    retry: 'Tentar de novo', retrying: 'Reenfileirando...', agentsIdle: 'Ocioso (nenhum pipeline ativo)', agentsFailed: (n: number) => `Falharam (${n})`, agentsFailedBadge: (n: number) => `${n} com falha`,
     // Import multi-fonte
     impTitle: 'Importar para o Vault', impSubtitle: 'Tudo entra em Fontes/ (somente-leitura), ancorado em ^p1..^pN.',
     impSources: 'Origem do conteúdo', impTabMcp: 'MCP', impTabGithub: 'GitHub', impTabLocal: 'Arquivo local',
@@ -418,7 +418,7 @@ const messages = {
     demoFailed: 'Could not generate the simulator.', dismiss: 'Dismiss',
     statusFailed: 'Failed', statusInterrupted: 'Interrupted', statusWaiting: 'Waiting for your answer',
     statusTeaching: 'Teaching...', statusCompleted: 'Completed', statusIdle: 'Idle',
-    retry: 'Retry', retrying: 'Re-queuing...', agentsIdle: 'Idle (no active pipelines)',
+    retry: 'Retry', retrying: 'Re-queuing...', agentsIdle: 'Idle (no active pipelines)', agentsFailed: (n: number) => `Failed (${n})`, agentsFailedBadge: (n: number) => `${n} failed`,
     // Multi-source import
     impTitle: 'Import into the Vault', impSubtitle: 'Everything lands in Sources/ (read-only), anchored as ^p1..^pN.',
     impSources: 'Content source', impTabMcp: 'MCP', impTabGithub: 'GitHub', impTabLocal: 'Local file',

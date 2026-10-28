@@ -27,10 +27,10 @@ export const SHORTCUTS = [
   // Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
   // { id: "dictate", combo: "Mod+D", scope: "global" },
   { id: "modelPicker", combo: "Mod+K", scope: "global" },
+  { id: "cycleEffort", combo: "Shift+Tab", scope: "global" },
   { id: "find", combo: "Mod+F", scope: "session" },
   { id: "rename", combo: "F2", scope: "session" },
   { id: "abort", combo: "Escape", scope: "session" },
-  { id: "toggleThinking", combo: "Mod+T", scope: "session" },
   { id: "continueTrack", combo: "Mod+Enter", scope: "home" },
 ] as const satisfies readonly { id: string; combo: string; scope: ShortcutScope }[];
 

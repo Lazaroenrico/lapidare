@@ -29,7 +29,9 @@ export function captureCombo(event: KeyLike, isMac: boolean): CaptureResult {
   if (UNUSABLE_KEYS.has(lower) || !event.key) return { kind: "invalid" };
   // Ctrl on macOS (or ⊞/Super elsewhere) cannot be expressed by the registry grammar.
   if (otherSystemKey) return { kind: "invalid" };
-  if (NEEDS_MODIFIER.has(lower) && !mod && !event.altKey) return { kind: "invalid" };
+  // Shift+Tab is the one Shift-only exception (cycleEffort); Tab alone stays invalid.
+  const shiftTab = lower === "tab" && event.shiftKey;
+  if (NEEDS_MODIFIER.has(lower) && !mod && !event.altKey && !shiftTab) return { kind: "invalid" };
 
   const symbol = isSymbol(event.key);
   const keyPart = event.key === "+" ? "Plus" : event.key.length === 1 ? event.key.toUpperCase() : event.key;

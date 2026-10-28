@@ -7,10 +7,8 @@ no network calls, and no filesystem operations.
 from collections.abc import AsyncIterator
 from typing import Any, Literal, Protocol, TypeVar
 
-from learnharness.core.contracts.config import HarnessConfig, McpServerConfig, ModelSlotConfig
-from learnharness.core.contracts.graph import ConceptNode, GraphSnapshot, LogicalChain
-from learnharness.core.contracts.quiz import CalibrationResult
-from learnharness.core.contracts.session import SessionMessage, SessionRecord
+from learnharness.core.contracts.config import McpServerConfig, ModelSlotConfig
+from learnharness.core.contracts.session import SessionMessage
 
 T = TypeVar("T")
 
@@ -44,60 +42,6 @@ class AgentEnginePort(Protocol):
         system_instruction: str | None = None,
     ) -> T:
         """Execute a single structured turn and return typed output adhering to schema."""
-        ...
-
-
-class VaultPort(Protocol):
-    """Port interface for bidirectional synchronization with the user's Obsidian Vault."""
-
-    async def load_config(self) -> HarnessConfig | None:
-        """Load .harness/config.json if initialized."""
-        ...
-
-    async def save_config(self, config: HarnessConfig) -> None:
-        """Persist updated configuration into .harness/config.json."""
-        ...
-
-    async def get_graph_snapshot(self) -> GraphSnapshot:
-        """Build GraphSnapshot combining Conceitos/*.md and .harness/chains.jsonl."""
-        ...
-
-    async def get_concept(self, concept_id: str) -> ConceptNode | None:
-        """Fetch concept metadata and content from Conceitos/<Name>.md."""
-        ...
-
-    async def upsert_concept(self, concept: ConceptNode) -> None:
-        """Non-destructively merge concept into Conceitos/<Name>.md."""
-        ...
-
-    async def append_session_record(self, session: SessionRecord) -> None:
-        """Append session state to .harness/sessions/<id>.jsonl."""
-        ...
-
-    async def get_session_record(self, session_id: str) -> SessionRecord | None:
-        """Load session record from .harness/sessions/<id>.jsonl."""
-        ...
-
-    async def append_quiz_log(self, result: CalibrationResult) -> None:
-        """Append calibration entry to .harness/quiz-log.jsonl."""
-        ...
-
-    async def append_chain(self, chain: LogicalChain) -> None:
-        """Append logical chain to .harness/chains.jsonl."""
-        ...
-
-    async def read_source_excerpt(self, source_path: str, paragraph_ref: str) -> str | None:
-        """Extract referenced paragraph #^pN from read-only Fontes/."""
-        ...
-
-    async def save_drawing(
-        self, slug: str, content_markdown: str, png_bytes: bytes
-    ) -> None:
-        """Save drawing markdown and exported PNG in Desenhos/."""
-        ...
-
-    async def read_drawing_png(self, slug: str) -> bytes | None:
-        """Read exported drawing PNG for multimodal vision review."""
         ...
 
 
