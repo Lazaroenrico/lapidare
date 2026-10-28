@@ -34,6 +34,8 @@ function walk(dir) {
       if (st.size === 0 || st.size > 2 * 1024 * 1024) continue;
       const buf = fs.readFileSync(p);
       if (!isText(buf)) continue;
+      // SBOMs de wheels guardam o caminho de build do upstream, que na CI coincide com o HOME do runner.
+      if (path.basename(dir) === "sboms" && path.dirname(dir).endsWith(".dist-info")) continue;
       for (const n of needleBufs) if (buf.includes(n)) offenders.push(`contem ${n.toString()}: ${p}`);
     }
   }

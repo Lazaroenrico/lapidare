@@ -2,7 +2,7 @@
   "name": "lapidare-desktop",
   "productName": "Lapidare",
   "desktopName": "lapidare.desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lapidare - learning harness local-first",
   "main": "main.cjs",
   "private": true,
