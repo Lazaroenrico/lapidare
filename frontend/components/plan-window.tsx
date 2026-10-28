@@ -53,7 +53,7 @@ export function PlanWindow({ plan, sourceName, onSelectCitation, className = "" 
 
   if (isMinimized) {
     return (
-      <div className={`fixed bottom-20 right-6 z-30 ${className}`}>
+      <div className={`fixed bottom-36 right-6 z-30 ${className}`}>
         <button
           type="button"
           onClick={() => setIsMinimized(false)}
@@ -73,7 +73,7 @@ export function PlanWindow({ plan, sourceName, onSelectCitation, className = "" 
 
   return (
     <aside
-      className={`fixed bottom-20 right-6 w-[calc(100vw-48px)] max-w-md max-h-[72vh] flex flex-col z-30 shadow-2xl rounded-lg overflow-hidden bg-card border border-border font-ui text-xs ${className}`}
+      className={`fixed bottom-36 right-6 w-[calc(100vw-48px)] max-w-md max-h-[min(72vh,calc(100vh-230px))] flex flex-col z-30 shadow-2xl rounded-lg overflow-hidden bg-card border border-border font-ui text-xs ${className}`}
       aria-label={t.planAria}
     >
       <div className="px-3.5 py-2.5 bg-background border-b border-border flex items-center justify-between select-none">
