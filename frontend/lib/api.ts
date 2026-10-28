@@ -580,6 +580,15 @@ export async function extractSessionToGraph(sessionId: string): Promise<{ job_id
   return { job_id: jobId };
 }
 
+/**
+ * POST /api/chats/{id}/graph/unlink (Fase 21): removes the nodes that came only from
+ * this session and resets its extraction coverage. 404 unknown session; 409 a turn or
+ * an extraction is running (the thrown Error carries the server message).
+ */
+export async function unlinkChatFromGraph(id: string): Promise<void> {
+  await fetchJson<unknown>(chatPath(id, "/graph/unlink"), { method: "POST" }, { silent: true });
+}
+
 // --- Background Jobs ---
 
 export async function getBackgroundJobs(): Promise<BackgroundJobStatus[]> {

@@ -833,6 +833,7 @@ class SessionService:
                 completed = session.phase == "completed"
                 return False
             handoff_run, steers = self._begin_turn(session)
+            usage.turn = session.turn_seq
             config = self.state.get_config()
             engine, slot, tools = self._prepare_engine(session, config)
             persistent = bool(getattr(engine, "session_persistent", False))
@@ -851,6 +852,8 @@ class SessionService:
                          if persistent else {})
             await self._stream_reply(session_id, engine.stream_turn(
                 turn.prompt, session_id, slot=slot, tools=tools, **persisted))
+            # The turn's usage is charged before settling: a compaction there resets the meter.
+            usage.close()
             follow_up, completed = await self._settle(session_id, persistent=persistent, handoff_run=handoff_run)
         except asyncio.CancelledError:
             session = self.get(session_id)
@@ -876,6 +879,7 @@ class SessionService:
         # A turn that starts with the handoff armed is the teacher's planning turn.
         handoff_run = self._handoff_due(session)
         session.execution_id = uuid4().hex
+        session.turn_seq += 1
         session.execution_status = "running"
         session.error = None
         # Steers queued so far ride this turn; later ones trigger a follow-up turn.

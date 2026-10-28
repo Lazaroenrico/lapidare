@@ -314,6 +314,8 @@ class GraphSettings(BaseModel):
     # Uncovered teacher prose (len/4 tokens) that triggers extraction at the end of a run;
     # also the token budget of one extraction batch.
     extraction_chunk_tokens: int = Field(default=4096, ge=1)
+    # Fase 21: False stops the automatic trigger and refuses the manual one (notes import stays).
+    extraction_enabled: bool = True
 
 
 class ToolToggles(BaseModel):

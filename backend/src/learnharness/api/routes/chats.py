@@ -11,6 +11,7 @@ from learnharness.core.contracts.config import EffortLevel
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import SessionMode, SessionRecord, slot_override_for
 from learnharness.core.leveling import count_questions, leveling_progress
+from learnharness.core.model_limits import context_limit, context_window
 from learnharness.core.plan_mermaid import derive_plan_statuses
 from learnharness.services.practice import attempt_prefix, next_request, public_practice
 from learnharness.services.sessions import SessionConflict, now
@@ -136,6 +137,12 @@ def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
     data = _serialize_session(session)
     config = state.get_config()
     data["effective_slot"] = session.teaching_slot(config.slots.strong).model_dump(mode="json")
+    # Fase 21: context meter bound and extraction ring.
+    limit, kind = context_limit(config.agent.compaction_tokens,
+                                context_window(data["effective_slot"]["model_id"]))
+    data["usage"].update({"context_limit": limit, "limit_kind": kind})
+    coverage = state.graph.coverage_for(session)
+    data["coverage"] = coverage.model_dump() if coverage else None
     if session.context_kind == "leveling":  # additive: progress band of a leveling session
         data["leveling_progress"] = leveling_progress(
             config.find_track(session.track_id), count_questions(a.kind for a in session.answers.values()),
@@ -203,6 +210,13 @@ async def rename_chat(chat_id: str, payload: RenamePayload, request: Request):
     state = get_app_state(request.app)
     session = await state.sessions.rename(chat_id, payload.title)
     return _with_slot(state, session)
+
+
+@chats_router.post("/{chat_id}/graph/unlink")
+async def unlink_chat_from_graph(chat_id: str, request: Request):
+    """Remove the session's traces from the graph (it stays and can be extracted again);
+    409 while a turn or an extraction of it runs."""
+    return await get_app_state(request.app).graph.unlink_chat(chat_id)
 
 
 @chats_router.delete("/{chat_id}")

@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from learnharness.core.contracts.graph import BatchMessage, PropositionNode
+from learnharness.core.contracts.graph import BatchMessage, PropositionNode, SessionCoverage
 from learnharness.core.contracts.session import SessionRecord
 from learnharness.core.events import SseEventType
 from learnharness.core.graph_merge import (
@@ -20,6 +20,7 @@ from learnharness.core.note_sources import is_source_id
 from learnharness.core.roadmap import roadmap_layout
 from learnharness.core.slug import ascii_slug
 from learnharness.vault.graph_store import (
+    append_coverage_reset,
     append_records,
     harness_owned_note,
     load_coverage,
@@ -64,9 +65,26 @@ class GraphService:
         return uncovered_messages(session.id, ((m.id, m.role, m.content) for m in session.messages),
                                   index, exclude)
 
+    def coverage_for(self, session: SessionRecord) -> SessionCoverage | None:
+        """Progress towards the next extraction (``None`` for PRACTICE: it never feeds the graph)."""
+        if session.mode != "TEACH":
+            return None
+        graph = self.state.get_config().graph
+        return SessionCoverage(
+            uncovered_tokens=sum(m.tokens for m in self._uncovered(session)),
+            chunk_tokens=graph.extraction_chunk_tokens,
+            extracting=self._extraction_active(session.id),
+            enabled=graph.extraction_enabled,
+        )
+
+    def _extraction_active(self, session_id: str) -> bool:
+        return any(j.get("kind") == "extraction" and j.get("status") in ("queued", "running")
+                   and (j.get("payload") or {}).get("session_id") == session_id
+                   for j in list(self.state.active_jobs.values()))
+
     def maybe_extract(self, session: SessionRecord) -> dict[str, Any] | None:
         """End-of-run trigger: enough uncovered teacher prose, or the session is complete."""
-        if session.mode != "TEACH":
+        if session.mode != "TEACH" or not self.state.get_config().graph.extraction_enabled:
             return None
         uncovered = self._uncovered(session)
         if not uncovered:
@@ -84,6 +102,10 @@ class GraphService:
         """
         if session.mode == "PRACTICE":
             raise ValueError("PRACTICE sessions are not extracted into the graph")
+        if not self.state.get_config().graph.extraction_enabled:
+            from learnharness.services.sessions import SessionConflict
+
+            raise SessionConflict("a extração para o grafo está desligada nas configurações")
         payload = {"session_id": session.id, "topic": session.title, "reason": reason}
         return self.state.jobs.submit("extraction", payload, key=f"extract:{session.id}",
                                       dedup_statuses=("queued",))
@@ -348,6 +370,27 @@ class GraphService:
             self.state.sse_hub.broadcast(SseEventType.VAULT_CHANGED, {"paths": changed})
         return {"ok": True, "session_id": session_id, "unlinked_node_ids": plan["unlink_nodes"],
                 "deleted_node_ids": plan["dead_nodes"], "deleted_chain_ids": plan["dead_chains"]}
+
+    async def unlink_chat(self, session_id: str) -> dict[str, Any]:
+        """Take a session's traces out of the graph and let its prose be extracted again.
+
+        Refused (``SessionConflict``) while a turn runs or an extraction is queued/running
+        for it. The session itself is untouched.
+        """
+        from learnharness.services.sessions import SessionConflict
+
+        sessions = self.state.sessions
+        sessions.get(session_id)  # SessionNotFound -> 404
+        if sessions.is_running(session_id):
+            raise SessionConflict("A turn is running; abort it before removing the session from the graph")
+        if self._extraction_active(session_id):
+            raise SessionConflict("An extraction of this session is queued or running; try again when it ends")
+        result = await self.unlink_session(session_id)
+        async with self.lock:
+            append_coverage_reset(self.state.vault_path, session_id)
+        self.state.sse_hub.broadcast(SseEventType.GRAPH_UPDATED, {"session_id": session_id})
+        self.state.sse_hub.broadcast(SseEventType.SESSION_UPDATED, {"session_id": session_id})
+        return {**result, "removed_nodes": len(result["deleted_node_ids"])}
 
     def update_positions(self, positions: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
         saved = save_positions(self.state.vault_path, positions)

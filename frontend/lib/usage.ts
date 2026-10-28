@@ -3,7 +3,7 @@
  * GET /api/usage → {today, total, by_session[]}.
  */
 
-import type { SessionUsageEntry, UsageCounters, UsageReport } from "./types";
+import type { SessionCoverage, SessionUsage, SessionUsageEntry, TurnUsage, UsageCounters, UsageReport } from "./types";
 
 type Raw = Record<string, unknown>;
 const isObj = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -65,4 +65,82 @@ export function formatTokens(n: number, locale: string = "pt-BR"): string {
   if (v < 1000) return String(Math.round(v));
   if (v < 999_950) return fmt(v / 1000, "k");
   return fmt(v / 1_000_000, "M");
+}
+
+const optCount = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+
+function decodeTurnUsage(raw: unknown): TurnUsage | null {
+  if (!isObj(raw)) return null;
+  return {
+    input_tokens: count(raw.input_tokens),
+    output_tokens: count(raw.output_tokens),
+    thinking_tokens: count(raw.thinking_tokens),
+    cached_tokens: optCount(raw.cached_tokens),
+  };
+}
+
+/** GET /api/chats/{id} `usage`: counters plus the Fase 21 context meter (every new field optional). */
+export function decodeSessionUsage(raw: unknown): SessionUsage | null {
+  const counters = decodeUsageCounters(raw);
+  if (!counters || !isObj(raw)) return null;
+  return {
+    ...counters,
+    context_tokens: optCount(raw.context_tokens),
+    context_limit: count(raw.context_limit),
+    limit_kind: raw.limit_kind === "window" ? "window" : "compaction",
+    last_turn: decodeTurnUsage(raw.last_turn),
+  };
+}
+
+/** GET /api/chats/{id} `coverage` (null for PRACTICE and older servers). */
+export function decodeCoverage(raw: unknown): SessionCoverage | null {
+  if (!isObj(raw)) return null;
+  return {
+    uncovered_tokens: count(raw.uncovered_tokens),
+    chunk_tokens: count(raw.chunk_tokens),
+    extracting: raw.extracting === true,
+    enabled: raw.enabled !== false,
+  };
+}
+
+export interface ContextMeter {
+  /** True when the server sent a limit to measure against. */
+  known: boolean;
+  /** 0..1 fill of the bar (0 when unknown). */
+  fraction: number;
+  /** "42k" or "?" when no report has arrived (or after a compaction). */
+  used: string;
+  /** "150k" or "?" when the server did not send a limit. */
+  limit: string;
+  kind: "compaction" | "window";
+}
+
+/** Context bar numbers: null tokens render as "?", the fill is capped at 1. */
+export function contextMeter(usage: SessionUsage, locale: string = "pt-BR"): ContextMeter {
+  const known = usage.context_limit > 0;
+  const fraction = known && usage.context_tokens !== null ? Math.min(1, usage.context_tokens / usage.context_limit) : 0;
+  return {
+    known,
+    fraction,
+    used: usage.context_tokens === null ? "?" : formatTokens(usage.context_tokens, locale),
+    limit: known ? formatTokens(usage.context_limit, locale) : "?",
+    kind: usage.limit_kind,
+  };
+}
+
+export interface TurnRow {
+  key: "input" | "output" | "thinking" | "cached";
+  value: string;
+}
+
+/** Last-turn rows for the popover: input, output, thinking; cache only when reported. */
+export function lastTurnRows(turn: TurnUsage | null, locale: string = "pt-BR"): TurnRow[] {
+  if (!turn) return [];
+  const rows: TurnRow[] = [
+    { key: "input", value: formatTokens(turn.input_tokens, locale) },
+    { key: "output", value: formatTokens(turn.output_tokens, locale) },
+    { key: "thinking", value: formatTokens(turn.thinking_tokens, locale) },
+  ];
+  if (turn.cached_tokens !== null) rows.push({ key: "cached", value: formatTokens(turn.cached_tokens, locale) });
+  return rows;
 }

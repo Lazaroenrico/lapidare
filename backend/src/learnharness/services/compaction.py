@@ -72,13 +72,21 @@ async def compact_session(sessions: SessionService, session_id: str) -> bool:
         state=_state_for_summary(sessions, session),
     )
     slot = config.slots.background
-    result = await state.engine(slot).run_structured(
-        prompt=prompt, schema=CompactionSummary, slot=slot, system_instruction=SUMMARIZER_SYSTEM)
+    # Own capture: the summarizer's counts are charged to the session but are not a turn's
+    # context size (the sink of the teaching turn is already closed here).
+    capture = state.usage.capture(session_id=session_id, job_kind="compaction", track_context=False)
+    capture.turn = session.turn_seq
+    try:
+        result = await state.engine(slot).run_structured(
+            prompt=prompt, schema=CompactionSummary, slot=slot, system_instruction=SUMMARIZER_SYSTEM)
+    finally:
+        capture.close()
     if not isinstance(result, CompactionSummary):
         result = CompactionSummary.model_validate(result)
     summary = render_summary(result, config.language)
     async with sessions.lock(session_id):
         current = sessions.get(session_id)
+        current.usage.context_tokens = None  # The history shrank: the next report sets it again.
         current.compaction = SessionCompaction(summary=summary, first_kept_message_id=first_kept,
                                                tokens_before=tokens_before, at=datetime.now(UTC).isoformat())
         sessions.save(current)

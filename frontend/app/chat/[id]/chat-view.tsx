@@ -12,7 +12,6 @@ import {
   Compass,
   Edit3,
   FileText,
-  GitBranch,
   Loader2,
   // Mic,
   // MicOff,
@@ -65,7 +64,6 @@ import {
   practiceCounts,
   type DockSubmission,
 } from "@/lib/practice";
-import { formatTokens } from "@/lib/usage";
 import { ModelPicker } from "@/components/model-picker";
 import { useCycleEffort } from "@/components/use-cycle-effort";
 import { useEventSubscription } from "@/components/server-events";
@@ -81,9 +79,11 @@ import { decodeLevelingProgress, isLevelingSession } from "@/lib/leveling";
 import { SourceCitationPane } from "@/components/source-citation-pane";
 import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
+import { ExtractionRing } from "@/components/extraction-ring";
+import { SessionUsageChip } from "@/components/session-usage-chip";
 import { JobCard, LearnerSteerBadge } from "@/components/job-cards";
 
-const SESSION_EVENTS: SseEventType[] = ["session:updated", "dock:opened", "dock:resolved", "plan:updated", "usage:updated"];
+const SESSION_EVENTS: SseEventType[] = ["session:updated", "dock:opened", "dock:resolved", "plan:updated", "usage:updated", "jobs:updated", "graph:updated"];
 const FLASH_MS = 1800;
 const EXTRACT_NOTICE_MS = 6000;
 
@@ -769,34 +769,10 @@ export function ChatView() {
             onChange={(next) => void handleModelChange(next)}
           />
           <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
-          {session.usage && session.usage.total_tokens > 0 && (
-            <span
-              className="font-ui text-[11px] text-muted-foreground px-2 py-1 rounded-md border border-accent"
-              title={t.usageBreakdown(
-                formatTokens(session.usage.input_tokens, locale),
-                formatTokens(session.usage.output_tokens, locale),
-                formatTokens(session.usage.thinking_tokens, locale),
-              )}
-            >
-              {t.sessionUsage(formatTokens(session.usage.total_tokens, locale), session.usage.turns)}
-            </span>
-          )}
+          {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip usage={session.usage} />}
           {!isPractice && (
           <>
-          <button
-            type="button"
-            onClick={() => void handleExtract()}
-            disabled={extracting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95 disabled:cursor-not-allowed"
-            title={t.extractGraphTitle}
-          >
-            {extracting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
-            )}
-            <span className="max-sm:sr-only">{t.extractGraph}</span>
-          </button>
+          <ExtractionRing coverage={session.coverage} busy={extracting} onExtract={() => void handleExtract()} />
 
           <button
             type="button"

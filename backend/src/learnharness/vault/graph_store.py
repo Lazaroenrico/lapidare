@@ -107,6 +107,11 @@ def append_session_unlink(vault_path: Path, session_id: str, plan: dict[str, lis
                    + [{"id": i, "deleted": True} for i in plan["dead_chains"]])
 
 
+def append_coverage_reset(vault_path: Path, session_id: str) -> None:
+    """Forget the coverage of ``session_id``: its prose counts as uncovered again."""
+    append_records(vault_path, "coverage.jsonl", [{"session_id": session_id, "reset": True}])
+
+
 def load_coverage(vault_path: Path) -> list[CoverageRecord]:
     """Coverage lines; a ``{session_id, reset: true}`` line forgets that origin's earlier lines
     (a note source removed with its nodes is extracted again when re-imported)."""

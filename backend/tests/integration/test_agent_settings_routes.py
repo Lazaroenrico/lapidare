@@ -28,6 +28,7 @@ def test_get_returns_defaults(api_client):
         "tools": {"research": True, "pdf": True, "visual": True, "demo": True},
         "compaction_tokens": 150_000,
         "extraction_chunk_tokens": 4096,
+        "extraction_enabled": True,
     }
 
 

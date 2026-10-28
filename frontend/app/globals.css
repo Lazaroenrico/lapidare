@@ -187,3 +187,19 @@ mark.find-mark.find-mark-active {
   background-color: var(--muted-foreground);
   color: var(--background);
 }
+
+/* Fase 21 · extraction coverage ring: the arc breathes while an extraction job runs */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.ring-pulse {
+  animation: ring-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-pulse {
+    animation: none;
+  }
+}

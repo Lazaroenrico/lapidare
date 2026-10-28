@@ -100,7 +100,7 @@ def test_acp_and_genai_usage_shapes():
     assert acp_usage({"stopReason": "end_turn"}) is None
     meta = SimpleNamespace(prompt_token_count=7, candidates_token_count=2, thoughts_token_count=None)
     assert report_usage("m", genai_usage(meta)).model_dump() == {
-        "input_tokens": 7, "output_tokens": 2, "thinking_tokens": 0, "model_id": "m"}
+        "input_tokens": 7, "output_tokens": 2, "thinking_tokens": 0, "cached_tokens": None, "model_id": "m"}
     assert genai_usage(None) is None and report_usage("m", None) is None  # no sink, no counts: no-op
 
 
