@@ -15,6 +15,9 @@ concurrency:
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
+  # Real-Chromium artifact tests depend on the runner's browser and time out there;
+  # they still run locally wherever a system Chromium exists.
+  LEARNHARNESS_CHROMIUM: "off"
 
 jobs:
   checks:
