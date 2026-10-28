@@ -109,13 +109,15 @@ jobs:
       - name: GUI smoke (window loads the UI)
         run: |
           home=$(mktemp -d)
-          HOME="$home" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
+          # The runner exports XDG_CONFIG_HOME, which Electron prefers over HOME for userData.
+          log="$home/.config/Lapidare/logs/main.log"
+          HOME="$home" XDG_CONFIG_HOME="$home/.config" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
           for _ in $(seq 1 60); do
-            grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log" 2>/dev/null && break
+            grep -q "\] ready http://127.0.0.1:" "$log" 2>/dev/null && break
             sleep 1
           done
-          cat "$home/.config/Lapidare/logs/main.log"
-          grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log"
+          cat "$log"
+          grep -q "\] ready http://127.0.0.1:" "$log"
           pkill -f squashfs-root/lapidare || true
       - uses: actions/upload-artifact@v4
         with:
