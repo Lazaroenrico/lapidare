@@ -15,6 +15,11 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const strOrNull = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
 export type JobKind = "research" | "pdf" | "visual" | "demo";
+export interface JobFigure {
+  page: number;
+  description: string;
+}
+
 export type JobStatus = "done" | "failed";
 
 export interface JobSource {
@@ -23,8 +28,8 @@ export interface JobSource {
 }
 
 export type JobResult =
-  | { kind: "research"; brief: string; sources: JobSource[] }
-  | { kind: "pdf"; path: string; question: string; brief: string; pages: number[] }
+  | { kind: "research"; brief: string; sources: JobSource[]; facets: string[] }
+  | { kind: "pdf"; path: string; question: string; brief: string; pages: number[]; pagesViewed: number[]; figures: JobFigure[] }
   // The backend stores visuals as vault files (`slug`); `svg` is filled only when inlined.
   // `checked` / `verified`: the artifact passed the vision / headless-browser check (Fase 17);
   // null when the backend did not run the check (older results or no Chromium).
@@ -88,6 +93,26 @@ function decodePages(raw: unknown): number[] {
   return [...new Set(pages)].sort((a, b) => a - b);
 }
 
+function decodeFacets(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out = raw
+    .map((f) => (typeof f === "string" ? f : isObj(f) ? str(f.name) : "").trim())
+    .filter(Boolean);
+  return [...new Set(out)];
+}
+
+function decodeFigures(raw: unknown): JobFigure[] {
+  if (!Array.isArray(raw)) return [];
+  const out: JobFigure[] = [];
+  for (const f of raw) {
+    if (!isObj(f)) continue;
+    const page = typeof f.page === "string" ? Number.parseInt(f.page, 10) : f.page;
+    const description = str(f.description ?? f.text).trim();
+    if (typeof page === "number" && Number.isInteger(page) && page > 0 && description) out.push({ page, description });
+  }
+  return out.sort((a, b) => a.page - b.page);
+}
+
 /** Short `key: value` rendering of an object for the generic card. */
 export function summarizeDetails(raw: unknown, max = 240): string {
   if (!isObj(raw)) return typeof raw === "string" ? raw.slice(0, max) : "";
@@ -111,13 +136,13 @@ function decodeResult(kind: JobKind | null, raw: unknown, details: Raw): JobResu
     case "research": {
       const brief = str(r.brief ?? r.summary ?? r.markdown);
       const sources = decodeSources(r.sources);
-      if (brief || sources.length) return { kind, brief, sources };
+      if (brief || sources.length) return { kind, brief, sources, facets: decodeFacets(r.facets) };
       break;
     }
     case "pdf": {
       const brief = str(r.brief ?? r.answer ?? r.summary);
       if (brief) {
-        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages([r.pages, r.pages_cited, r.pages_read].find((p) => Array.isArray(p) && p.length > 0) ?? r.pages) };
+        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages([r.pages, r.pages_cited, r.pages_read].find((p) => Array.isArray(p) && p.length > 0) ?? r.pages), pagesViewed: decodePages(r.pages_viewed), figures: decodeFigures(r.figures) };
       }
       break;
     }
@@ -235,6 +260,8 @@ const LABELS = {
       unknown: "Tarefa falhou",
     },
     sources: "Fontes",
+    facets: "Facetas",
+    pagesViewed: (p: string) => `páginas vistas: ${p}`,
     pages: (p: string) => `p. ${p}`,
     question: "Pergunta",
     expand: "Expandir",
@@ -270,6 +297,8 @@ const LABELS = {
       unknown: "Job failed",
     },
     sources: "Sources",
+    facets: "Facets",
+    pagesViewed: (p: string) => `pages viewed: ${p}`,
     pages: (p: string) => (p.includes(",") ? `pp. ${p}` : `p. ${p}`),
     question: "Question",
     expand: "Expand",

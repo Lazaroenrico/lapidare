@@ -123,6 +123,15 @@ export function ResearchCard({ job, result }: { job: JobSteer; result: Extract<J
   const l = jobLabels(locale);
   return (
     <JobFrame job={job} defaultOpen={false} subtitle={result.sources.length ? `${result.sources.length} · ${l.sources.toLowerCase()}` : undefined}>
+      {result.facets.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1" aria-label={l.facets}>
+          {result.facets.map((f) => (
+            <span key={f} className="font-ui text-[11px] px-1.5 py-0.5 rounded border border-border bg-accent text-muted-foreground">
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
       {result.brief && <LessonProse content={result.brief} className="text-[15px]" />}
       {result.sources.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -167,6 +176,18 @@ export function PdfCard({ job, result }: { job: JobSteer; result: Extract<JobRes
         </div>
       )}
       <LessonProse content={result.brief} className="text-[15px]" />
+      {result.pagesViewed.length > 0 && (
+        <p className="font-ui text-[11px] text-muted-foreground">{l.pagesViewed(formatPages(result.pagesViewed))}</p>
+      )}
+      {result.figures.length > 0 && (
+        <ul className="flex flex-col gap-1 font-prose text-[14px] text-foreground">
+          {result.figures.map((f, i) => (
+            <li key={`${f.page}-${i}`}>
+              <span className="font-ui text-[11px] text-muted-foreground">p. {f.page}</span> — {f.description}
+            </li>
+          ))}
+        </ul>
+      )}
       {result.path && <code className="font-ui text-[11px] text-muted-foreground break-all">{result.path}</code>}
     </JobFrame>
   );

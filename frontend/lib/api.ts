@@ -593,6 +593,13 @@ export async function retryJob(id: string): Promise<BackgroundJobStatus> {
   );
 }
 
+export async function cancelJob(id: string): Promise<BackgroundJobStatus> {
+  return fetchJson<BackgroundJobStatus>(
+    `/api/jobs/${encodeURIComponent(id)}/cancel`,
+    { method: "POST" }
+  );
+}
+
 // --- Interactive Demos ---
 
 /** Queues a `demo_builder` job (202). The slug arrives as `result_id` once `jobs:updated` reports completion. */

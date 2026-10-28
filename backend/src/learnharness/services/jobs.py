@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Job kind -> ``details.kind`` of the steer the UI renders.
 STEER_KINDS = {"research": "research", "pdf": "read_pdf", "visual": "visual", "demo_builder": "demo"}
+CANCELLED_ERROR = "cancelado pelo usuário"
 DISPATCH_NOTE = "Despachado. Continue ensinando; o resultado chegará sozinho — não espere nem consulte."
 
 
@@ -29,6 +30,7 @@ class JobManager:
         self.state = state
         self.tasks: dict[str, asyncio.Task] = {}
         self.semaphore = asyncio.Semaphore(2)
+        self._cancelling: set[str] = set()  # cancelled by the user (vs. server shutdown)
 
     def _records(self, name):
         path = safe_path(self.state.vault_path, f".harness/{name}")
@@ -135,8 +137,11 @@ class JobManager:
                 self.save(record)
             await self._deliver_steer(record)
         except asyncio.CancelledError:
-            record["status"] = "interrupted"
-            self.save(record)
+            if record["job_id"] in self._cancelling:
+                await self._finish_cancel(record)
+            else:  # server shutdown: stays resumable, no steer
+                record["status"] = "interrupted"
+                self.save(record)
             raise
         except Exception as exc:
             logger.exception("Job failed: %s", record["job_id"])
@@ -148,6 +153,33 @@ class JobManager:
             await self._deliver_steer(record)
         finally:
             usage.close()
+
+    async def _finish_cancel(self, record) -> None:
+        """Record a user cancellation and tell the session once (the teacher must not wait)."""
+        self._cancelling.discard(record["job_id"])
+        record["status"] = "interrupted"
+        record["activity"] = None
+        record["error"] = CANCELLED_ERROR
+        record["finished_at"] = now()
+        self.save(record)
+        await self._deliver_steer(record)
+
+    async def cancel(self, job_id):
+        """Cancel a queued or running job (KeyError: unknown; ValueError: already finished)."""
+        record = self.state.active_jobs[job_id]
+        if record["status"] not in ("queued", "running"):
+            raise ValueError("Only queued or running jobs may be cancelled")
+        task = self.tasks.get(job_id)
+        if task is None or task.done():
+            await self._finish_cancel(record)  # orphan record without a live task
+            return record
+        self._cancelling.add(job_id)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if job_id in self._cancelling:
+            # Cancelled before its first step: run() never executed, so finish it here.
+            await self._finish_cancel(record)
+        return record
 
     # ----------------------------------------------------------------- steers
 
@@ -237,9 +269,13 @@ def _done_content(kind: str, payload: dict[str, Any], result: dict[str, Any]) ->
                 "Use o que servir à aula agora e cite as fontes pelo título quando usar. "
                 "Não acrescente nada que a pesquisa não diga.")
     if kind == "pdf":
-        pages = ", ".join(str(p) for p in result["pages_read"])
-        return (f"A leitura do PDF '{result['file']}' terminou (páginas lidas: {pages}).\n"
-                f"Pergunta: {payload['question']}\n\nResposta:\n{result['answer']}\n\n"
+        pages = ", ".join(str(p) for p in result["pages_read"]) or "nenhuma"
+        viewed = ", ".join(str(p) for p in result.get("pages_viewed") or [])
+        seen = f"; páginas vistas: {viewed}" if viewed else ""
+        figures = "".join(f"\n- p. {f['page']} — {f['description']}" for f in result.get("figures") or [])
+        listed = f"\n\nFiguras:{figures}" if figures else ""
+        return (f"A leitura do PDF '{result['file']}' terminou (páginas lidas: {pages}{seen}).\n"
+                f"Pergunta: {payload['question']}\n\nResposta:\n{result['answer']}{listed}\n\n"
                 "Ao usar, cite as páginas como (p. N). Não atribua ao PDF o que não está aqui.")
     if kind == "visual":
         alt = f" Ele mostra: {result['alt']}" if result.get("alt") else ""

@@ -26,6 +26,15 @@ def _shared_client(**kwargs: Any) -> genai.Client:
     return client
 
 
+def _research_tools() -> list[types.ToolUnion]:
+    """``google_search`` plus ``url_context`` when the installed SDK has it."""
+    tools: list[types.ToolUnion] = [types.Tool(google_search=types.GoogleSearch())]
+    url_context = getattr(types, "UrlContext", None)
+    if url_context is not None:
+        tools.append(types.Tool(url_context=url_context()))
+    return tools
+
+
 class GenAiSdkEngine:
     tool_transport = "inline"
 
@@ -176,7 +185,7 @@ class GenAiSdkEngine:
                 model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    tools=_research_tools(),
                 ),
             )
         report_usage(model, genai_usage(getattr(response, "usage_metadata", None)))
@@ -189,6 +198,13 @@ class GenAiSdkEngine:
                 if url and url not in seen:
                     seen.add(url)
                     sources.append(ResearchSource(title=getattr(web, "title", None) or url, url=url))
+            # Pages the url_context tool actually fetched count as consulted too.
+            fetched = getattr(candidate, "url_context_metadata", None)
+            for item in getattr(fetched, "url_metadata", None) or []:
+                url = getattr(item, "retrieved_url", None)
+                if url and url not in seen:
+                    seen.add(url)
+                    sources.append(ResearchSource(title=url, url=url))
         brief = (response.text or "").strip()
         if not sources:
             raise EngineError("google_search grounding returned no sources")

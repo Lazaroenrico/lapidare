@@ -8,7 +8,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from learnharness.core.contracts.config import EngineKind
-from learnharness.core.contracts.jobs import PdfAnswer, ResearchResult, VisualDraft
+from learnharness.core.contracts.jobs import PdfAnswer, PdfTriage, ResearchResult, VisualDraft
 from learnharness.core.contracts.session import PlanDag, PlanNode, SessionRecord
 from learnharness.core.lesson_layout import render_job_artifact
 from learnharness.core.svg_validation import MAX_SVG_BYTES, validate_svg
@@ -352,6 +352,7 @@ def test_triage_ranks_pages_by_question_terms():
 
 async def test_read_pdf_job_answers_with_cited_pages(tmp_path):
     engine = FakeEngine()
+    engine.program(PdfTriage, {"draft": "softmax normaliza", "confident": True})
     engine.program(PdfAnswer, lambda prompt: {"answer": "A softmax normaliza os logits (p. 2).",
                                               "pages_cited": [2, 9]})
     state = _state(tmp_path, engine)
@@ -367,9 +368,9 @@ async def test_read_pdf_job_answers_with_cited_pages(tmp_path):
         assert steer.details["result"] == {
             "path": "Fontes/paper.pdf", "file": "paper.pdf", "question": "What does softmax do?",
             "answer": "A softmax normaliza os logits (p. 2).", "page_count": 2, "pages_read": [2],
-            "pages_cited": [2], "terms_matched": True,
+            "pages_cited": [2], "terms_matched": True, "pages_viewed": [], "figures": [],
         }
-        prompt = engine.structured_calls[0]["prompt"]
+        prompt = engine.structured_calls[1]["prompt"]
         assert '<page n="2">' in prompt and '<page n="1">' not in prompt
         assert "> [!note]- PDF: paper.pdf — What does softmax do?" in note.read_text(encoding="utf-8")
     finally:

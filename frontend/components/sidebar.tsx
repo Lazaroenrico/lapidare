@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Plus,
   RotateCcw,
+  Square,
   Search,
   Settings,
   Sparkles,
@@ -27,7 +28,7 @@ import {
 import type { BackgroundJobStatus, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
 import { partitionTrayJobs } from "@/lib/jobs-tray";
 import { decodeJobFiles, notesText } from "@/lib/notes-import";
-import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
+import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob, cancelJob } from "@/lib/api";
 import {
   filterByMode,
   fuzzyFilter,
@@ -193,6 +194,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     wasOpenRef.current = view.open;
   }, [view.open]);
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<Record<string, string>>({});
   // `activeJobs` holds every known job record: fold by job_id, then split into the
   // queued/running ones and the recent failures (retry lives there).
@@ -217,6 +219,23 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
       setRetryError((prev) => ({ ...prev, [job.job_id]: err?.message || t.statusFailed }));
     } finally {
       setRetryingJobId(null);
+    }
+  };
+
+  // Cancel a queued/running job; the backend records it as interrupted and broadcasts `jobs:updated`.
+  const handleCancelJob = async (job: BackgroundJobStatus) => {
+    setCancellingJobId(job.job_id);
+    setRetryError((prev) => {
+      const next = { ...prev };
+      delete next[job.job_id];
+      return next;
+    });
+    try {
+      await cancelJob(job.job_id);
+    } catch (err: any) {
+      setRetryError((prev) => ({ ...prev, [job.job_id]: err?.message || t.statusFailed }));
+    } finally {
+      setCancellingJobId(null);
     }
   };
 
@@ -246,6 +265,22 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             >
               {t.jobStatus(job.status)}
             </span>
+            {busy && (
+              <button
+                type="button"
+                onClick={() => void handleCancelJob(job)}
+                disabled={cancellingJobId === job.job_id}
+                className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer disabled:cursor-not-allowed transition-colors"
+                title={cancellingJobId === job.job_id ? t.cancellingJob : t.cancelJob}
+                aria-label={t.cancelJob}
+              >
+                {cancellingJobId === job.job_id ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Square className="w-3 h-3" />
+                )}
+              </button>
+            )}
             {canRetry && (
               <button
                 type="button"
@@ -287,7 +322,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
             ))}
           </ul>
         )}
-        {err && canRetry && (
+        {err && (canRetry || busy) && (
           <p className="text-[9.5px] text-danger break-words line-clamp-2" title={err}>
             {err}
           </p>

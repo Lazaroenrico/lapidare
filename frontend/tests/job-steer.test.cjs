@@ -18,7 +18,7 @@ test('research result decodes brief, sources and elapsed time', () => {
   assert.equal(job.status, 'done');
   assert.equal(job.elapsedSeconds, 42);
   assert.deepEqual(job.result, {
-    kind: 'research', brief: '## Resumo\nok',
+    kind: 'research', facets: [], brief: '## Resumo\nok',
     sources: [{title: 'A', url: 'https://a.example'}, {title: 'https://b.example', url: 'https://b.example'}],
   });
   assert.equal(js.dispatchLabel(job, 'pt-BR'), 'Despachado → concluído · 42 s');
@@ -32,7 +32,7 @@ test('pdf accepts the read_pdf alias, sorts pages and keeps path/question', () =
     result: {path: 'Fontes/paper.pdf', question: 'Q?', brief: 'answer (p. 3)', pages: [5, 3, '4', 3, -1, 'x']},
   });
   assert.equal(job.kind, 'pdf');
-  assert.deepEqual(job.result, {kind: 'pdf', path: 'Fontes/paper.pdf', question: 'Q?', brief: 'answer (p. 3)', pages: [3, 4, 5]});
+  assert.deepEqual(job.result, {kind: 'pdf', path: 'Fontes/paper.pdf', question: 'Q?', brief: 'answer (p. 3)', pages: [3, 4, 5], pagesViewed: [], figures: []});
   assert.equal(js.formatPages([1, 3, 4, 5, 9, 10]), '1, 3–5, 9, 10');
   assert.equal(js.pdfFileName('Fontes/sub/paper.pdf'), 'paper.pdf');
 });
@@ -164,4 +164,19 @@ test('PDF pages skip empty arrays: pages_cited [] falls back to pages_read', () 
   const pdf = js.decodeJobSteer({job_id: 'j3', kind: 'read_pdf', status: 'done',
     result: {path: 'Fontes/paper.pdf', question: 'q', answer: 'a', pages: [], pages_cited: [], pages_read: [3, 2]}}, '');
   assert.deepEqual(pdf.result.pages, [2, 3]);
+});
+
+test('Fase 20 results: facets, pages_viewed and figures decode tolerantly', () => {
+  const research = js.decodeJobSteer({job_id: 'r', kind: 'research', status: 'done',
+    result: {brief: 'b', sources: [], facets: ['Custo', {name: 'Latência'}, 'Custo', '', 7]}}, '');
+  assert.deepEqual(research.result.facets, ['Custo', 'Latência']);
+  const pdf = js.decodeJobSteer({job_id: 'p', kind: 'read_pdf', status: 'done',
+    result: {answer: 'a (p. 2)', pages_cited: [2], pages_read: [2], pages_viewed: ['5', 3, 3, 'x'],
+      figures: [{page: 5, description: 'Gráfico'}, {page: 'x', description: 'sem página'}, {page: 3, description: ''}, {page: 3, description: 'Tabela'}, 'lixo']}}, '');
+  assert.deepEqual(pdf.result.pagesViewed, [3, 5]);
+  assert.deepEqual(pdf.result.figures, [{page: 3, description: 'Tabela'}, {page: 5, description: 'Gráfico'}]);
+  const old = js.decodeJobSteer({job_id: 'o', kind: 'read_pdf', status: 'done', result: {answer: 'a', pages_read: [1]}}, '');
+  assert.deepEqual([old.result.pagesViewed, old.result.figures], [[], []]);
+  const bad = js.decodeJobSteer({job_id: 'b', kind: 'research', status: 'done', result: {brief: 'b', facets: 'x'}}, '');
+  assert.deepEqual(bad.result.facets, []);
 });
