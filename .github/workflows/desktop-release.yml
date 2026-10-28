@@ -2,10 +2,23 @@ name: Desktop release
 
 # Tag v* → checks, Linux (AppImage/deb/rpm) and macOS (unsigned dmg arm64/x64), draft release, asset verification.
 # A human publishes the draft.
-# workflow_dispatch builds the same artifacts but never touches releases.
+# Pull requests and workflow_dispatch build and test the same artifacts but never touch releases.
+# A PR runs this only when it touches packaging inputs and is not a draft; ci.yml already runs
+# the checks on every PR, so here the packages start right away. The tag run always tests everything.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/desktop-release.yml
+      - Makefile
+      - desktop/**
+      - backend/pyproject.toml
+      - backend/uv.lock
+      - frontend/package.json
+      - frontend/package-lock.json
+      - frontend/next.config.ts
   workflow_dispatch:
 
 permissions:
@@ -13,7 +26,8 @@ permissions:
 
 concurrency:
   group: desktop-release-${{ github.ref }}
-  cancel-in-progress: false
+  # A new push to a PR supersedes its previous run; tag runs always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
@@ -24,14 +38,22 @@ env:
 jobs:
   quality:
     name: Checks
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
       - run: cd frontend && npm ci
       - run: cd desktop && npm ci
       - name: Tag must match desktop/package.json
@@ -45,17 +67,36 @@ jobs:
   package:
     name: Linux (AppImage, deb, rpm)
     needs: quality
+    # Skipped quality (PR) must not skip the packages.
+    if: ${{ !cancelled() && (needs.quality.result == 'success' || needs.quality.result == 'skipped') && !github.event.pull_request.draft }}
     # The oldest supported runner keeps the build-time glibc baseline low.
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
       # rpm provides rpmbuild (electron-builder's rpm target). The AppImage needs no libfuse2 (static runtime).
       - run: sudo apt-get update && sudo apt-get install -y xvfb rpm
+      - name: Cache build downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            desktop/.cache
+            ~/.cache/pip
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: desktop-dl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/build-python.sh', 'desktop/package-lock.json', 'backend/uv.lock') }}
+          restore-keys: desktop-dl-${{ runner.os }}-${{ runner.arch }}-
       - run: cd frontend && npm ci
       # build-web → build-python → guard → smoke → electron-builder (no publish here).
       - run: make desktop TARGETS="AppImage deb rpm" KEEP_UNPACKED=1
@@ -68,13 +109,15 @@ jobs:
       - name: GUI smoke (window loads the UI)
         run: |
           home=$(mktemp -d)
-          HOME="$home" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
+          # The runner exports XDG_CONFIG_HOME, which Electron prefers over HOME for userData.
+          log="$home/.config/Lapidare/logs/main.log"
+          HOME="$home" XDG_CONFIG_HOME="$home/.config" timeout 60 xvfb-run -a desktop/dist/squashfs-root/lapidare --no-sandbox &
           for _ in $(seq 1 60); do
-            grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log" 2>/dev/null && break
+            grep -q "\] ready http://127.0.0.1:" "$log" 2>/dev/null && break
             sleep 1
           done
-          cat "$home/.config/Lapidare/logs/main.log"
-          grep -q "\] ready http://127.0.0.1:" "$home/.config/Lapidare/logs/main.log"
+          cat "$log"
+          grep -q "\] ready http://127.0.0.1:" "$log"
           pkill -f squashfs-root/lapidare || true
       - uses: actions/upload-artifact@v4
         with:
@@ -90,6 +133,8 @@ jobs:
   package-mac:
     name: macOS ${{ matrix.arch }} (unsigned dmg)
     needs: quality
+    # Skipped quality (PR) must not skip the packages.
+    if: ${{ !cancelled() && (needs.quality.result == 'success' || needs.quality.result == 'skipped') && !github.event.pull_request.draft }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -104,9 +149,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: Cache build downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            desktop/.cache
+            ~/Library/Caches/pip
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: desktop-dl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/build-python.sh', 'desktop/package-lock.json', 'backend/uv.lock') }}
+          restore-keys: desktop-dl-${{ runner.os }}-${{ runner.arch }}-
       - run: cd frontend && npm ci
       # Same pipeline as Linux; on Darwin the Makefile builds the dmg for the runner's arch.
       # The Python payload is installed ON the runner, so wheels match the target.
@@ -122,6 +184,7 @@ jobs:
   compat:
     name: Backend on ${{ matrix.image }}
     needs: package
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -159,6 +222,7 @@ jobs:
   compat-rpm:
     name: Install the .rpm on Fedora
     needs: package
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
