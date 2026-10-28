@@ -7,6 +7,7 @@
  */
 
 export const OPEN_MODEL_PICKER_EVENT = "learnharness:open-model-picker";
+export const CYCLE_EFFORT_EVENT = "learnharness:cycle-effort";
 export const TOGGLE_DICTATION_EVENT = "learnharness:toggle-dictation";
 
 export interface CommandTarget {
@@ -41,6 +42,11 @@ export function registerCommandTarget(event: string, target: CommandTarget): () 
     const index = current ? current.indexOf(target) : -1;
     if (current && index >= 0) current.splice(index, 1);
   };
+}
+
+/** Whether some registered target could take `event` now (lets a shortcut skip preventDefault). */
+export function hasCommandTarget(event: string): boolean {
+  return pickCommandTarget(registries.get(event) ?? []) !== null;
 }
 
 export function dispatchCommand(event: string): void {

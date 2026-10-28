@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import type { BackgroundJobStatus, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
+import { partitionTrayJobs } from "@/lib/jobs-tray";
 import { decodeJobFiles, notesText } from "@/lib/notes-import";
 import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob } from "@/lib/api";
 import {
@@ -193,10 +194,13 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   }, [view.open]);
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<Record<string, string>>({});
-  // `activeJobs` holds every known job record; only queued/running ones are "busy".
-  const runningJobs = activeJobs.filter(
-    (j) => j.status === "queued" || j.status === "running"
+  // `activeJobs` holds every known job record: fold by job_id, then split into the
+  // queued/running ones and the recent failures (retry lives there).
+  const { running: runningJobs, failed: failedJobs } = useMemo(
+    () => partitionTrayJobs(activeJobs, Date.now()),
+    [activeJobs],
   );
+  const [showFailedJobs, setShowFailedJobs] = useState(false);
 
   // Retry a failed/interrupted job. The backend broadcasts `jobs:updated`,
   // which refreshes `activeJobs` through the shared SSE channel (notify -> fetch).
@@ -214,6 +218,82 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     } finally {
       setRetryingJobId(null);
     }
+  };
+
+  // One tray card: label, status, activity line, per-file status (notes_import) and error + retry.
+  const renderJob = (job: BackgroundJobStatus) => {
+    const canRetry = job.status === "failed" || job.status === "interrupted";
+    const busy = job.status === "queued" || job.status === "running";
+    const err = retryError[job.job_id] || job.error;
+    return (
+      <div
+        key={job.job_id}
+        className="p-1.5 bg-card border border-border rounded flex flex-col gap-1 text-[10.5px]"
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className="font-medium text-foreground truncate" title={job.kind}>
+            {job.label || job.kind}
+          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <span
+              className={`text-[9px] px-1 py-0.2 rounded border ${
+                busy
+                  ? "bg-warning/10 text-warning border-warning/30 animate-pulse"
+                  : canRetry
+                  ? "bg-danger/10 text-danger border-danger/40"
+                  : "bg-accent text-muted-foreground border-border"
+              }`}
+            >
+              {t.jobStatus(job.status)}
+            </span>
+            {canRetry && (
+              <button
+                type="button"
+                onClick={() => void handleRetryJob(job)}
+                disabled={retryingJobId === job.job_id}
+                className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer disabled:cursor-not-allowed transition-colors"
+                title={retryingJobId === job.job_id ? t.retrying : t.retry}
+                aria-label={t.retry}
+              >
+                {retryingJobId === job.job_id ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-3 h-3" />
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+        {job.activity && (
+        <p className="font-ui text-[11px] text-muted-foreground truncate" title={job.activity}>
+          {job.activity}
+        </p>
+      )}
+      {job.kind === "notes_import" && (
+          <ul className="flex flex-col gap-0.5 pl-1.5 border-l border-border">
+            {decodeJobFiles(job).map((f) => (
+              <li key={f.source_id ?? f.filename} className="flex items-center justify-between gap-1 text-[9.5px]">
+                <span className="truncate text-muted-foreground" title={f.path ?? f.filename}>
+                  {f.title}
+                </span>
+                <span
+                  className={`shrink-0 ${
+                    f.status === "failed" ? "text-danger" : f.status === "partial" || f.status === "running" ? "text-warning" : "text-muted-foreground"
+                  }`}
+                >
+                  {notesText(locale).status(f.status)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {err && canRetry && (
+          <p className="text-[9.5px] text-danger break-words line-clamp-2" title={err}>
+            {err}
+          </p>
+        )}
+      </div>
+    );
   };
 
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
@@ -929,86 +1009,41 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                   {runningJobs.length}
                 </span>
               )}
+              {failedJobs.length > 0 && (
+                <span
+                  className="ml-1 px-1.5 py-0.2 bg-danger/10 text-danger text-[9.5px] rounded-full border border-danger/40"
+                  title={t.agentsFailedBadge(failedJobs.length)}
+                  aria-label={t.agentsFailedBadge(failedJobs.length)}
+                >
+                  !
+                </span>
+              )}
             </div>
             {showAgentsTray ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
 
           {showAgentsTray && (
             <div className="p-2 border-t border-border flex flex-col gap-1.5 bg-background">
-              {runningJobs.length === 0 ? (
+              {runningJobs.length === 0 && failedJobs.length === 0 ? (
                 <p className="text-[10.5px] text-muted-foreground italic py-1 text-center">
                   {t.agentsIdle}
                 </p>
               ) : (
-                runningJobs.map((job) => {
-                  const canRetry = job.status === "failed" || job.status === "interrupted";
-                  const busy = job.status === "queued" || job.status === "running";
-                  const err = retryError[job.job_id] || job.error;
-                  return (
-                    <div
-                      key={job.job_id}
-                      className="p-1.5 bg-card border border-border rounded flex flex-col gap-1 text-[10.5px]"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-medium text-foreground truncate" title={job.kind}>
-                          {job.label || job.kind}
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span
-                            className={`text-[9px] px-1 py-0.2 rounded border ${
-                              busy
-                                ? "bg-warning/10 text-warning border-warning/30 animate-pulse"
-                                : canRetry
-                                ? "bg-danger/10 text-danger border-danger/40"
-                                : "bg-accent text-muted-foreground border-border"
-                            }`}
-                          >
-                            {t.jobStatus(job.status)}
-                          </span>
-                          {canRetry && (
-                            <button
-                              type="button"
-                              onClick={() => void handleRetryJob(job)}
-                              disabled={retryingJobId === job.job_id}
-                              className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer disabled:cursor-not-allowed transition-colors"
-                              title={retryingJobId === job.job_id ? t.retrying : t.retry}
-                              aria-label={t.retry}
-                            >
-                              {retryingJobId === job.job_id ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <RotateCcw className="w-3 h-3" />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {job.kind === "notes_import" && (
-                        <ul className="flex flex-col gap-0.5 pl-1.5 border-l border-border">
-                          {decodeJobFiles(job).map((f) => (
-                            <li key={f.source_id ?? f.filename} className="flex items-center justify-between gap-1 text-[9.5px]">
-                              <span className="truncate text-muted-foreground" title={f.path ?? f.filename}>
-                                {f.title}
-                              </span>
-                              <span
-                                className={`shrink-0 ${
-                                  f.status === "failed" ? "text-danger" : f.status === "partial" || f.status === "running" ? "text-warning" : "text-muted-foreground"
-                                }`}
-                              >
-                                {notesText(locale).status(f.status)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {err && canRetry && (
-                        <p className="text-[9.5px] text-danger break-words line-clamp-3" title={err}>
-                          {err}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })
+                runningJobs.map((job) => renderJob(job))
+              )}
+              {failedJobs.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowFailedJobs((prev) => !prev)}
+                    aria-expanded={showFailedJobs}
+                    className="flex items-center justify-between px-1 py-0.5 text-[10.5px] text-danger hover:bg-card rounded cursor-pointer"
+                  >
+                    <span>{t.agentsFailed(failedJobs.length)}</span>
+                    {showFailedJobs ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                  {showFailedJobs && failedJobs.map((job) => renderJob(job))}
+                </div>
               )}
             </div>
           )}

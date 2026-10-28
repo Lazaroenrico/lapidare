@@ -14,7 +14,7 @@ O método de estudo que deu origem ao seu ambiente atual (`~/Study/ai-engineer`)
 
 No entanto, cada sistema evoluiu metade da solução ideal:
 - O seu sistema **`ai-engineer`** desenvolveu uma metodologia poderosa para engenharia de IA: **Trilha integrada `2:1`** (combinando mentoria e base teórica), ingestão de aulas densas via **MCP** (mapeando *Dito / Pressuposto / Pulado / Simplificações* com citações `#^pN`), prática de código e consolidação desenhando de memória no **Excalidraw** sobre um Vault real no Obsidian. Porém, a interface ficava espalhada entre terminal, popups `curses` (`quiz.py`) e janelas soltas.
-- O **`learnharness`** criou uma interface web/desktop exemplar (prosa editorial em `CMU Serif` + `Source Sans 3` + `KaTeX` sobre grafite `#141414`, grafo global em Canvas 2D, `QuestionDock` inline com slider de confiança `0–100%` e campo *Your Thinking*, ditado por voz e pipelines de extração e `Practice`). Porém, trancou todos os dados em JSONs internos (`data/`), removeu o Vault/Excalidraw/Trilha `2:1`, e não possui suporte às assinaturas do ecossistema Google.
+- O **`learnharness`** criou uma interface web/desktop exemplar (prosa editorial em `CMU Serif` + `Source Sans 3` + `KaTeX` sobre roxo escuro `#1a1430`, grafo global em Canvas 2D, `QuestionDock` inline com slider de confiança `0–100` (passo livre) e campo *Your Thinking*, ditado por voz (desativado por enquanto) e pipelines de extração e `Practice`). Porém, trancou todos os dados em JSONs internos (`data/`), removeu o Vault/Excalidraw/Trilha `2:1`, e não possui suporte às assinaturas do ecossistema Google.
 
 ### 1.2 A Proposta da Nossa Plataforma (Lapidare)
 Construir uma plataforma **local-first, bilíngue (`PT-BR` / `EN`) e pensada para a comunidade de usuários do ecossistema Google**, onde:
@@ -58,7 +58,7 @@ flowchart TB
 
     HOME -- "Clica [Continuar Trilha ↵]\nou digita tema em TEACH\nou importa aula do MCP" --> TEACH["Sessão TEACH Unificada (/chat/[id]):\n1. Se tiver fonte densa (MCP/Nota): fatia em blocos + mapeia Dito/Pressuposto/Pulado\n2. Prober diagnostica com quizzes curtos\n3. Teacher cria plano (plan_init -> Mini-DAG)\n4. Loop: Prediction -> Prosa + KaTeX + #^pN -> Check\n5. Atualiza Aulas/<Tema>.md no Vault em tempo real"]
 
-    HOME -- "Alterna para ◇ PRACTICE" --> PRACTICE["Modo PRACTICE:\n• Sessão Interativa com escada de dicas R0–R5\n• Ou Bateria de Problem Sets (LangGraph)\nfocada nos erros do quiz-log.jsonl"]
+    HOME -- "Alterna para ◇ PRACTICE" --> PRACTICE["Modo PRACTICE:\n• Sessão Interativa com escada de dicas R0–R5\n• Um problema por vez (problem/conclude)\nfocado nos erros do quiz-log.jsonl"]
 
     TEACH -- "Clica [✎ Desenhar de Memória]" --> DRAW["Canvas Excalidraw Embutido (/draw/[slug]):\n• Abre apenas com Título + Prompt de recuperação\n• Salva Desenhos/*.excalidraw.md + .png no Vault\n• Botão [Revisar Desenho]: visão multimodal avalia\nacertos/omissões/erros e aplica quiz se houver confusão"]
 
@@ -81,7 +81,7 @@ O backend escaneia a máquina (`detector.py`) e mostra o status de cada conector
 3. **`Google AI Studio / Vertex AI` (`google-genai` SDK):**
    - Campo opcional para inserir `GEMINI_API_KEY` ou credenciais ADC do Vertex AI.
 
-O usuário confirma os **3 slots de modelo** (`Strong` para Prober/Teacher/Practice/Visão, `Fast` para resumos/títulos, e `Background` para os pipelines `LangGraph`).
+O usuário confirma os **3 slots de modelo** (`Strong` para Prober/Teacher/Practice/Visão, `Fast` para resumos/títulos, e `Background` para as tarefas em segundo plano: extração (`LangGraph`), compactação, visuais, leitura de PDF etc.).
 
 #### Etapa 2 — Idioma e Pasta do Vault (`UI ⇄ Vault`)
 1. O usuário seleciona o idioma padrão da interface e das aulas: **`Português (PT-BR)`** ou **`English (EN)`**.
@@ -173,7 +173,7 @@ Toda pergunta com resposta certa acontece exclusivamente dentro do componente **
 2. **Controles Obrigatórios do `QuestionDock`:**
    - Enunciado claro + **2 a 6 alternativas** (com suporte total a **KaTeX**) + opção final fixa **`"I don't know / Não sei"`**.
    - **Slider `CONFIDENCE` (`0%` a `100%`)**: mede a certeza subjetiva do aluno na resposta escolhida.
-   - **Campo `YOUR THINKING`**: caixa de texto livre (com suporte a ditado por voz `🎙`) onde o aluno explica em 1 linha *por que* escolheu aquela opção.
+   - **Campo `YOUR THINKING`**: caixa de texto livre (o ditado por voz `🎙` está desativado temporariamente) onde o aluno explica em 1 linha *por que* escolheu aquela opção.
 3. **Matriz de Calibração e Reação do Agente:**
    Ao enviar a resposta, o backend avalia o par `(Acerto/Erro, Confiança %)` e grava em `.harness/quiz-log.jsonl`:
    - **Acerto + Confiança $\ge 70\%$ (`Calibrado`):** confirma em 1 frase curta e avança para o próximo nó do plano.
@@ -205,8 +205,8 @@ Quando o usuário seleciona `◇ PRACTICE` na Home ou na Sidebar:
 2. **Sessão Interativa (`R0–R5` Hint Ladder):**
    - O agente propõe um problema prático (*Recall*, *Discrimination* ou *Composition* / código).
    - Se o aluno errar ou pedir ajuda, o agente **nunca entrega a resposta**: ele sobe um degrau por vez na escada de dicas (`R0`: isolar a variável/sub-problema $\rightarrow$ `R1`: lembrar a definição $\rightarrow$ `R2`: testar caso limite $N=2$ $\rightarrow \dots \rightarrow$ `R5`).
-3. **Baterias de *Problem Sets* (`LangGraph` — Onda 2):**
-   - Gera listas fechadas de exercícios em paralelo (`Send`), exigindo que cada subagente gerador escreva a solução completa e a rubrica de pontuação *antes* de publicar o enunciado (*commit-before-pose*), e corrige as respostas do aluno com nota `0–10` por critério.
+3. **Encerramento e retestes:**
+   - Cada problema é aberto com `problem` e fechado com `conclude`, que registra o resultado em `.harness/practice-log.jsonl`; os erros do `quiz-log.jsonl` e do grafo (`graph_search`) alimentam a escolha dos próximos problemas e dos retestes. As baterias de *Problem Sets* em lote (`LangGraph`) foram removidas na Fase 9.
 
 ---
 

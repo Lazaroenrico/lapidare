@@ -13,6 +13,8 @@ import { differsFromSlot, EFFORT_LEVELS, modelChoicePayload, pinnedEffort, type 
 import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
 import { appendDictation, useDictation } from "./use-dictation";
 import { ModelPicker } from "./model-picker";
+import { useShortcut } from "./use-shortcut";
+import { useCycleEffort } from "./use-cycle-effort";
 import { useComposerFocusRequest } from "./composer-focus";
 
 export interface SelectedNodeRef {
@@ -162,28 +164,29 @@ export function Composer({
     );
   };
 
-  // Global shortcut: Ctrl/⌘+Enter with an empty composer triggers "Continuar ↵".
-  const continueTrackRef = useRef(handleContinueTrack);
-  continueTrackRef.current = handleContinueTrack;
-  const shortcutStateRef = useRef({ empty: true, hasStep: false, busy: false });
-  shortcutStateRef.current = { empty: !text.trim(), hasStep: !!nextTrackStep, busy: submitting };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.defaultPrevented) return;
-      const { empty, hasStep, busy } = shortcutStateRef.current;
-      if (!empty || !hasStep || busy) return;
-      const active = document.activeElement as HTMLElement | null;
-      const typingElsewhere =
-        active &&
-        active !== textareaRef.current &&
-        (active.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
-      if (typingElsewhere) return;
-      e.preventDefault();
-      void continueTrackRef.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Global shortcut (`continueTrack`, Ctrl/⌘+Enter by default, rebindable in Settings):
+  // with an empty composer it triggers "Continuar ↵".
+  useShortcut("continueTrack", () => {
+    if (text.trim() || !nextTrackStep || submitting) return false;
+    const active = document.activeElement as HTMLElement | null;
+    const typingElsewhere =
+      active &&
+      active !== textareaRef.current &&
+      (active.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
+    if (typingElsewhere) return false;
+    void handleContinueTrack();
+  });
+
+  // Shift+Tab: cycle the effort of the local choice (not persisted in the slot).
+  const effortAnnouncement = useCycleEffort({
+    engine: strongSlot?.engine ?? "agy",
+    value: choice,
+    disabled: submitting,
+    apply: (next) => {
+      setChoiceTouched(true);
+      setChoice(next);
+    },
+  });
 
   // Enter submits (Shift+Enter = new line). Ctrl/⌘+Enter on empty text bubbles to the track shortcut.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -316,6 +319,7 @@ export function Composer({
             setChoice(next);
           }}
         />
+        <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
         <EffortMenu
           value={choice.effort}
           pinned={pinnedEffort(choice.model)}

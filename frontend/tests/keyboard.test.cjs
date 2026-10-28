@@ -30,3 +30,19 @@ test('formatCombo renders platform labels', () => {
   assert.equal(kb.formatCombo('Mod+Shift+F', false), 'Ctrl+Shift+F');
   assert.equal(kb.formatCombo('Escape', false), 'Esc');
 });
+
+test('cycleEffort is registered as Shift+Tab without conflicts and matches the event', () => {
+  const def = kb.SHORTCUTS.find((s) => s.id === 'cycleEffort');
+  assert.deepEqual({combo: def.combo, scope: def.scope}, {combo: 'Shift+Tab', scope: 'global'});
+  assert.deepEqual(kb.conflicts({}), []);
+  assert.ok(kb.matchesCombo(ev('Tab', {shiftKey: true}), 'Shift+Tab', false));
+  assert.ok(!kb.matchesCombo(ev('Tab'), 'Shift+Tab', false));
+  assert.ok(!kb.SHORTCUTS.some((s) => s.id === 'toggleThinking'));
+});
+
+test('key capture accepts Shift+Tab and still rejects Tab alone', () => {
+  const kc = require('../.test-build/key-capture.js');
+  assert.deepEqual(kc.captureCombo(ev('Tab', {shiftKey: true}), false), {kind: 'combo', combo: 'Shift+Tab'});
+  assert.deepEqual(kc.captureCombo(ev('Tab'), false), {kind: 'invalid'});
+  assert.deepEqual(kc.captureCombo(ev('Enter', {shiftKey: true}), false), {kind: 'invalid'});
+});

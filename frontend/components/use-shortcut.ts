@@ -30,7 +30,8 @@ export function useShortcut(id: ShortcutId, handler: (event: KeyboardEvent) => b
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || !matchesCombo(event, combo, isMac())) return;
-      const plain = !(event.metaKey || event.ctrlKey || event.altKey) && event.key !== "Escape";
+      // Shift+Tab counts as a combo (cycleEffort must work inside the composer textarea).
+      const plain = !(event.metaKey || event.ctrlKey || event.altKey) && event.key !== "Escape" && !(event.shiftKey && event.key === "Tab");
       if (plain && fromEditable(event)) return;
       if (handlerRef.current(event) !== false) event.preventDefault();
     };

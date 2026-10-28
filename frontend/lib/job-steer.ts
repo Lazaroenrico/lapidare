@@ -117,7 +117,7 @@ function decodeResult(kind: JobKind | null, raw: unknown, details: Raw): JobResu
     case "pdf": {
       const brief = str(r.brief ?? r.answer ?? r.summary);
       if (brief) {
-        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages(r.pages ?? r.pages_cited ?? r.pages_read) };
+        return { kind, brief, path: str(r.path ?? details.path), question: str(r.question ?? details.question), pages: decodePages([r.pages, r.pages_cited, r.pages_read].find((p) => Array.isArray(p) && p.length > 0) ?? r.pages) };
       }
       break;
     }

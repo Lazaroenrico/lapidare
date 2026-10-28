@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Keyboard, X } from "lucide-react";
 import { comboFor, formatCombo, SHORTCUTS, type ShortcutScope } from "@/lib/keyboard";
-import { dispatchCommand, OPEN_MODEL_PICKER_EVENT /* , TOGGLE_DICTATION_EVENT */ } from "@/lib/command-events";
+import { CYCLE_EFFORT_EVENT, dispatchCommand, hasCommandTarget, OPEN_MODEL_PICKER_EVENT /* , TOGGLE_DICTATION_EVENT */ } from "@/lib/command-events";
 import { settingsText } from "@/lib/settings-i18n";
 import { useLocale } from "./locale-provider";
 import { useShortcut } from "./use-shortcut";
@@ -98,8 +98,8 @@ function ShortcutHelp({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * App-wide shortcuts: `?` cheat sheet, ⌘, settings, ⌘K model picker and ⌘D dictation
- * (the last two are window CustomEvents the owning components listen to).
+ * App-wide shortcuts: `?` cheat sheet, ⌘, settings, ⌘K model picker, Shift+Tab effort and ⌘D
+ * dictation (window CustomEvents the owning components listen to).
  */
 export function GlobalShortcuts() {
   const router = useRouter();
@@ -108,6 +108,13 @@ export function GlobalShortcuts() {
   useShortcut("help", () => setHelpOpen((open) => !open));
   useShortcut("settings", () => router.push("/settings"));
   useShortcut("modelPicker", () => dispatchCommand(OPEN_MODEL_PICKER_EVENT));
+  useShortcut("cycleEffort", (event) => {
+    // Shift+Tab is also "focus previous": inside modal dialogs (model picker, confirms) and
+    // when nothing owns the command it keeps its native meaning.
+    if ((event.target as HTMLElement | null)?.closest?.('[aria-modal="true"], [role="dialog"]')) return false;
+    if (!hasCommandTarget(CYCLE_EFFORT_EVENT)) return false;
+    dispatchCommand(CYCLE_EFFORT_EVENT);
+  });
   // Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
   // useShortcut("dictate", () => dispatchCommand(TOGGLE_DICTATION_EVENT));
 
