@@ -282,7 +282,7 @@ def test_health_is_cheap_and_open(tmp_path):
 
     from learnharness.api.app import create_app
 
-    assert TestClient(create_app(vault_path=tmp_path)).get("/api/health").json() == {"status": "ok"}
+    assert TestClient(create_app(vault_path=tmp_path)).get("/api/health").json()["status"] == "ok"
 
 
 def test_setup_status_reports_vault_warning(tmp_path):

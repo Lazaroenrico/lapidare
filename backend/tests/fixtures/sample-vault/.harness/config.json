@@ -1,0 +1,53 @@
+{
+  "configured": true,
+  "language": "pt-BR",
+  "schema_version": 2,
+  "vault_path": "~/Documents/SampleVault",
+  "folders": {
+    "map_file": "00 Mapa.md",
+    "lessons_dir": "Aulas",
+    "concepts_dir": "Conceitos",
+    "sources_dir": "Fontes",
+    "drawings_dir": "Desenhos",
+    "sessions_dir": "Sessões",
+    "templates_dir": "Templates",
+    "viz_dir": "viz"
+  },
+  "slots": {
+    "strong": {
+      "engine": "gemini_cli",
+      "model_id": "gemini-2.5-pro",
+      "effort": "medium"
+    },
+    "fast": {
+      "engine": "gemini_cli",
+      "model_id": "gemini-2.5-flash",
+      "effort": "medium"
+    },
+    "background": {
+      "engine": "gemini_cli",
+      "model_id": "gemini-2.5-flash",
+      "effort": "medium"
+    }
+  },
+  "content_mcps": [],
+  "tracks": [],
+  "active_track_id": null,
+  "prompt_overrides": {},
+  "graph": {
+    "extraction_chunk_tokens": 1,
+    "extraction_enabled": true
+  },
+  "agent": {
+    "tools": {
+      "research": true,
+      "pdf": true,
+      "visual": true,
+      "demo": true
+    },
+    "compaction_tokens": 150000
+  },
+  "dictation": {
+    "language": "multi"
+  }
+}

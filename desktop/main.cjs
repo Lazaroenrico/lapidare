@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, Menu, dialog, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell, systemPreferences } = require("electron");
 const { spawn, execFile } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -161,7 +161,13 @@ function failStartup() {
   quit();
 }
 
-const WEB_PREFS = { sandbox: true, contextIsolation: true, nodeIntegration: false };
+const WEB_PREFS = {
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  preload: path.join(__dirname, "preload.cjs"),
+  additionalArguments: [`--lapidare-version=${app.getVersion()}`],
+};
 
 function trust(wc) {
   trustedIds.add(wc.id);
@@ -197,8 +203,17 @@ function setupSession() {
     if (inject && sec) headers[policy.HEADER] = sec;
     cb({ requestHeaders: headers });
   });
-  ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-  ses.setPermissionCheckHandler(() => false);
+  ses.setPermissionRequestHandler((_wc, permission, cb, details) => {
+    if (!policy.allowPermission(permission, details, appOrigin)) return cb(false);
+    if (!IS_MAC) return cb(true);
+    systemPreferences.askForMediaAccess("microphone").then(cb, () => cb(false));
+  });
+  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+    const d = { ...(details || {}) };
+    if (!d.requestingUrl && !d.securityOrigin) d.requestingOrigin = requestingOrigin;
+    if (!policy.allowPermission(permission, d, appOrigin)) return false;
+    return !IS_MAC || systemPreferences.getMediaAccessStatus("microphone") !== "denied";
+  });
 }
 
 function createWindow(url) {
@@ -218,35 +233,114 @@ function createWindow(url) {
   mainWindow.loadURL(url);
 }
 
+// Estado de updates. AppImage: "auto" (baixa e instala ao sair). deb/rpm/mac: "notify"
+// (autoDownload=false): o electron-updater escolheria Deb/RpmUpdater (pkexec) ou MacUpdater
+// (exige app assinado), entao so avisamos e abrimos a pagina de releases.
+const SIX_H = 6 * 60 * 60 * 1000;
+const CH = { get: "lapidare:updates:get", state: "lapidare:updates:state", check: "lapidare:updates:check", restart: "lapidare:updates:restart", open: "lapidare:updates:open-release", auto: "lapidare:updates:set-auto" };
+let updState = { status: "unsupported", mode: "notify", autoUpdate: true };
+let updater = null;
+let updTimer = null;
+
+function updatesFile() {
+  return path.join(app.getPath("userData"), "updates.json");
+}
+function loadAuto() {
+  try {
+    return JSON.parse(fs.readFileSync(updatesFile(), "utf8")).autoUpdate !== false;
+  } catch {
+    return true;
+  }
+}
+function saveAuto(on) {
+  try {
+    fs.writeFileSync(updatesFile(), JSON.stringify({ autoUpdate: on }));
+  } catch (e) {
+    log(`updates.json: ${e.message}`);
+  }
+}
+function setUpd(patch) {
+  updState = { ...updState, ...patch };
+  for (const k of ["version", "error"]) if (updState[k] === undefined) delete updState[k];
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (trustedIds.has(w.webContents.id)) w.webContents.send(CH.state, updState);
+  }
+}
+async function runCheck(manual) {
+  if (!updater || ["staged", "checking", "downloading"].includes(updState.status)) return;
+  if (!manual && !updState.autoUpdate) return;
+  try {
+    await updater.checkForUpdates();
+  } catch (e) {
+    log(`updater check: ${e.message}`);
+    setUpd({ status: "error", error: String((e && e.message) || e).slice(0, 200) });
+  }
+}
+function scheduleCheck() {
+  updTimer = setTimeout(async () => {
+    await runCheck(false);
+    scheduleCheck();
+  }, SIX_H);
+  updTimer.unref();
+}
+function fromApp(e) {
+  const url = e.senderFrame && e.senderFrame.url;
+  return trustedIds.has(e.sender.id) && policy.isAppSender(url, appOrigin);
+}
+function setupUpdateIpc() {
+  const guard = (fn) => async (e, ...a) => {
+    if (!fromApp(e)) throw new Error("origem nao autorizada");
+    return fn(...a);
+  };
+  ipcMain.handle(CH.get, guard(() => updState));
+  ipcMain.handle(CH.check, guard(() => runCheck(true)));
+  ipcMain.handle(CH.open, guard(async () => {
+    const url = updState.version
+      ? `https://github.com/Lazaroenrico/lapidare/releases/tag/v${updState.version}`
+      : "https://github.com/Lazaroenrico/lapidare/releases";
+    const target = policy.isReleaseUrl(url) ? url : "https://github.com/Lazaroenrico/lapidare/releases";
+    if (policy.isReleaseUrl(target)) await shell.openExternal(target);
+  }));
+  ipcMain.handle(CH.auto, guard((on) => {
+    saveAuto(on === true);
+    setUpd({ autoUpdate: on === true });
+  }));
+  ipcMain.handle(CH.restart, guard(() => {
+    if (updState.status !== "staged" || !updater) return;
+    quitting = true;
+    killBackend();
+    updater.quitAndInstall();
+  }));
+}
+
 function setupUpdater() {
-  if (!IS_LINUX || !process.env.APPIMAGE || !app.isPackaged) return;
+  const autoUpdate = loadAuto();
+  const auto = IS_LINUX && !!process.env.APPIMAGE;
+  updState = { status: "unsupported", mode: auto ? "auto" : "notify", autoUpdate };
+  if (!app.isPackaged) return;
   try {
     const { autoUpdater } = require("electron-updater");
-    autoUpdater.autoInstallOnAppQuit = true;
+    updater = autoUpdater;
+    autoUpdater.autoDownload = auto;
+    autoUpdater.autoInstallOnAppQuit = auto;
     if (process.env.LAPIDARE_UPDATE_FEED) autoUpdater.setFeedURL({ provider: "generic", url: process.env.LAPIDARE_UPDATE_FEED });
-    autoUpdater.on("error", (e) => log(`updater: ${e && e.message}`));
-    autoUpdater.on("update-downloaded", async (info) => {
-      try {
-        const { response } = await dialog.showMessageBox(mainWindow || undefined, {
-          type: "info",
-          buttons: ["Reiniciar agora", "Depois"],
-          defaultId: 0,
-          cancelId: 1,
-          title: "Lapidare",
-          message: `A versão ${info.version} do Lapidare está pronta.`,
-        });
-        if (response === 0) {
-          quitting = true;
-          killBackend();
-          autoUpdater.quitAndInstall();
-        }
-      } catch (e) {
-        log(`updater dialog: ${e.message}`);
-      }
+    autoUpdater.on("checking-for-update", () => setUpd({ status: "checking", error: undefined }));
+    autoUpdater.on("update-available", (i) => setUpd({ status: auto ? "downloading" : "available", version: i.version }));
+    autoUpdater.on("update-not-available", () => setUpd({ status: "idle", version: undefined }));
+    autoUpdater.on("download-progress", () => {
+      if (updState.status !== "downloading") setUpd({ status: "downloading" });
     });
-    autoUpdater.checkForUpdates().catch((e) => log(`updater check: ${e.message}`));
+    autoUpdater.on("update-downloaded", (i) => setUpd({ status: "staged", version: i.version }));
+    autoUpdater.on("error", (e) => {
+      log(`updater: ${e && e.message}`);
+      setUpd({ status: "error", error: String((e && e.message) || e).slice(0, 200) });
+    });
+    setUpd({ status: "idle" });
+    runCheck(false);
+    scheduleCheck();
   } catch (e) {
     log(`updater indisponivel: ${e.message}`);
+    setUpd({ status: "unsupported" });
   }
 }
 
@@ -275,6 +369,7 @@ function setupDesktopIntegration() {
 
 async function boot() {
   setupLog();
+  setupUpdateIpc();
   setupDesktopIntegration();
   const editMenu = { label: "Editar", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] };
   Menu.setApplicationMenu(Menu.buildFromTemplate(IS_MAC ? [{ role: "appMenu" }, editMenu, { role: "windowMenu" }] : [editMenu]));

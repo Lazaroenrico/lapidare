@@ -78,6 +78,8 @@ import { decodeUsageReport } from "./usage";
 import type { ModelChoicePayload } from "./model-choice";
 import type { UsageReport } from "./types";
 
+import { decodeDictationSettings, type DictationSettings } from "./dictation-core";
+
 const BASE_URL = "";
 
 export class ApiError extends Error {
@@ -181,6 +183,16 @@ export const importLocalFile = (file: File, title: string, startSession: boolean
   send<ImportResult>(buildLocalImport(file, file.name, title, startSession));
 
 // --- Setup & Configuration ---
+
+/** App version reported by the backend (`null` when not packaged); undefined on failure. */
+export async function getHealthVersion(): Promise<string | null | undefined> {
+  try {
+    const h = await fetchJson<{ status: string; version?: string | null }>("/api/health", undefined, { silent: true });
+    return h.version ?? null;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function getSetupStatus(): Promise<SetupStatusResponse> {
   return decodeSetup(await fetchJson("/api/setup/status"));
@@ -624,3 +636,21 @@ export async function createDemo(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// --- Ditado (Deepgram) ---
+// Silenciosas: o hook e a seção de Settings mostram o erro por conta própria.
+
+export const getDictationSettings = async (): Promise<DictationSettings> =>
+  decodeDictationSettings(await fetchJson<unknown>("/api/settings/dictation", {}, { silent: true }));
+
+/** `api_key: null` remove a chave salva; omitido, mantém. */
+export const saveDictationSettings = async (patch: { api_key?: string | null; language?: string }): Promise<DictationSettings> =>
+  decodeDictationSettings(
+    await fetchJson<unknown>("/api/settings/dictation", { method: "PUT", body: JSON.stringify(patch) }, { silent: true }),
+  );
+
+export const createDictationToken = () =>
+  fetchJson<{ access_token: string; expires_in: number }>("/api/dictation/token", { method: "POST" }, { silent: true });
+
+export const testDictation = () =>
+  fetchJson<{ ok: boolean }>("/api/dictation/test", { method: "POST" }, { silent: true });

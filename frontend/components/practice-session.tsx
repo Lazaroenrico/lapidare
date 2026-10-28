@@ -2,13 +2,15 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Loader2, /* Mic, MicOff, */ Send, SkipForward } from "lucide-react";
+import { ChevronRight, Loader2, Send, SkipForward } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
 import { AnsweredQuestionCard } from "@/components/transcript-cards";
 import { JobCard } from "@/components/job-cards";
 import { appendDictation, useDictation } from "@/components/use-dictation";
+import { MicButton } from "@/components/mic-button";
+import { dictationText } from "@/lib/dictation-i18n";
 import {
   dockKeyAction,
   dockSubmission,
@@ -220,6 +222,7 @@ export function PracticeDock({
   const [draft, setDraft] = useState("");
   const dockRef = useRef<HTMLElement | null>(null);
   const dictation = useDictation(locale, { field: dockRef, enabled: !pendingQuiz });
+  const dt = dictationText(locale);
   dictation.setSink((text) => setDraft((prev) => appendDictation(prev, text)));
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attempt = state.mode === "attempt";
@@ -269,24 +272,15 @@ export function PracticeDock({
           </label>
         )}
         <div className="flex items-end gap-2">
-          {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
-          {dictation.supported && (
-            <button
-              type="button"
-              onClick={dictation.toggle}
-              className={`p-2.5 rounded border transition-colors cursor-pointer shrink-0 ${
-                dictation.listening
-                  ? "bg-danger/10 text-danger border-danger animate-pulse"
-                  : "bg-card hover:bg-accent text-muted-foreground hover:text-foreground border-border"
-              }`}
-              title={dictation.listening ? t.dictateStop : t.dictateBar}
-              aria-label={dictation.listening ? t.dictateStop : t.dictateBar}
-              aria-pressed={dictation.listening}
-            >
-              {dictation.listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </button>
-          )}
-          */}
+          <MicButton
+            variant="icon"
+            configured={dictation.supported}
+            state={dictation.state}
+            level={dictation.level}
+            onToggle={dictation.toggle}
+            label={dt.start}
+            stopLabel={dt.stop}
+          />
           <textarea
             id="practice-dock-input"
             ref={textareaRef}

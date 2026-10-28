@@ -332,6 +332,21 @@ class AgentSettings(BaseModel):
     compaction_tokens: int = Field(default=150_000, ge=32_000)
 
 
+DICTATION_LANGUAGES = ("multi", "pt-BR", "pt", "en", "en-US", "es", "fr", "de", "it", "ja")
+
+
+class DictationSettings(BaseModel):
+    """Voice dictation (Fase 22). The Deepgram key itself lives in the secret store."""
+    language: str = "multi"
+
+    @field_validator("language")
+    @classmethod
+    def known_language(cls, value: str) -> str:
+        # Lenient on load: a hand-edited config.json must not stop the app from booting.
+        # PUT /api/settings/dictation rejects unknown languages with 422.
+        return value if value in DICTATION_LANGUAGES else "multi"
+
+
 class HarnessConfig(BaseModel):
     """Root configuration for LearnHarness persisted in .harness/config.json."""
     configured: bool = False
@@ -348,6 +363,7 @@ class HarnessConfig(BaseModel):
     prompt_overrides: dict[str, bool] = Field(default_factory=dict)
     graph: GraphSettings = Field(default_factory=GraphSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    dictation: DictationSettings = Field(default_factory=DictationSettings)
 
     @model_validator(mode="before")
     @classmethod

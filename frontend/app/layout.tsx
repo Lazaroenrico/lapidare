@@ -6,6 +6,7 @@ import { LocaleProvider } from "@/components/locale-provider";
 import { Sidebar } from "@/components/sidebar";
 import { SetupGate } from "@/components/setup-gate";
 import { AppearanceApplier } from "@/components/appearance-applier";
+import { UpdateBanner } from "@/components/update-banner";
 import { GlobalShortcuts } from "@/components/global-shortcuts";
 
 export const metadata: Metadata = {
@@ -33,9 +34,12 @@ export default function RootLayout({
           <LocaleProvider>
           <div className="flex h-screen w-screen overflow-hidden bg-background">
             <Sidebar />
-            <main className="flex-1 min-w-0 h-screen overflow-y-auto flex flex-col bg-background">
-              {children}
-            </main>
+            <div className="flex flex-1 min-w-0 h-screen flex-col">
+              <UpdateBanner />
+              <main className="flex-1 min-h-0 overflow-y-auto flex flex-col bg-background">
+                {children}
+              </main>
+            </div>
           </div>
           <SetupGate />
           <GlobalShortcuts />

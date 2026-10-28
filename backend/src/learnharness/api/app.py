@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from learnharness.api.routes.chats import chats_router
+from learnharness.api.routes.dictation import dictation_router
 from learnharness.api.routes.drawings import drawings_router
 from learnharness.api.routes.graph import graph_router
 from learnharness.api.routes.import_content import import_router
@@ -189,9 +190,9 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     _register_error_handlers(app, state)
 
     @app.get("/api/health")
-    async def health() -> dict[str, str]:
+    async def health() -> dict[str, str | None]:
         # Readiness probe for the desktop shell; never touches the Vault.
-        return {"status": "ok"}
+        return {"status": "ok", "version": os.environ.get("LEARNHARNESS_APP_VERSION") or None}
 
     app.include_router(sse_router)
     app.include_router(setup_router)
@@ -204,6 +205,7 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     app.include_router(jobs_router)
     app.include_router(prompts_router)
     app.include_router(settings_agent_router)
+    app.include_router(dictation_router)
     app.include_router(usage_router)
     app.mount(MCP_MOUNT, ExecutionTokenGate(mcp_app, state))
     static_dir = os.environ.get("LEARNHARNESS_STATIC_DIR")

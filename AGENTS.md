@@ -31,6 +31,7 @@ O **Lapidare** é um *learning harness* local-first, bilíngue (`PT-BR` / `EN`),
    - `backend/core/` contém apenas tipos `Pydantic` e funções puras (zero chamadas de rede, subprocessos, sistema de arquivos ou `langgraph`).
    - A UI mantém **um único canal SSE (`EventSource("/api/events")`)** por janela seguindo o padrão *notify $\rightarrow$ fetch* (nunca crie loops de polling `setInterval`).
    - Apenas caminhos oficiais e sancionados do Google (`gemini --acp` / `stream-json`, `agy --input-format stream-json --output-format stream-json`, `google-genai` SDK).
+   - Exceção única (decisão do usuário, 2026-10-27): o ditado por voz usa o STT do Deepgram com chave própria do usuário. Não é LLM. O áudio vai direto do renderer ao Deepgram; o backend só emite token curto (`/api/dictation/token`).
    - Todo subprocesso do backend parte de `child_env()` (`learnharness/child_env.py`). O segredo do desktop (`LEARNHARNESS_DESKTOP_SECRET`) nunca chega ao renderer nem aos processos filhos.
 
 
