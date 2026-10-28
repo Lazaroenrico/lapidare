@@ -2,10 +2,11 @@ name: Desktop release
 
 # Tag v* → checks, Linux (AppImage/deb/rpm) and macOS (unsigned dmg arm64/x64), draft release, asset verification.
 # A human publishes the draft.
-# workflow_dispatch builds the same artifacts but never touches releases.
+# Pull requests and workflow_dispatch build and test the same artifacts but never touch releases.
 on:
   push:
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,7 +14,8 @@ permissions:
 
 concurrency:
   group: desktop-release-${{ github.ref }}
-  cancel-in-progress: false
+  # A new push to a PR supersedes its previous run; tag runs always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
