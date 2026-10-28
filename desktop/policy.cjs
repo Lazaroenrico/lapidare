@@ -66,4 +66,37 @@ function buildChildEnv(parentEnv, extras) {
   return env;
 }
 
-module.exports = { HEADER, shouldInjectSecret, classifyOpen, classifyNavigate, buildChildEnv };
+// Permissoes: so o microfone (audio) para o ditado, e so a partir da origem do app.
+function allowPermission(permission, details, appOrigin) {
+  try {
+    if (permission !== "media") return false;
+    const d = details || {};
+    if (Array.isArray(d.mediaTypes) && !d.mediaTypes.every((t) => t === "audio")) return false;
+    if (typeof d.mediaType === "string" && d.mediaType !== "audio") return false;
+    const u = parse(d.requestingUrl || d.securityOrigin || d.requestingOrigin);
+    if (!sameOrigin(u, appOrigin) || u.username || u.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Frame remetente de um IPC: precisa ser a origem do app (sem credenciais).
+function isAppSender(url, appOrigin) {
+  const u = parse(url);
+  return sameOrigin(u, appOrigin) && !u.username && !u.password;
+}
+
+// openRelease: somente a pagina de releases do repo ou uma tag dele.
+const RELEASES_PATH = "/Lazaroenrico/lapidare/releases";
+function isReleaseUrl(url) {
+  const u = parse(url);
+  if (!u || u.protocol !== "https:" || u.hostname !== "github.com" || u.port) return false;
+  if (u.username || u.password || u.search || u.hash) return false;
+  const path = u.pathname.replace(/\/$/, "");
+  if (path === RELEASES_PATH) return true;
+  const prefix = RELEASES_PATH + "/tag/";
+  return path.startsWith(prefix) && /^[A-Za-z0-9._+-]{1,64}$/.test(path.slice(prefix.length));
+}
+
+module.exports = { HEADER, shouldInjectSecret, classifyOpen, classifyNavigate, buildChildEnv, allowPermission, isAppSender, isReleaseUrl };

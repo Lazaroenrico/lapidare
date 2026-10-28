@@ -22,11 +22,12 @@ def test_cross_site_write_is_rejected_but_frontend_origin_allowed(tmp_path):
 
 def test_desktop_secret_gates_api_but_not_mcp_or_static(tmp_path, monkeypatch):
     monkeypatch.setenv("LEARNHARNESS_DESKTOP_SECRET", "s3cret")
+    monkeypatch.delenv("LEARNHARNESS_APP_VERSION", raising=False)
     client = TestClient(create_app(vault_path=tmp_path))
     assert client.get("/api/health").status_code == 403
     assert client.get("/api/setup/status", headers={"x-lapidare-desktop": "wrong"}).status_code == 403
     assert client.get("/api/setup/status", headers={"x-lapidare-desktop": "s3cret"}).status_code == 200
-    assert client.get("/api/health", headers={"x-lapidare-desktop": "s3cret"}).json() == {"status": "ok"}
+    assert client.get("/api/health", headers={"x-lapidare-desktop": "s3cret"}).json() == {"status": "ok", "version": None}
     assert client.post("/api/chats", json={"mode": "TEACH", "topic": "t"}).status_code == 403
     # The MCP mount keeps its own Bearer gate: never the desktop header.
     mcp = client.post("/internal/mcp/", json={})
@@ -36,5 +37,6 @@ def test_desktop_secret_gates_api_but_not_mcp_or_static(tmp_path, monkeypatch):
 
 def test_without_desktop_secret_api_is_open(tmp_path, monkeypatch):
     monkeypatch.delenv("LEARNHARNESS_DESKTOP_SECRET", raising=False)
+    monkeypatch.delenv("LEARNHARNESS_APP_VERSION", raising=False)
     client = TestClient(create_app(vault_path=tmp_path))
-    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/health").json() == {"status": "ok", "version": None}

@@ -58,6 +58,8 @@ mac:
   icon: icon-1024.png
   identity: null
   hardenedRuntime: false
+  extendInfo:
+    NSMicrophoneUsageDescription: O Lapidare usa o microfone apenas para o ditado por voz.
   gatekeeperAssess: false
 dmg:
   sign: false

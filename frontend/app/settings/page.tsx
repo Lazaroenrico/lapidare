@@ -30,7 +30,7 @@ import type {
   HarnessConfig,
   ModelSlots,
 } from "@/lib/types";
-import { completeSetup, getSetupStatus } from "@/lib/api";
+import { completeSetup, getHealthVersion, getSetupStatus } from "@/lib/api";
 import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
@@ -40,8 +40,13 @@ import { AgentSection } from "@/components/settings/agent-section";
 import { GraphSection } from "@/components/settings/graph-section";
 import { AppearanceSection } from "@/components/settings/appearance-section";
 import { KeyboardSection } from "@/components/settings/keyboard-section";
+import { DictationSection } from "@/components/settings/dictation-section";
 import { TracksSection } from "@/components/settings/tracks-section";
-import { buttonClass, SectionHeader } from "@/components/settings/ui";
+import { buttonClass, SectionHeader, Switch } from "@/components/settings/ui";
+import { Btn } from "@/components/import-ui";
+import { useUpdateState } from "@/components/use-update-state";
+import { statusLabel } from "@/lib/updates";
+import { platformText } from "@/lib/platform-i18n";
 import { SessionTrashList, useSessionTrash } from "@/components/session-trash";
 import { normalizeSlots } from "@/lib/config-wire";
 import { trashText } from "@/lib/session-trash";
@@ -409,6 +414,8 @@ export default function SettingsPage() {
                   onSelect={setSelectedMcp}
                 />
               </div>
+
+              <DictationSection />
             </div>
           )}
 
@@ -483,11 +490,60 @@ export default function SettingsPage() {
                 <p className="font-ui text-[11px] text-muted-foreground">{s.vaultPathHint}</p>
               </div>
 
+              <UpdatesCard />
               <TrashCard />
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Settings → Geral: app version; in the desktop app also the auto-update switch and "check now". */
+function UpdatesCard() {
+  const { locale } = useLocale();
+  const p = platformText(locale);
+  const { bridge, state } = useUpdateState();
+  const [webVersion, setWebVersion] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!bridge) void getHealthVersion().then(setWebVersion);
+  }, [bridge]);
+  const version = bridge ? bridge.appVersion : webVersion;
+  if (!bridge && !webVersion) return null;
+  return (
+    <div className="p-4 bg-card border border-border rounded space-y-3">
+      <h3 className="font-ui text-xs font-semibold text-foreground flex items-center gap-2">
+        <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+        {p.updatesHeading}
+      </h3>
+      <p className="font-ui text-[11px] text-muted-foreground">
+        {p.versionLabel}: <span className="text-foreground">{version || p.versionUnknown}</span>
+      </p>
+      {bridge && (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-ui text-xs text-foreground">{p.autoUpdate}</div>
+              <div className="font-ui text-[11px] text-muted-foreground">{p.autoUpdateHint}</div>
+            </div>
+            <Switch
+              checked={state?.autoUpdate ?? true}
+              onChange={(on) => void bridge.updates.setAuto(on)}
+              label={p.autoUpdate}
+              disabled={state?.status === "unsupported"}
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <Btn onClick={() => void bridge.updates.check()} busy={state?.status === "checking"}>
+              {p.checkNow}
+            </Btn>
+            <span role="status" className="font-ui text-[11px] text-muted-foreground">
+              {statusLabel(state, locale)}
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

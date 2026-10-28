@@ -58,3 +58,43 @@ test("buildChildEnv", () => {
   assert.deepEqual(env, { A: "1", PATH: "/new", LEARNHARNESS_PORT: "80" });
   assert.deepEqual(p.buildChildEnv(undefined, undefined), {});
 });
+
+test("allowPermission", () => {
+  const d = (x) => ({ requestingUrl: O + "/", ...x });
+  assert.equal(p.allowPermission("media", d({ mediaTypes: ["audio"] }), O), true);
+  assert.equal(p.allowPermission("media", d({}), O), true);
+  assert.equal(p.allowPermission("media", d({ mediaType: "audio" }), O), true);
+  assert.equal(p.allowPermission("media", { securityOrigin: O + "/" }, O), true);
+  assert.equal(p.allowPermission("media", d({ mediaTypes: ["video"] }), O), false);
+  assert.equal(p.allowPermission("media", d({ mediaTypes: ["audio", "video"] }), O), false);
+  assert.equal(p.allowPermission("media", d({ mediaType: "video" }), O), false);
+  assert.equal(p.allowPermission("media", { requestingUrl: "https://a.com/" }, O), false);
+  assert.equal(p.allowPermission("media", { mediaTypes: ["audio"] }, O), false);
+  assert.equal(p.allowPermission("media", undefined, O), false);
+  for (const perm of ["geolocation", "notifications", "clipboard-read", "display-capture", "openExternal", "fullscreen"])
+    assert.equal(p.allowPermission(perm, d({}), O), false);
+});
+test("isAppSender", () => {
+  assert.equal(p.isAppSender(O + "/x", O), true);
+  assert.equal(p.isAppSender("https://a.com/", O), false);
+  assert.equal(p.isAppSender("http://u:p@127.0.0.1:5000/", O), false);
+  assert.equal(p.isAppSender(undefined, O), false);
+  assert.equal(p.isAppSender("file:///x", O), false);
+});
+test("isReleaseUrl", () => {
+  const R = "https://github.com/Lazaroenrico/lapidare/releases";
+  assert.equal(p.isReleaseUrl(R), true);
+  assert.equal(p.isReleaseUrl(R + "/"), true);
+  assert.equal(p.isReleaseUrl(R + "/tag/v1.2.3"), true);
+  assert.equal(p.isReleaseUrl(R + "/tag/v1.2.3-rc.1"), true);
+  assert.equal(p.isReleaseUrl(R + "/tag/"), false);
+  assert.equal(p.isReleaseUrl(R + "/tag/v1/../../x"), false);
+  assert.equal(p.isReleaseUrl(R + "/download/v1/x.AppImage"), false);
+  assert.equal(p.isReleaseUrl("http://github.com/Lazaroenrico/lapidare/releases"), false);
+  assert.equal(p.isReleaseUrl("https://github.com/other/lapidare/releases"), false);
+  assert.equal(p.isReleaseUrl("https://github.com.evil.com/Lazaroenrico/lapidare/releases"), false);
+  assert.equal(p.isReleaseUrl("https://u:p@github.com/Lazaroenrico/lapidare/releases"), false);
+  assert.equal(p.isReleaseUrl(R + "?x=1"), false);
+  assert.equal(p.isReleaseUrl("lixo"), false);
+  assert.equal(p.isReleaseUrl(undefined), false);
+});

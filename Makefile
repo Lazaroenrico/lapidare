@@ -10,7 +10,7 @@ check-backend:
 	cd backend && uv run pytest -q && uv run ruff check src tests && uv run basedpyright
 
 check-frontend:
-	cd frontend && npm run typecheck && npm run lint && npm test && npm run build
+	cd frontend && npm run typecheck && npm run lint && npm test && npm run test:components && npm run build
 
 .PHONY: desktop desktop-clean desktop-install desktop-uninstall
 

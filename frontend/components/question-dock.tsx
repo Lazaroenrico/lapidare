@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, HelpCircle, /* Mic, MicOff, */ PenLine, Send } from "lucide-react";
+import { ChevronDown, HelpCircle, PenLine, Send } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import { InlineMath, LessonProse } from "@/components/lesson-prose";
 import { AnsweredQuestionCard, modeLabel } from "@/components/transcript-cards";
 import { appendDictation, useDictation } from "@/components/use-dictation";
+import { MicButton } from "@/components/mic-button";
+import { dictationText } from "@/lib/dictation-i18n";
 import { submitQuizAnswer } from "@/lib/api";
 import { rememberQuiz } from "@/lib/quiz-memory";
 import { optionLetter } from "@/lib/session-wire";
@@ -83,8 +85,6 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
     other: setOtherText,
   };
   dictation.setSink((spoken) => setters[activeField]((prev) => appendDictation(prev, spoken)));
-  // Só o micButton (comentado abaixo) usa os nomes dos campos.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const fieldName: Record<Field, string> = {
     reading: t.qReadingThinking,
     text: t.qAnswerLabel,
@@ -218,26 +218,19 @@ export function QuestionDock({ quiz, sessionId, onAnswerSubmitted, className = "
     }
   };
 
-  // Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
-  // const micButton = dictation.supported ? (
-  //   <button
-  //     type="button"
-  //     onMouseDown={(e) => e.preventDefault() /* keep focus in the active field */}
-  //     onClick={dictation.toggle}
-  //     className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10.5px] font-ui transition-colors cursor-pointer ${
-  //       dictation.listening
-  //         ? "bg-danger/10 text-danger border-danger animate-pulse"
-  //         : "bg-background text-muted-foreground border-border hover:text-foreground"
-  //     }`}
-  //     title={t.qDictateInto(fieldName[activeField])}
-  //     aria-label={t.qDictateInto(fieldName[activeField])}
-  //     aria-pressed={dictation.listening}
-  //   >
-  //     {dictation.listening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-  //     <span>{dictation.listening ? t.listening : fieldName[activeField]}</span>
-  //   </button>
-  // ) : null;
-  const micButton = null;
+  const dt = dictationText(locale);
+  const micButton = (
+    <MicButton
+      variant="compact"
+      configured={dictation.supported}
+      state={dictation.state}
+      level={dictation.level}
+      onToggle={dictation.toggle}
+      label={t.qDictateInto(fieldName[activeField])}
+      stopLabel={dt.stop}
+      text={dictation.state === "listening" ? dt.listening : fieldName[activeField]}
+    />
+  );
 
   const header = (
     <div className="px-4 py-2.5 bg-background border-b border-border flex items-center justify-between gap-2 font-ui text-[11px]">

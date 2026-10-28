@@ -13,8 +13,6 @@ import {
   Edit3,
   FileText,
   Loader2,
-  // Mic,
-  // MicOff,
   RotateCcw,
   Send,
   Sparkles,
@@ -46,7 +44,9 @@ import {
   visibleLocalSteers,
 } from "@/lib/session-ux";
 import { useShortcut } from "@/components/use-shortcut";
-import { appendDictation, useDictation } from "@/components/use-dictation";
+import { appendDictation, cancelActiveDictation, useDictation } from "@/components/use-dictation";
+import { MicButton } from "@/components/mic-button";
+import { dictationText } from "@/lib/dictation-i18n";
 import { NavDrawerButton } from "@/components/nav-drawer";
 import { SessionFindBar } from "@/components/session-find-bar";
 import {
@@ -224,6 +224,7 @@ export function ChatView() {
   // TEACH follow-up bar dictation (mic button and ⌘D via lib/command-events claim rules).
   const followUpRef = useRef<HTMLFormElement | null>(null);
   const dictation = useDictation(locale, { field: followUpRef, enabled: Boolean(session) && !isPracticeSession });
+  const dt = dictationText(locale);
   dictation.setSink((spoken) => setInputMessage((prev) => appendDictation(prev, spoken)));
 
   const loadNodeNames = React.useCallback(() => {
@@ -448,6 +449,8 @@ export function ChatView() {
 
   // Esc (useShortcut "abort"): pending question → active problem → running turn.
   useShortcut("abort", () => {
+    // An open mic takes the first Esc: cancel dictation, keep the turn running.
+    if (cancelActiveDictation()) return;
     if (!session) return false;
     const action = resolveEsc({
       overlayOpen: Boolean(escDialog) || dismissOpen || findOpen || renaming || citationDrawerOpen,
@@ -997,28 +1000,15 @@ export function ChatView() {
           onSubmit={handleSendMessage}
           className="max-w-4xl mx-auto flex items-center gap-2"
         >
-          {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
-          {dictation.supported && (
-            <button
-              type="button"
-              onClick={dictation.toggle}
-              className={`p-2.5 rounded border transition-colors cursor-pointer shrink-0 ${
-                dictation.listening
-                  ? "bg-danger/10 text-danger border-danger animate-pulse"
-                  : "bg-card hover:bg-accent text-muted-foreground hover:text-foreground border-border"
-              }`}
-              title={dictation.listening ? t.dictateStop : t.dictateMessage}
-              aria-label={dictation.listening ? t.dictateStop : t.dictateMessage}
-              aria-pressed={dictation.listening}
-            >
-              {dictation.listening ? (
-                <MicOff className="w-4 h-4 text-danger" />
-              ) : (
-                <Mic className="w-4 h-4" />
-              )}
-            </button>
-          )}
-          */}
+          <MicButton
+            variant="icon"
+            configured={dictation.supported}
+            state={dictation.state}
+            level={dictation.level}
+            onToggle={dictation.toggle}
+            label={t.dictateMessage}
+            stopLabel={dt.stop}
+          />
 
           <div className="relative flex-1">
             <input

@@ -56,7 +56,7 @@ def test_mounted_app_serves_static_and_api_wins(site, tmp_path, monkeypatch):
     assert client.get("/chat/abc").text == "chat-shell"
     assert client.get("/").text == "home"
     assert client.get("/nope").status_code == 404
-    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/health").json()["status"] == "ok"
     assert client.get("/api/setup/status").status_code == 200
     assert client.get("/api/does-not-exist").status_code == 404
     assert client.get("/api/does-not-exist").text != "missing"

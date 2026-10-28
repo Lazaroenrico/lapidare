@@ -3,7 +3,7 @@
 import { useLocale } from "@/components/locale-provider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, ChevronDown, CornerDownLeft, Loader2, /* Mic, */ Target, X } from "lucide-react";
+import { BookOpen, ChevronDown, CornerDownLeft, Loader2, Target, X } from "lucide-react";
 import type { EffortLevel, ModelSlotConfig, SessionMode, TrackConfig } from "@/lib/types";
 import { createChat } from "@/lib/api";
 import { findActiveTrack } from "@/lib/tracks";
@@ -12,6 +12,8 @@ import { useTracks } from "./use-tracks";
 import { differsFromSlot, EFFORT_LEVELS, modelChoicePayload, pinnedEffort, type ModelChoice } from "@/lib/model-choice";
 import { graphContextPayload, MAX_GRAPH_CONTEXT } from "@/lib/graph-selection";
 import { appendDictation, useDictation } from "./use-dictation";
+import { MicButton } from "./mic-button";
+import { dictationText } from "@/lib/dictation-i18n";
 import { ModelPicker } from "./model-picker";
 import { useShortcut } from "./use-shortcut";
 import { useCycleEffort } from "./use-cycle-effort";
@@ -63,6 +65,7 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useComposerFocusRequest(textareaRef);
   const dictation = useDictation(locale);
+  const dt = dictationText(locale);
   dictation.setSink((spoken) => setText((prev) => appendDictation(prev, spoken)));
 
   // Model choice: follows the strong slot until the learner picks something else.
@@ -287,24 +290,17 @@ export function Composer({
           ))}
         </div>
 
-        {/* Ditado desativado por enquanto: no desktop (Electron) a Web Speech não funciona.
-        <button
-          type="button"
-          onClick={dictation.toggle}
-          disabled={!dictation.supported}
-          aria-pressed={dictation.listening}
-          title={dictation.supported ? (dictation.listening ? t.micRecording : t.micDictate) : t.speechUnsupported}
-          className={`flex-1 min-w-[96px] flex items-center justify-center gap-2 py-1.5 rounded-full border text-[12.5px] font-ui transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-            dictation.listening
-              ? "bg-danger/15 border-danger text-danger"
-              : "bg-card/85 border-border text-muted-foreground hover:text-foreground hover:bg-accent"
-          }`}
-        >
-          {dictation.listening ? <span className="w-2 h-2 rounded-full bg-danger animate-pulse" /> : <Mic className="w-3.5 h-3.5" />}
-          <span>{dictation.listening ? t.dictateStop : t.dictateBar}</span>
-        </button>
-        */}
-        <div className="flex-1" />
+        <MicButton
+          variant="pill"
+          configured={dictation.supported}
+          state={dictation.state}
+          level={dictation.level}
+          onToggle={dictation.toggle}
+          label={dt.start}
+          stopLabel={dt.stop}
+          text={dictation.state === "listening" ? dt.stop : dt.bar}
+        />
+        {!dictation.supported && <div className="flex-1" />}
 
         <ModelPicker
           pill
