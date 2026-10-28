@@ -15,6 +15,7 @@ import {
   Pencil,
   Trash2,
   GitBranch,
+  Unlink,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -28,7 +29,7 @@ import {
 import type { BackgroundJobStatus, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
 import { partitionTrayJobs } from "@/lib/jobs-tray";
 import { decodeJobFiles, notesText } from "@/lib/notes-import";
-import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob, cancelJob } from "@/lib/api";
+import { chatMarkdownUrl, createChat, deleteChat, extractSessionToGraph, listChats, renameChat, retryJob, cancelJob, unlinkChatFromGraph } from "@/lib/api";
 import {
   filterByMode,
   fuzzyFilter,
@@ -44,6 +45,7 @@ import {
 import { comboFor, formatCombo } from "@/lib/keyboard";
 import { useEventSubscription, useServerEvents } from "./server-events";
 import { useLocale } from "./locale-provider";
+import { metersText } from "@/lib/meters-i18n";
 import { useShortcut } from "./use-shortcut";
 import { ConfirmDialog } from "./session-ux";
 import { SessionTrashDialog, useSessionTrash } from "./session-trash";
@@ -124,6 +126,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   const { activeJobs } = useServerEvents();
   const { locale, t } = useLocale();
   const tt = tracksText(locale);
+  const mt = metersText(locale);
   const trash = useSessionTrash();
   const [trashOpen, setTrashOpen] = useState(false);
   const { tracks, loaded: tracksLoaded, error: tracksError } = useTracks();
@@ -348,6 +351,10 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
   const [deleteNodes, setDeleteNodes] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Fase 21: "Remover do grafo" (TEACH only) keeps the session, drops its graph traces.
+  const [unlinkTarget, setUnlinkTarget] = useState<SessionRecord | null>(null);
+  const [unlinkBusy, setUnlinkBusy] = useState(false);
+  const [unlinkError, setUnlinkError] = useState<string | null>(null);
   const [showAgentsTray, setShowAgentsTray] = useState<boolean>(false);
   const [creatingMode, setCreatingMode] = useState<SessionMode | null>(null);
 
@@ -526,6 +533,27 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
     setDeleteTarget(session);
     setDeleteNodes(false);
     setDeleteError(null);
+  };
+
+  const openUnlink = (session: SessionRecord) => {
+    setMenuSessionId(null);
+    setUnlinkTarget(session);
+    setUnlinkError(null);
+  };
+
+  // POST /api/chats/{id}/graph/unlink; the backend broadcasts `graph:updated` + `session:updated`.
+  const confirmUnlink = async () => {
+    if (!unlinkTarget || unlinkBusy) return;
+    setUnlinkBusy(true);
+    setUnlinkError(null);
+    try {
+      await unlinkChatFromGraph(unlinkTarget.id);
+      setUnlinkTarget(null);
+    } catch (err) {
+      setUnlinkError(`${mt.unlinkFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setUnlinkBusy(false);
+    }
   };
 
   const confirmDelete = async () => {
@@ -978,6 +1006,17 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
                         <span>{t.extractGraph}</span>
                       </button>
                     )}
+                    {canExtract && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => openUnlink(session)}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[11px] text-foreground hover:bg-accent focus:bg-accent cursor-pointer"
+                      >
+                        <Unlink className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>{mt.unlinkMenu}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       role="menuitem"
@@ -1107,6 +1146,18 @@ export function Sidebar({ collapsed: collapsedProp, onToggleCollapse: onTogglePr
         </Link>
       </div>
       <SessionTrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} trash={trash} />
+      <ConfirmDialog
+        open={unlinkTarget !== null}
+        fixed
+        title={mt.unlinkTitle}
+        body={mt.unlinkBody}
+        confirmLabel={mt.unlinkConfirm}
+        busyLabel={mt.unlinkBusy}
+        busy={unlinkBusy}
+        error={unlinkError}
+        onCancel={() => setUnlinkTarget(null)}
+        onConfirm={() => void confirmUnlink()}
+      />
       <ConfirmDialog
         open={deleteTarget !== null}
         fixed

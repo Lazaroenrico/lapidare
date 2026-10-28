@@ -13,12 +13,15 @@ export interface AgentSettings {
   tools: Record<AgentToolId, boolean>;
   compaction_tokens: number;
   extraction_chunk_tokens: number;
+  /** Fase 21: false stops the automatic and manual extraction to the graph. */
+  extraction_enabled: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   tools: { research: true, pdf: true, visual: true, demo: true },
   compaction_tokens: 150_000,
   extraction_chunk_tokens: 4096,
+  extraction_enabled: true,
 };
 
 const intOr = (value: unknown, fallback: number) =>
@@ -33,6 +36,7 @@ export function decodeAgentSettings(raw: unknown): AgentSettings {
     ) as Record<AgentToolId, boolean>,
     compaction_tokens: intOr(src.compaction_tokens, DEFAULT_AGENT_SETTINGS.compaction_tokens),
     extraction_chunk_tokens: intOr(src.extraction_chunk_tokens, DEFAULT_AGENT_SETTINGS.extraction_chunk_tokens),
+    extraction_enabled: typeof src.extraction_enabled === "boolean" ? src.extraction_enabled : DEFAULT_AGENT_SETTINGS.extraction_enabled,
   };
 }
 

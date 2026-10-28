@@ -1,7 +1,7 @@
 """Settings → Agente: tool toggles, compaction threshold and graph extraction batch size.
 
 ``GET``/``PUT /api/settings/agent``. The body is flat for the UI
-(``{tools, compaction_tokens, extraction_chunk_tokens}``) and maps onto
+(``{tools, compaction_tokens, extraction_chunk_tokens, extraction_enabled}``) and maps onto
 ``config.agent`` and ``config.graph`` in ``.harness/config.json``.
 """
 
@@ -38,6 +38,7 @@ class AgentSettingsPatch(BaseModel):
     tools: ToolTogglesPatch | None = None
     compaction_tokens: int | None = Field(default=None, ge=MIN_COMPACTION_TOKENS)
     extraction_chunk_tokens: int | None = Field(default=None, ge=MIN_EXTRACTION_CHUNK_TOKENS)
+    extraction_enabled: bool | None = None
 
 
 def _view(config: HarnessConfig) -> dict:
@@ -45,6 +46,7 @@ def _view(config: HarnessConfig) -> dict:
         "tools": config.agent.tools.model_dump(),
         "compaction_tokens": config.agent.compaction_tokens,
         "extraction_chunk_tokens": config.graph.extraction_chunk_tokens,
+        "extraction_enabled": config.graph.extraction_enabled,
     }
 
 
@@ -67,6 +69,8 @@ async def put_agent_settings(payload: AgentSettingsPatch, request: Request):
         config.agent.compaction_tokens = payload.compaction_tokens
     if payload.extraction_chunk_tokens is not None:
         config.graph.extraction_chunk_tokens = payload.extraction_chunk_tokens
+    if payload.extraction_enabled is not None:
+        config.graph.extraction_enabled = payload.extraction_enabled
     save_config(vault, config)
     state.sse_hub.broadcast(SseEventType.CONFIG_UPDATED, {"section": "agent"})
     return _view(config)

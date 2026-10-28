@@ -54,8 +54,13 @@ def _count(value: Any) -> int:
         return 0
 
 
+def _optional_count(value: Any) -> int | None:
+    return None if value is None else _count(value)
+
+
 def report_usage(model_id: str | None, counts: dict[str, Any] | None) -> TurnUsage | None:
-    """Hand one call's counts (``input_tokens``/``output_tokens``/``thinking_tokens``) to the sink."""
+    """Hand one call's counts (``input_tokens``/``output_tokens``/``thinking_tokens``, and
+    ``cached_tokens`` when the provider reports it) to the sink."""
     if not counts:
         return None
     usage = TurnUsage(
@@ -63,6 +68,7 @@ def report_usage(model_id: str | None, counts: dict[str, Any] | None) -> TurnUsa
         input_tokens=_count(counts.get("input_tokens")),
         output_tokens=_count(counts.get("output_tokens")),
         thinking_tokens=_count(counts.get("thinking_tokens")),
+        cached_tokens=_optional_count(counts.get("cached_tokens")),
     )
     sink = _SINK.get()
     if sink is not None:
@@ -79,7 +85,11 @@ def report_usage(model_id: str | None, counts: dict[str, Any] | None) -> TurnUsa
 def agy_usage(result: dict[str, Any] | None) -> dict[str, Any] | None:
     """agy 1.4.7 ``result.usage`` (per turn, not cumulative: see the fixtures)."""
     usage = (result or {}).get("usage")
-    return usage if isinstance(usage, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    if "cache_read_tokens" in usage:
+        return {**usage, "cached_tokens": usage["cache_read_tokens"]}
+    return usage
 
 
 def gemini_cli_usage(event: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -87,7 +97,10 @@ def gemini_cli_usage(event: dict[str, Any] | None) -> dict[str, Any] | None:
     stats = (event or {}).get("stats")
     if not isinstance(stats, dict) or "input_tokens" not in stats:
         return None
-    return {"input_tokens": stats.get("input_tokens"), "output_tokens": stats.get("output_tokens")}
+    counts = {"input_tokens": stats.get("input_tokens"), "output_tokens": stats.get("output_tokens")}
+    if stats.get("cached") is not None:
+        counts["cached_tokens"] = stats["cached"]
+    return counts
 
 
 def acp_usage(result: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -106,4 +119,5 @@ def genai_usage(metadata: Any) -> dict[str, Any] | None:
         "input_tokens": getattr(metadata, "prompt_token_count", None),
         "output_tokens": getattr(metadata, "candidates_token_count", None),
         "thinking_tokens": getattr(metadata, "thoughts_token_count", None),
+        "cached_tokens": getattr(metadata, "cached_content_token_count", None),
     }

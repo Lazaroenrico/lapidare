@@ -171,6 +171,8 @@ class TokenUsage(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     thinking_tokens: int = Field(default=0, ge=0)
+    # Subset of ``input_tokens`` served from the provider's cache; None when not reported.
+    cached_tokens: int | None = Field(default=None, ge=0)
 
     @property
     def total_tokens(self) -> int:
@@ -185,11 +187,17 @@ class TurnUsage(TokenUsage):
 class SessionUsage(TokenUsage):
     """Accumulated usage of a session's teaching turns; ``turns`` counts provider reports."""
     turns: int = Field(default=0, ge=0)
+    # Fase 21: input + output of the latest report (how full the context is); None until
+    # the first report and after a compaction. ``last_turn`` sums the last turn's reports.
+    context_tokens: int | None = Field(default=None, ge=0)
+    last_turn: TokenUsage | None = None
 
     def add(self, usage: TokenUsage) -> None:
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
         self.thinking_tokens += usage.thinking_tokens
+        if usage.cached_tokens is not None:
+            self.cached_tokens = (self.cached_tokens or 0) + usage.cached_tokens
         self.turns += 1
 
 
@@ -255,6 +263,8 @@ class SessionRecord(BaseModel):
     model_cursor: str | None = None
     execution_status: ExecutionStatus = "idle"
     execution_id: str | None = None
+    # Fase 21: teaching turns started so far (the "turn" of usage ledger rows).
+    turn_seq: int = Field(default=0, ge=0)
     error: str | None = None
     recovery_required: bool = False
     applied_actions: list[str] = Field(default_factory=list)

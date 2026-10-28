@@ -101,7 +101,7 @@ const messages = {
     graphSettingsTitle: 'Ajustes do grafo', gsReset: 'Restaurar padrão',
     gsGroups: { display: 'Exibição', regions: 'Regiões', layout: 'Layout radial', physics: 'Física' },
     gsLabels: {
-      nodeSize: 'Tamanho do nó', edgeWidth: 'Espessura da aresta', edgeAlpha: 'Opacidade da aresta',
+      rendering: 'Mostrar o grafo na Home', nodeSize: 'Tamanho do nó', edgeWidth: 'Espessura da aresta', edgeAlpha: 'Opacidade da aresta',
       labelSize: 'Tamanho do rótulo', labelZoom: 'Zoom para rótulos nítidos',
       clusterLabels: 'Nomes das sessões', clusterLabelSize: 'Tamanho do nome da sessão',
       regionIntensity: 'Opacidade das regiões', regionDilation: 'Dilatação das regiões', regionBlur: 'Desfoque das regiões',
@@ -500,7 +500,7 @@ const messages = {
     graphSettingsTitle: 'Graph settings', gsReset: 'Restore defaults',
     gsGroups: { display: 'Display', regions: 'Regions', layout: 'Radial layout', physics: 'Physics' },
     gsLabels: {
-      nodeSize: 'Node size', edgeWidth: 'Edge width', edgeAlpha: 'Edge opacity',
+      rendering: 'Show the graph on the Home', nodeSize: 'Node size', edgeWidth: 'Edge width', edgeAlpha: 'Edge opacity',
       labelSize: 'Label size', labelZoom: 'Zoom for crisp labels',
       clusterLabels: 'Session names', clusterLabelSize: 'Session name size',
       regionIntensity: 'Region opacity', regionDilation: 'Region dilation', regionBlur: 'Region blur',

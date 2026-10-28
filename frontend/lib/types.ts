@@ -292,7 +292,9 @@ export interface SessionRecord {
   /** PRACTICE sessions only (Fase 9); empty state otherwise. */
   practice: PracticeState;
   /** Accumulated token usage, when the provider reports it. */
-  usage?: UsageCounters | null;
+  usage?: SessionUsage | null;
+  /** Fase 21: extraction coverage of a TEACH session (null for PRACTICE / older servers). */
+  coverage?: SessionCoverage | null;
   /** Graph node ids handed to the session as context. */
   graph_context?: string[];
   /** Latest context compaction, if any (Fase 12). */
@@ -504,6 +506,32 @@ export interface UsageCounters {
   turns: number;
   /** input + output + thinking (or the server-sent `total_tokens`). */
   total_tokens: number;
+}
+
+/** Fase 21: tokens of one turn (`cached_tokens` only when the engine reports it). */
+export interface TurnUsage {
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens: number;
+  cached_tokens: number | null;
+}
+
+/** Fase 21: counters plus the context meter fields of GET /api/chats/{id}. */
+export interface SessionUsage extends UsageCounters {
+  /** Input + output of the last usage report; null until the first report or after a compaction. */
+  context_tokens: number | null;
+  /** Tokens at which the context is compacted (or the model window ends). 0 = unknown. */
+  context_limit: number;
+  limit_kind: "compaction" | "window";
+  last_turn: TurnUsage | null;
+}
+
+/** Fase 21: how much of the session the graph extraction has not covered yet. */
+export interface SessionCoverage {
+  uncovered_tokens: number;
+  chunk_tokens: number;
+  extracting: boolean;
+  enabled: boolean;
 }
 
 export interface SessionUsageEntry extends UsageCounters {

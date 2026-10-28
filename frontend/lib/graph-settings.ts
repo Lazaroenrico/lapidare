@@ -12,6 +12,9 @@
 export const GRAPH_SETTINGS_KEY = "learnharness:graph-settings:v2";
 
 export interface GraphSettings {
+  // Home (switch lives in Settings → Grafo, not in the ⚙ panel)
+  /** 1 = draw the graph on the Home; 0 = minimal Home (counts only). */
+  rendering: number;
   // Display
   nodeSize: number;
   edgeWidth: number;
@@ -65,6 +68,7 @@ export interface SettingRange {
 }
 
 export const GRAPH_SETTING_RANGES: Record<GraphSettingKey, SettingRange> = {
+  rendering: { min: 0, max: 1, step: 1, default: 1, group: "display", toggle: true },
   // Constellation look: tiny dots, hairline threads, micro labels.
   nodeSize: { min: 0.5, max: 8, step: 0.25, default: 2, group: "display" },
   edgeWidth: { min: 0.25, max: 3, step: 0.05, default: 0.6, group: "display" },

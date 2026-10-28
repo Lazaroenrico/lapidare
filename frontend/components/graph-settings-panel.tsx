@@ -23,9 +23,9 @@ interface GraphSettingsPanelProps {
 
 const decimals = (step: number) => (String(step).split(".")[1] ?? "").length;
 
-/** Keys of one settings group, in declaration order. */
+/** Keys of one settings group, in declaration order (`rendering` has its own switch in Settings → Grafo). */
 export const graphSettingKeys = (group: GraphSettingGroup) =>
-  GRAPH_SETTING_KEYS.filter((k) => GRAPH_SETTING_RANGES[k].group === group);
+  GRAPH_SETTING_KEYS.filter((k) => k !== "rendering" && GRAPH_SETTING_RANGES[k].group === group);
 
 /** One setting: a slider with its value, or a checkbox for toggles. */
 export function GraphSettingControl({

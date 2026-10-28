@@ -25,7 +25,7 @@ import type {
   TeachPhase,
 } from "./types";
 import { decodeSlotOverride } from "./model-choice";
-import { decodeUsageCounters } from "./usage";
+import { decodeCoverage, decodeSessionUsage } from "./usage";
 import { decodePractice } from "./practice";
 import { decodeCompaction } from "./session-ux";
 import { decodeJobSteer, type JobSteer } from "./job-steer";
@@ -231,7 +231,8 @@ export function decodeSession(raw: unknown): SessionRecord {
     plan: r.plan === undefined || r.plan === null ? undefined : decodePlan(r.plan),
     slot_override: decodeSlotOverride(r.slot_override),
     effective_slot: decodeSlotOverride(r.effective_slot),
-    usage: decodeUsageCounters(r.usage),
+    usage: decodeSessionUsage(r.usage),
+    coverage: decodeCoverage(r.coverage),
     graph_context: strList(r.graph_context),
     practice: decodePractice(r.practice),
     compaction: decodeCompaction(r.compaction),

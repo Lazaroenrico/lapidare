@@ -7,6 +7,7 @@ import time
 
 from learnharness.child_env import child_env
 from learnharness.core.contracts.config import EngineKind
+from learnharness.core.model_limits import context_window
 from learnharness.engines.detector import KNOWN_AGY_PATHS, _find_executable
 
 CACHE_SECONDS = 600
@@ -64,7 +65,10 @@ async def _sdk_models(api_key: str | None) -> dict:
             actions = getattr(model, "supported_actions", None) or []
             name = (model.name or "").removeprefix("models/")
             if name and (not actions or "generateContent" in actions):
-                models.append({"id": name, "label": getattr(model, "display_name", None) or name})
+                # The provider's own input limit wins over the family table.
+                limit = getattr(model, "input_token_limit", None)
+                models.append({"id": name, "label": getattr(model, "display_name", None) or name,
+                               "context_window": limit if isinstance(limit, int) and limit > 0 else None})
     except Exception as exc:  # noqa: BLE001 - provider SDK raises many types; surfaced to the UI
         return {"models": [], "source": "api", "error": f"Falha ao listar modelos: {type(exc).__name__}"}
     return {"models": models, "source": "api", "error": None}
@@ -82,6 +86,9 @@ async def list_models(engine: EngineKind, api_key: str | None = None) -> dict:
     else:
         result = {"models": GEMINI_CLI_MODELS, "source": "static", "error": None}
     result = {"engine": engine.value, **result}
+    # Fase 21: every model carries its input window (``None`` when unknown, never 0).
+    result["models"] = [{**m, "context_window": m.get("context_window") or context_window(m["id"])}
+                        for m in result["models"]]
     if not result["error"]:
         _cache[key] = (time.monotonic(), result)
     return result

@@ -186,3 +186,11 @@ class NoteSlice(BaseModel):
     id: str
     content: str
     heading: str = ""
+
+
+class SessionCoverage(BaseModel):
+    """How close a session is to its next extraction (Fase 21; ``GET /api/chats/{id}``)."""
+    uncovered_tokens: int = Field(default=0, ge=0)
+    chunk_tokens: int = Field(default=4096, ge=1)
+    extracting: bool = False
+    enabled: bool = True

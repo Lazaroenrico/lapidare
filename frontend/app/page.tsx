@@ -5,11 +5,13 @@ import { useLocale } from "@/components/locale-provider";
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { GraphView } from "@/components/graph-view";
+import { MinimalHome } from "@/components/minimal-home";
 import { Composer, type SelectedNodeRef } from "@/components/composer";
 import { ImportDialog } from "@/components/import-dialog";
 import { HomeEmptyState } from "@/components/home-empty-state";
 import { openSetup } from "@/components/setup-gate";
 import { getSetupStatus } from "@/lib/api";
+import { GRAPH_SETTINGS_KEY, parseGraphSettings } from "@/lib/graph-settings";
 import { pruneSelection, type Selection } from "@/lib/graph-selection";
 import type { GraphSnapshot, RoadmapItem, SetupStatusResponse, SseEventType } from "@/lib/types";
 
@@ -42,6 +44,16 @@ export default function HomePage() {
     nodeCount: 0,
     roadmap: [],
   });
+
+  /** Settings → Grafo → "Mostrar o grafo na Home" (Fase 21); null until localStorage is read. */
+  const [rendering, setRendering] = useState<boolean | null>(null);
+  useEffect(() => {
+    try {
+      setRendering(parseGraphSettings(window.localStorage.getItem(GRAPH_SETTINGS_KEY)).rendering >= 1);
+    } catch {
+      setRendering(true);
+    }
+  }, []);
 
   const refreshSetup = useCallback(() => {
     getSetupStatus()
@@ -90,13 +102,23 @@ export default function HomePage() {
 
       {/* Full-bleed graph (single unified view, no Macro/Micro toggle) */}
       <div className="absolute inset-0">
-        <GraphView
-          selection={selection}
-          onSelectionChange={setSelection}
-          onSnapshot={handleSnapshot}
-          onOpenImport={() => setIsImportOpen(true)}
-          focusId={focusId}
-        />
+        {rendering === true && (
+          <GraphView
+            selection={selection}
+            onSelectionChange={setSelection}
+            onSnapshot={handleSnapshot}
+            onOpenImport={() => setIsImportOpen(true)}
+            focusId={focusId}
+          />
+        )}
+        {rendering === false && (
+          <MinimalHome
+            selection={selection}
+            onSelectionChange={setSelection}
+            onSnapshot={handleSnapshot}
+            onOpenImport={() => setIsImportOpen(true)}
+          />
+        )}
       </div>
 
       {/* Fase 18: first steps over the empty canvas (gone once the first node arrives) */}

@@ -2,7 +2,7 @@
 
 Each provider call reported by an engine (``engines.usage.report_usage``) while a capture
 is installed becomes one row ``{at, session_id, job_kind, model_id, input_tokens,
-output_tokens, thinking_tokens}``. Session captures also accumulate the turn's reports into
+output_tokens, thinking_tokens, turn, cached_tokens}``. Session captures also accumulate the turn's reports into
 ``SessionRecord.usage`` when the turn ends. After each row the hub broadcasts
 ``usage:updated`` (notify -> the UI fetches ``GET /api/usage``).
 """
@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from learnharness.core.contracts.session import SessionUsage, TurnUsage
+from learnharness.core.contracts.session import SessionUsage, TokenUsage, TurnUsage
 from learnharness.core.events import SseEventType
 from learnharness.engines.usage import reset_usage_sink, set_usage_sink
 from learnharness.vault.jsonl_store import load_session
@@ -33,16 +33,19 @@ class UsageCapture:
     """Installs the usage sink for one session turn or one background job (task-local)."""
 
     def __init__(self, service: UsageService, session_id: str | None = None,
-                 job_kind: str | None = None):
+                 job_kind: str | None = None, track_context: bool = True):
         self.service = service
         self.session_id = session_id
         self.job_kind = job_kind
+        # Teaching turns tell how full the context is; a side call (compaction) does not.
+        self.track_context = track_context
+        self.turn: int | None = None  # SessionRecord.turn_seq of the turn this capture serves.
         self.reports: list[TurnUsage] = []
         self._token = set_usage_sink(self._record)
 
     def _record(self, usage: TurnUsage) -> None:
         self.reports.append(usage)
-        self.service.append(usage, session_id=self.session_id, job_kind=self.job_kind)
+        self.service.append(usage, session_id=self.session_id, job_kind=self.job_kind, turn=self.turn)
 
     def close(self) -> None:
         """Remove the sink and charge the session (idempotent; never raises)."""
@@ -52,25 +55,27 @@ class UsageCapture:
             reset_usage_sink(self._token)
         self._token = None
         if self.session_id and self.reports:
-            self.service.charge_session(self.session_id, self.reports)
+            self.service.charge_session(self.session_id, self.reports, track_context=self.track_context)
 
 
 class UsageService:
     def __init__(self, state: AppState):
         self.state = state
 
-    def capture(self, session_id: str | None = None, job_kind: str | None = None) -> UsageCapture:
-        return UsageCapture(self, session_id=session_id, job_kind=job_kind)
+    def capture(self, session_id: str | None = None, job_kind: str | None = None,
+                track_context: bool = True) -> UsageCapture:
+        return UsageCapture(self, session_id=session_id, job_kind=job_kind, track_context=track_context)
 
     def _path(self):
         return safe_path(self.state.vault_path, LEDGER)
 
     def append(self, usage: TurnUsage, *, session_id: str | None = None,
-               job_kind: str | None = None) -> None:
+               job_kind: str | None = None, turn: int | None = None) -> None:
         row = {
             "at": datetime.now(UTC).isoformat(), "session_id": session_id, "job_kind": job_kind,
             "model_id": usage.model_id, "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens, "thinking_tokens": usage.thinking_tokens,
+            "turn": turn, "cached_tokens": usage.cached_tokens,
         }
         path = self._path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,12 +83,26 @@ class UsageService:
         self.state.sse_hub.broadcast(SseEventType.USAGE_UPDATED,
                                      {"session_id": session_id, "job_kind": job_kind})
 
-    def charge_session(self, session_id: str, reports: list[TurnUsage]) -> None:
-        """Add a turn's reports to ``SessionRecord.usage`` (sync get+save: no await between)."""
+    def charge_session(self, session_id: str, reports: list[TurnUsage],
+                       track_context: bool = True) -> None:
+        """Add a turn's reports to ``SessionRecord.usage`` (sync get+save: no await between).
+
+        With ``track_context`` it also records ``context_tokens`` (input + output of the last
+        report) and ``last_turn`` (the sum of these reports).
+        """
         try:
             session = self.state.sessions.get(session_id)
             for usage in reports:
                 session.usage.add(usage)
+            if track_context and reports:
+                last = reports[-1]
+                session.usage.context_tokens = last.input_tokens + last.output_tokens
+                cached = [r.cached_tokens for r in reports if r.cached_tokens is not None]
+                session.usage.last_turn = TokenUsage(
+                    input_tokens=sum(r.input_tokens for r in reports),
+                    output_tokens=sum(r.output_tokens for r in reports),
+                    thinking_tokens=sum(r.thinking_tokens for r in reports),
+                    cached_tokens=sum(cached) if cached else None)
             self.state.sessions.save(session)
         except Exception:
             logger.warning("Could not charge usage to session %s", session_id, exc_info=True)
@@ -128,4 +147,5 @@ class UsageService:
                 record = None
             by_session.append({"session_id": session_id, "title": record.title if record else "",
                                "total_tokens": tokens})
-        return {"today": current.model_dump(), "total": total.model_dump(), "by_session": by_session}
+        return {"today": current.model_dump(exclude_none=True),
+                "total": total.model_dump(exclude_none=True), "by_session": by_session}
