@@ -203,29 +203,24 @@ export const LessonProse = memo(function LessonProse({
         {children}
       </td>
     ),
-    pre: ({ children }) => <>{children}</>,
-    code: ({
-      inline,
-      className: codeClassName,
-      children,
-    }: {
-      inline?: boolean;
-      className?: string;
-      children?: React.ReactNode;
-    }) => {
-      if (inline) {
-        return (
-          <code className="px-1.5 py-0.5 rounded bg-card border border-border font-ui text-[12px] text-foreground mx-0.5">
-            {children}
-          </code>
-        );
-      }
-      const block = <CodeBlock className={codeClassName}>{children}</CodeBlock>;
-      if (codeClassName === "language-mermaid") {
-        return <MermaidDiagram source={React.Children.toArray(children).join("").trim()} fallback={block} />;
+    // react-markdown 10 has no `inline` flag: fenced blocks are the only `code` inside a `pre`,
+    // so blocks render here and `code` alone is always inline (a block div inside <p> broke layout).
+    pre: ({ children }) => {
+      const code = React.Children.toArray(children)[0];
+      const props = React.isValidElement<{ className?: string; children?: React.ReactNode }>(code) ? code.props : {};
+      const block = <CodeBlock className={props.className}>{props.children}</CodeBlock>;
+      if (props.className === "language-mermaid") {
+        return <MermaidDiagram source={React.Children.toArray(props.children).join("").trim()} fallback={block} />;
       }
       return block;
     },
+    code: ({ className: codeClassName, children }) => (
+      <code
+        className={`px-1.5 py-0.5 rounded bg-card border border-border font-ui text-[12px] text-foreground mx-0.5 ${codeClassName ?? ""}`.trim()}
+      >
+        {children}
+      </code>
+    ),
     a: ({ href, children, ...props }) => {
       // Check for custom citation links
       if (href?.startsWith("lh-cite://")) {

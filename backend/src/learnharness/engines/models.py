@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import signal
 import time
 
 from learnharness.child_env import child_env
@@ -11,6 +14,7 @@ from learnharness.core.model_limits import context_window
 from learnharness.engines.detector import KNOWN_AGY_PATHS, _find_executable
 
 CACHE_SECONDS = 600
+AGY_MODELS_TIMEOUT = 30.0
 # gemini CLI has no list command; these are the ids its docs accept.
 GEMINI_CLI_MODELS = [
     {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
@@ -35,16 +39,20 @@ async def _agy_models() -> dict:
     binary = _find_executable("agy", KNOWN_AGY_PATHS)
     if not binary:
         return {"models": [], "source": "agy", "error": "agy não encontrado no PATH"}
+    # Own process group: agy may exit while a child of its own still holds stdout open, and
+    # only killing the whole group releases the pipe (process.kill() would also race the exit).
     process = await asyncio.create_subprocess_exec(
         binary, "models", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=child_env(),
+        env=child_env(), start_new_session=True,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), AGY_MODELS_TIMEOUT)
     except TimeoutError:
-        process.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
         await process.wait()
-        return {"models": [], "source": "agy", "error": "agy models não respondeu em 30 s"}
+        return {"models": [], "source": "agy",
+                "error": f"agy models não respondeu em {AGY_MODELS_TIMEOUT:g} s"}
     models = parse_agy_models(stdout.decode("utf-8", "replace"))
     if process.returncode or not models:
         # stderr may mention auth state; never include tokens (agy prints none here).

@@ -33,13 +33,21 @@ Os invariantes do `AGENTS.md` continuam valendo. Esta fase fecha as pendências 
 - **Entraram:** `gemini-3-pro-image`, `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image` e `gemini-4-argon`, que publica uma janela unificada.
 - **Saíram:** as famílias desligadas (1.5 e 2.0), que não têm mais página.
 
-## 3. CI e docs
+## 3. Correções achadas na verificação manual
+
+- **Medidor de contexto.** Antes, o numerador era "entrada + saída do último relatório do provedor". O `agy` soma no relatório do turno todas as chamadas internas: um turno real de diagnóstico mostrou 154k "de contexto" contra 150k de limite, com cerca de 1k tokens de histórico. Agora o `GET /api/chats/{id}` manda em `usage.context_tokens` o `history_tokens(messages, compaction)`, a mesma estimativa que a compactação compara com `compaction_tokens`. O medidor diz então exatamente quanto falta para compactar. O campo gravado em `SessionUsage` continua existindo por compatibilidade.
+- **Catálogo do `agy`.** O `agy models` pode sair deixando um processo filho com o stdout aberto. Aí o `communicate()` estoura os 30 s e o `process.kill()` lança `ProcessLookupError`, e `/api/setup/models` respondia 500. Agora o processo roda em grupo próprio (`start_new_session`) e o timeout mata o grupo inteiro. O mesmo `ProcessLookupError` foi protegido no timeout do `git` (`vault/github_source.py`).
+- **Código inline na prosa.** O `react-markdown` 10 não passa mais a prop `inline`, então todo `código` inline virava o bloco copiável no meio do parágrafo, com `<div>` dentro de `<p>` e erro de hidratação. Agora os blocos saem pelo `pre` (o mermaid continua ali) e o `code` é sempre inline (`components/lesson-prose.tsx`, com teste de componente).
+- **Diálogos de confirmação da sidebar.** "Remover do grafo" e "Excluir" eram desenhados dentro da camada da sidebar (`z-30`), por baixo do painel flutuante do plano da aula. Com `fixed`, o `ConfirmDialog` agora vai por portal para o `body`.
+- **Shift+Tab.** Quando a listagem de modelos falhava, `useCycleEffort` guardava um catálogo vazio, e o atalho ficava morto até recarregar a página. Agora só guarda um catálogo não vazio.
+
+## 4. CI e docs
 
 - **Release.** `desktop-release.yml` passa a ter `LEARNHARNESS_CHROMIUM=off`, como o `ci.yml`.
 - **`ARCHITECTURE.md`** passa a cobrir as Fases 19 a 23: rotas, jobs, medidores, grafo, ditado, preload e updater, testes de componente e vault de exemplo.
 - **`README.md` e `CONTEXT_AND_BEHAVIOR.md`:** o ditado deixa de aparecer como desativado. O README ganha a seção "Ditado (Deepgram)", com as regras de privacidade.
 
-## 4. Pronto quando
+## 5. Pronto quando
 
 - `make check` e `cd desktop && npm test` passam.
 - A verificação manual das Fases 19 a 22 foi feita, ou ficou em roteiro para o que precisa da chave Deepgram, de microfone ou de `sudo`.

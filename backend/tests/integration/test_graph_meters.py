@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 from learnharness.api.app import create_app
 from learnharness.api.state import AppState
-from learnharness.core.compaction import CompactionSummary
+from learnharness.core.compaction import CompactionSummary, history_tokens
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.core.graph_merge import fingerprint
 from learnharness.core.model_limits import context_limit, context_window
@@ -116,7 +116,9 @@ def test_chat_payload_has_coverage_and_usage_limits(tmp_path) -> None:
         data = poll_until(lambda: client.get(f"/api/chats/{chat['id']}").json(),
                           lambda s: s["usage"]["turns"] == 1)
         assert set(data["coverage"]) == {"uncovered_tokens", "chunk_tokens", "extracting", "enabled"}
-        assert data["usage"]["context_tokens"] == 1100
+        # The meter is the history estimate compaction uses, not the provider report (1100).
+        record = state.sessions.get(chat["id"])
+        assert data["usage"]["context_tokens"] == history_tokens(record.messages, record.compaction) > 0
         assert data["usage"]["last_turn"] == {"input_tokens": 1000, "output_tokens": 100,
                                               "thinking_tokens": 0, "cached_tokens": None}
         assert data["usage"]["context_limit"] == 150_000 and data["usage"]["limit_kind"] == "compaction"
