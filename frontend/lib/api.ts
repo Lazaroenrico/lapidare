@@ -74,9 +74,9 @@ import {
   type NotesImportResponse,
   type SourceNote,
 } from "./notes-import";
-import { decodeUsageReport } from "./usage";
+import { decodeSessionTurns, decodeUsageReport } from "./usage";
 import type { ModelChoicePayload } from "./model-choice";
-import type { UsageReport } from "./types";
+import type { SessionTurns, UsageReport } from "./types";
 
 import { decodeDictationSettings, type DictationSettings } from "./dictation-core";
 
@@ -261,6 +261,17 @@ export const putGraphPositions = (positions: Record<string, { x: number; y: numb
 export async function getUsage(signal?: AbortSignal): Promise<UsageReport | null> {
   try {
     return decodeUsageReport(await fetchJson<unknown>("/api/usage", { signal }, { silent: true }));
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) return null;
+    throw err;
+  }
+}
+
+/** GET /api/usage/sessions/{id}: per-turn usage of one session; null on older servers (404/405). */
+export async function getSessionTurns(sessionId: string, signal?: AbortSignal): Promise<SessionTurns | null> {
+  try {
+    const raw = await fetchJson<unknown>(`/api/usage/sessions/${encodeURIComponent(sessionId)}`, { signal }, { silent: true });
+    return decodeSessionTurns(raw);
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 405)) return null;
     throw err;

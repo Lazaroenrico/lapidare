@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -307,7 +308,8 @@ async def _run_git(
         elif watch is not None and _dir_size(watch) > MAX_REPO_BYTES:
             failure = GitHubSourceError("Repository exceeds the size limit", 413)
         if failure:
-            proc.kill()
+            with contextlib.suppress(ProcessLookupError):  # git may have just exited
+                proc.kill()
             await asyncio.gather(task, return_exceptions=True)
             raise failure
     stdout, stderr = task.result()

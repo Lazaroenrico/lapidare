@@ -1,9 +1,19 @@
 /**
  * Pure decoders/formatters for token usage: `SessionRecord.usage` and
- * GET /api/usage → {today, total, by_session[]}.
+ * GET /api/usage → {today, total, by_session[]} and GET /api/usage/sessions/{id} → {turns, background}.
  */
 
-import type { SessionCoverage, SessionUsage, SessionUsageEntry, TurnUsage, UsageCounters, UsageReport } from "./types";
+import type {
+  SessionCoverage,
+  SessionTurns,
+  SessionTurnUsage,
+  SessionUsage,
+  SessionUsageEntry,
+  TurnUsage,
+  UsageBucket,
+  UsageCounters,
+  UsageReport,
+} from "./types";
 
 type Raw = Record<string, unknown>;
 const isObj = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -131,6 +141,46 @@ export function contextMeter(usage: SessionUsage, locale: string = "pt-BR"): Con
 export interface TurnRow {
   key: "input" | "output" | "thinking" | "cached";
   value: string;
+}
+
+function decodeBucket(raw: Raw): UsageBucket {
+  return { ...(decodeTurnUsage(raw) as TurnUsage), calls: count(raw.calls) };
+}
+
+/** GET /api/usage/sessions/{id} → turns (oldest first) and background totals; null on a bad shape. */
+export function decodeSessionTurns(raw: unknown): SessionTurns | null {
+  if (!isObj(raw)) return null;
+  const turns: SessionTurnUsage[] = [];
+  for (const t of Array.isArray(raw.turns) ? raw.turns : []) {
+    if (!isObj(t) || typeof t.turn !== "number" || !Number.isInteger(t.turn)) continue;
+    turns.push({ ...decodeBucket(t), turn: t.turn, at: typeof t.at === "string" ? t.at : null });
+  }
+  turns.sort((a, b) => a.turn - b.turn);
+  const background: SessionTurns["background"] = [];
+  for (const b of Array.isArray(raw.background) ? raw.background : []) {
+    if (isObj(b) && typeof b.job_kind === "string" && b.job_kind) background.push({ ...decodeBucket(b), job_kind: b.job_kind });
+  }
+  return { turns, background };
+}
+
+export const bucketTotal = (b: TurnUsage): number => b.input_tokens + b.output_tokens + b.thinking_tokens;
+
+export interface TurnBar {
+  turn: number;
+  total: number;
+  /** 0..1, relative to the most expensive of the bars shown. */
+  fraction: number;
+  /** The most expensive turn shown (first one on ties). */
+  peak: boolean;
+}
+
+/** Bars of the last `n` turns, scaled to the most expensive one. */
+export function turnBars(turns: SessionTurnUsage[], n: number = 10): TurnBar[] {
+  const shown = turns.slice(-n);
+  const totals = shown.map(bucketTotal);
+  const max = Math.max(0, ...totals);
+  const peakAt = max > 0 ? totals.indexOf(max) : -1;
+  return shown.map((t, i) => ({ turn: t.turn, total: totals[i], fraction: max > 0 ? totals[i] / max : 0, peak: i === peakAt }));
 }
 
 /** Last-turn rows for the popover: input, output, thinking; cache only when reported. */

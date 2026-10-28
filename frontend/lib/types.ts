@@ -534,6 +534,21 @@ export interface SessionCoverage {
   enabled: boolean;
 }
 
+/** Fase 23: one teaching turn (or one background job kind) of GET /api/usage/sessions/{id}. */
+export interface UsageBucket extends TurnUsage {
+  calls: number;
+}
+
+export interface SessionTurnUsage extends UsageBucket {
+  turn: number;
+  at: string | null;
+}
+
+export interface SessionTurns {
+  turns: SessionTurnUsage[];
+  background: (UsageBucket & { job_kind: string })[];
+}
+
 export interface SessionUsageEntry extends UsageCounters {
   session_id: string;
   title: string;

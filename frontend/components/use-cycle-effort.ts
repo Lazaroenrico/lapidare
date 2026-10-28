@@ -39,9 +39,13 @@ export function useCycleEffort({
       if (!effortSelectable(value.model)) {
         if (catalogRef.current?.engine !== engine) {
           const catalog = await getModels(engine).catch(() => null);
-          catalogRef.current = { engine, models: Array.isArray(catalog?.models) ? catalog.models : [] };
+          const list = Array.isArray(catalog?.models) ? catalog.models : [];
+          // Only a non-empty catalog is cached: a failed listing (agy timeout) retries next time.
+          if (list.length > 0) catalogRef.current = { engine, models: list };
+          models = list;
+        } else {
+          models = catalogRef.current.models;
         }
-        models = catalogRef.current.models;
       }
       const next = nextEffort({ model_id: value.model, effort: value.effort }, models);
       if (!next) return;

@@ -772,7 +772,7 @@ export function ChatView() {
             onChange={(next) => void handleModelChange(next)}
           />
           <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
-          {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip usage={session.usage} />}
+          {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip sessionId={session.id} usage={session.usage} />}
           {!isPractice && (
           <>
           <ExtractionRing coverage={session.coverage} busy={extracting} onExtract={() => void handleExtract()} />

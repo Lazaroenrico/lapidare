@@ -123,8 +123,11 @@ class JobManager:
             record["warnings"] = warnings
 
     async def run(self, record):
-        # Provider usage of the whole job goes to the global ledger (job_kind, no session).
-        usage = self.state.usage.capture(job_kind=record["kind"])
+        # Provider usage of the whole job goes to the ledger tagged with job_kind and the
+        # session it serves (if any), without adding to that session's total.
+        session_id = (record.get("payload") or {}).get("session_id")
+        usage = self.state.usage.capture(session_id=session_id if isinstance(session_id, str) else None,
+                                         job_kind=record["kind"], charge=False)
         try:
             async with self.semaphore:
                 record["status"] = "running"

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from learnharness.api.state import get_app_state
+from learnharness.core.compaction import history_tokens
 from learnharness.core.contracts.config import EffortLevel
 from learnharness.core.contracts.quiz import QuizPayload, QuizSubmission
 from learnharness.core.contracts.session import SessionMode, SessionRecord, slot_override_for
@@ -140,7 +141,11 @@ def _with_slot(state, session: SessionRecord) -> dict[str, Any]:
     # Fase 21: context meter bound and extraction ring.
     limit, kind = context_limit(config.agent.compaction_tokens,
                                 context_window(data["effective_slot"]["model_id"]))
-    data["usage"].update({"context_limit": limit, "limit_kind": kind})
+    # The meter shows what compaction compares against the budget (estimated history since
+    # the last compaction). Provider reports are no measure of it: agy sums every internal
+    # call of a turn, so "input + output of the last report" overshoots by multiples.
+    data["usage"].update({"context_tokens": history_tokens(session.messages, session.compaction),
+                          "context_limit": limit, "limit_kind": kind})
     coverage = state.graph.coverage_for(session)
     data["coverage"] = coverage.model_dump() if coverage else None
     if session.context_kind == "leveling":  # additive: progress band of a leveling session

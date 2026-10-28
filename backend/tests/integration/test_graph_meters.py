@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 from learnharness.api.app import create_app
 from learnharness.api.state import AppState
-from learnharness.core.compaction import CompactionSummary
+from learnharness.core.compaction import CompactionSummary, history_tokens
 from learnharness.core.contracts.session import SessionMessage, SessionRecord
 from learnharness.core.graph_merge import fingerprint
 from learnharness.core.model_limits import context_limit, context_window
@@ -53,8 +53,10 @@ def _teach(session_id: str, text: str = "x" * 400, **extra) -> SessionRecord:
 def test_context_window_by_family_prefix_and_unknown_is_none() -> None:
     assert context_window("gemini-2.5-pro") == 1_048_576
     assert context_window("models/gemini-3.8-flash-low") == 1_048_576
-    assert context_window("gemini-1.5-pro-002") == 2_097_152
-    assert context_window("gemini-2.5-flash-image") == 32_768  # longest prefix wins
+    assert context_window("gemini-2.5-flash-image") == 65_536  # longest prefix wins
+    assert context_window("gemini-3.1-flash-image") == 131_072
+    assert context_window("gemini-4-argon") == 1_048_576
+    assert context_window("gemini-1.5-pro-002") is None  # shut down: no published page
     assert context_window("claude-opus-5-5-high") is None
     assert context_window("auto") is None and context_window(None) is None
 
@@ -114,7 +116,9 @@ def test_chat_payload_has_coverage_and_usage_limits(tmp_path) -> None:
         data = poll_until(lambda: client.get(f"/api/chats/{chat['id']}").json(),
                           lambda s: s["usage"]["turns"] == 1)
         assert set(data["coverage"]) == {"uncovered_tokens", "chunk_tokens", "extracting", "enabled"}
-        assert data["usage"]["context_tokens"] == 1100
+        # The meter is the history estimate compaction uses, not the provider report (1100).
+        record = state.sessions.get(chat["id"])
+        assert data["usage"]["context_tokens"] == history_tokens(record.messages, record.compaction) > 0
         assert data["usage"]["last_turn"] == {"input_tokens": 1000, "output_tokens": 100,
                                               "thinking_tokens": 0, "cached_tokens": None}
         assert data["usage"]["context_limit"] == 150_000 and data["usage"]["limit_kind"] == "compaction"
@@ -132,7 +136,7 @@ def test_small_window_model_reports_window_limit(tmp_path) -> None:
         poll_until(lambda: client.get(f"/api/chats/{chat['id']}").json(), lambda s: s["usage"]["turns"] == 1)
         client.put(f"/api/chats/{chat['id']}/settings", json={"model_id": "gemini-2.5-flash-image"})
         usage = client.get(f"/api/chats/{chat['id']}").json()["usage"]
-        assert (usage["context_limit"], usage["limit_kind"]) == (32_768 - 16_000, "window")
+        assert (usage["context_limit"], usage["limit_kind"]) == (65_536 - 16_000, "window")
 
 
 # ----------------------------------------------------------------- context meter

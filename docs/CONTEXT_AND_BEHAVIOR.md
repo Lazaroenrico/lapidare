@@ -14,7 +14,7 @@ O método de estudo que deu origem ao seu ambiente atual (`~/Study/ai-engineer`)
 
 No entanto, cada sistema evoluiu metade da solução ideal:
 - O seu sistema **`ai-engineer`** desenvolveu uma metodologia poderosa para engenharia de IA: **Trilha integrada `2:1`** (combinando mentoria e base teórica), ingestão de aulas densas via **MCP** (mapeando *Dito / Pressuposto / Pulado / Simplificações* com citações `#^pN`), prática de código e consolidação desenhando de memória no **Excalidraw** sobre um Vault real no Obsidian. Porém, a interface ficava espalhada entre terminal, popups `curses` (`quiz.py`) e janelas soltas.
-- O **`learnharness`** criou uma interface web/desktop exemplar (prosa editorial em `CMU Serif` + `Source Sans 3` + `KaTeX` sobre roxo escuro `#1a1430`, grafo global em Canvas 2D, `QuestionDock` inline com slider de confiança `0–100` (passo livre) e campo *Your Thinking*, ditado por voz (desativado por enquanto) e pipelines de extração e `Practice`). Porém, trancou todos os dados em JSONs internos (`data/`), removeu o Vault/Excalidraw/Trilha `2:1`, e não possui suporte às assinaturas do ecossistema Google.
+- O **`learnharness`** criou uma interface web/desktop exemplar (prosa editorial em `CMU Serif` + `Source Sans 3` + `KaTeX` sobre roxo escuro `#1a1430`, grafo global em Canvas 2D, `QuestionDock` inline com slider de confiança `0–100` (passo livre) e campo *Your Thinking*, ditado por voz via Deepgram, com chave do próprio usuário e pipelines de extração e `Practice`). Porém, trancou todos os dados em JSONs internos (`data/`), removeu o Vault/Excalidraw/Trilha `2:1`, e não possui suporte às assinaturas do ecossistema Google.
 
 ### 1.2 A Proposta da Nossa Plataforma (Lapidare)
 Construir uma plataforma **local-first, bilíngue (`PT-BR` / `EN`) e pensada para a comunidade de usuários do ecossistema Google**, onde:
@@ -110,6 +110,7 @@ A trilha é configurada aqui no início para que o **próprio Harness conduza o 
 1. **Visualização Central Única (O Grafo):**
    - Não há botão `Macro | Micro`. O centro da tela é ocupado integralmente pelo **Grafo de Conhecimento** em Canvas 2D (`#1a1430`), com *clusters* nebulosos suaves agrupando nós correlatos.
    - Clicar num nó abre seu card contextual (`#231b3e`, borda `#54458a`) com o resumo do conceito, suas dependências, o caminho da nota `Conceitos/<Nome>.md` no Vault e ações rápidas (`[ Abrir Nota ]`, `[ + Practice ]`, `[ ✎ Desenhar ]`).
+   - Em Configurações → Grafo, o usuário pode desligar "Mostrar o grafo na Home": a Home passa a mostrar uma **home mínima** (contagens de nós, cadeias, sessões e fontes, mais `☍ Chains`, `↑ Import` e o composer), sem o Canvas.
    - O botão **`☍ Chains`** no topo abre a visualização em tabela das proposições e implicações lógicas ($A \land B \implies C$), permitindo filtrar e selecionar itens para estudo ou prática.
 
 2. **Comportamento do Botão `↑ Import` (Guiado por MCP):**
@@ -127,13 +128,16 @@ A trilha é configurada aqui no início para que o **próprio Harness conduza o 
    - Ações rápidas no topo: `+ TEACHING`, `◇ PRACTICE`, `✎ EXCALIDRAW`.
    - Busca de sessões (`⌕ Search...`) e filtro segmentado idêntico ao `learnharness`: **`TEACHING | PRACTICE | ALL`**.
    - Lista de sessões indicando estado em tempo real (`Waiting for your answer`, `Teaching...`, `Completed`).
-   - Rodapé `~ BACKGROUND AGENTS` mostrando jobs ativos de extração/prática e acesso a `⚙ SETTINGS`.
+   - Rodapé `~ BACKGROUND AGENTS` mostrando jobs ativos de extração/prática (cada um com a atividade atual e o botão ⏹ para cancelar) e acesso a `⚙ SETTINGS`. Jobs que falharam ou foram interrompidos nas últimas 24 h ficam numa seção recolhível "Falharam (N)", com o erro e **Tentar de novo**.
+   - Menu ⋯ da sessão `TEACH` inclui **Remover do grafo**: tira os nós que só vieram dela e zera a cobertura, sem apagar a sessão (ela pode ser extraída de novo).
 
 ---
 
 ### 3.3 Comportamento da Sessão `TEACH` Unificada (`/chat/[id]`)
 
 O modo **`TEACH`** absorve de forma transparente o que antes eram fluxos separados (`/teach`, `/mentoria` e `/curriculo`). O comportamento se adapta automaticamente conforme o contexto da sessão:
+
+- **Cabeçalho da sessão:** o chip de uso abre um popover com o medidor de contexto ("42k / 150k até compactar" ou "até o limite do modelo"), o último turno e o total da sessão; um anel de cobertura mostra quantos tokens faltam para a próxima extração ao grafo (pulsa enquanto extrai; clicar extrai agora; some se a extração automática estiver desligada). `Shift+Tab` alterna o esforço do modelo.
 
 #### Caso 1 — Sessão `TEACH` sobre uma Fonte Densa (Aula do MCP Praxis, Transcrição ou PDF em `Fontes/`)
 1. **Ingestão e Mapeamento Estrutural:**
@@ -173,7 +177,7 @@ Toda pergunta com resposta certa acontece exclusivamente dentro do componente **
 2. **Controles Obrigatórios do `QuestionDock`:**
    - Enunciado claro + **2 a 6 alternativas** (com suporte total a **KaTeX**) + opção final fixa **`"I don't know / Não sei"`**.
    - **Slider `CONFIDENCE` (`0%` a `100%`)**: mede a certeza subjetiva do aluno na resposta escolhida.
-   - **Campo `YOUR THINKING`**: caixa de texto livre (o ditado por voz `🎙` está desativado temporariamente) onde o aluno explica em 1 linha *por que* escolheu aquela opção.
+   - **Campo `YOUR THINKING`**: caixa de texto livre (o ditado por voz `🎙`, via Deepgram, aparece quando o usuário configurou a chave; o texto entra só ao parar e `Esc` descarta) onde o aluno explica em 1 linha *por que* escolheu aquela opção.
 3. **Matriz de Calibração e Reação do Agente:**
    Ao enviar a resposta, o backend avalia o par `(Acerto/Erro, Confiança %)` e grava em `.harness/quiz-log.jsonl`:
    - **Acerto + Confiança $\ge 70\%$ (`Calibrado`):** confirma em 1 frase curta e avança para o próximo nó do plano.

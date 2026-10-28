@@ -27,18 +27,21 @@ logger = logging.getLogger(__name__)
 
 LEDGER = ".harness/usage.jsonl"
 TOP_SESSIONS = 10
+MAX_TURNS = 50
 
 
 class UsageCapture:
     """Installs the usage sink for one session turn or one background job (task-local)."""
 
     def __init__(self, service: UsageService, session_id: str | None = None,
-                 job_kind: str | None = None, track_context: bool = True):
+                 job_kind: str | None = None, track_context: bool = True, charge: bool = True):
         self.service = service
         self.session_id = session_id
         self.job_kind = job_kind
         # Teaching turns tell how full the context is; a side call (compaction) does not.
         self.track_context = track_context
+        # Background jobs only tag their ledger rows with the session; the session total stays turns-only.
+        self.charge = charge
         self.turn: int | None = None  # SessionRecord.turn_seq of the turn this capture serves.
         self.reports: list[TurnUsage] = []
         self._token = set_usage_sink(self._record)
@@ -54,7 +57,7 @@ class UsageCapture:
         with contextlib.suppress(ValueError):  # closed from another context: nothing to reset
             reset_usage_sink(self._token)
         self._token = None
-        if self.session_id and self.reports:
+        if self.charge and self.session_id and self.reports:
             self.service.charge_session(self.session_id, self.reports, track_context=self.track_context)
 
 
@@ -63,8 +66,9 @@ class UsageService:
         self.state = state
 
     def capture(self, session_id: str | None = None, job_kind: str | None = None,
-                track_context: bool = True) -> UsageCapture:
-        return UsageCapture(self, session_id=session_id, job_kind=job_kind, track_context=track_context)
+                track_context: bool = True, charge: bool = True) -> UsageCapture:
+        return UsageCapture(self, session_id=session_id, job_kind=job_kind, track_context=track_context,
+                            charge=charge)
 
     def _path(self):
         return safe_path(self.state.vault_path, LEDGER)
@@ -149,3 +153,51 @@ class UsageService:
                                "total_tokens": tokens})
         return {"today": current.model_dump(exclude_none=True),
                 "total": total.model_dump(exclude_none=True), "by_session": by_session}
+
+    def session_turns(self, session_id: str) -> dict[str, Any]:
+        """``{session_id, turns, background[, untracked]}`` from this session's ledger rows.
+
+        ``turns``: teaching turns summed by ``turn`` (oldest first, last ``MAX_TURNS``).
+        ``background``: job rows summed by ``job_kind``. ``untracked``: legacy rows with
+        neither, present only when non-zero so they never vanish from the total.
+        """
+        turns: dict[int, dict[str, Any]] = {}
+        background: dict[str, dict[str, Any]] = {}
+        untracked = _bucket()
+        for row in self.rows():
+            if row.get("session_id") != session_id:
+                continue
+            turn, job_kind = row.get("turn"), row.get("job_kind")
+            if job_kind:
+                bucket = background.setdefault(str(job_kind), {"job_kind": str(job_kind), **_bucket()})
+            elif isinstance(turn, int):
+                bucket = turns.setdefault(turn, {"turn": turn, "at": row.get("at"), **_bucket()})
+            else:
+                bucket = untracked
+            _add_row(bucket, row)
+        result: dict[str, Any] = {
+            "session_id": session_id,
+            "turns": [turns[t] for t in sorted(turns)][-MAX_TURNS:],
+            "background": sorted(background.values(), key=lambda b: b["job_kind"]),
+        }
+        if untracked["calls"]:
+            result["untracked"] = untracked
+        return result
+
+
+_COUNTERS = ("input_tokens", "output_tokens", "thinking_tokens")
+
+
+def _bucket() -> dict[str, Any]:
+    return {**dict.fromkeys(_COUNTERS, 0), "cached_tokens": None, "calls": 0}
+
+
+def _add_row(bucket: dict[str, Any], row: dict[str, Any]) -> None:
+    """Add one ledger row to ``bucket``; ``cached_tokens`` stays ``None`` until a row reports it."""
+    for key in _COUNTERS:
+        value = row.get(key)
+        bucket[key] += value if isinstance(value, int) else 0
+    cached = row.get("cached_tokens")
+    if isinstance(cached, int):
+        bucket["cached_tokens"] = (bucket["cached_tokens"] or 0) + cached
+    bucket["calls"] += 1

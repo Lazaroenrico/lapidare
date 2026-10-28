@@ -15,7 +15,7 @@ Este projeto nasce da convergência de duas linhagens que partiram do mesmo mét
 1. **A profundidade pedagógica do sistema `ai-engineer`:**
    - Estudo estruturado por **Trilha integrada (`2:1`)**, ingestão de aulas densas/mentorias via **MCP** (com fatiamento em blocos, mapeamento do que foi *Dito / Pressuposto / Pulado / Simplificado* e ancoragem por parágrafo `#^pN`), prática de código e consolidação por **desenho de memória à mão livre no Excalidraw** com revisão multimodal.
 2. **A excelência de UX/UI e engenharia de estado do `amosblomqvist/learnharness`:**
-   - Lousa editorial sem balões de chat (`CMU Serif Bold` + `Source Sans 3` + `KaTeX` + `JetBrains Mono` sobre roxo escuro `#1a1430`), Grafo de Conhecimento central em Canvas 2D com cadeias de implicação lógica ($A \land B \implies C$), `QuestionDock` inline com calibração de confiança (`0–100%`) e campo *Your Thinking*, ditado por voz (desativado por enquanto) e pipelines em background de extração e prática (`Practice`).
+   - Lousa editorial sem balões de chat (`CMU Serif Bold` + `Source Sans 3` + `KaTeX` + `JetBrains Mono` sobre roxo escuro `#1a1430`), Grafo de Conhecimento central em Canvas 2D com cadeias de implicação lógica ($A \land B \implies C$), `QuestionDock` inline com calibração de confiança (`0–100%`) e campo *Your Thinking*, ditado por voz (Deepgram, com chave própria) e pipelines em background de extração e prática (`Practice`).
 
 ---
 
@@ -66,7 +66,7 @@ Baixe `Lapidare-<versão>-mac-arm64.dmg` (M1 ou mais novo) ou `Lapidare-<versão
 xattr -dr com.apple.quarantine /Applications/Lapidare.app
 ```
 
-No Mac não há atualização automática: baixe o `.dmg` novo quando sair.
+No Mac não há instalação automática: quando sai uma versão nova, o app mostra um banner com **Baixar**, que abre a página de releases; baixe o `.dmg` novo de lá.
 
 ### Geral
 
@@ -119,6 +119,18 @@ O botão `↑ Import` da Home leva tudo para `Fontes/` (somente-leitura, com par
 
 ---
 
+## Ditado (Deepgram)
+
+O ditado por voz (botão de microfone no composer, nas perguntas e na prática; atalho `⌘/Ctrl+D`) usa o STT do Deepgram com a **sua própria chave**. É a única exceção ao caminho "só Google" (invariante 6 do [`AGENTS.md`](AGENTS.md)): o Deepgram transcreve voz e não é LLM.
+
+- Configure em **Configurações → Conectores → Ditado (Deepgram)**. O botão de microfone só aparece depois que há uma chave.
+- A chave fica em `~/.config/learnharness/secrets.json` (modo `0600`), nunca no Vault, e a API nunca a devolve (só `configured: true`).
+- O backend apenas emite um token de curta duração (60 s). O áudio vai **direto do app para o Deepgram**, sem passar pelo backend.
+- O texto só entra no campo quando você para o ditado. `Esc` descarta o que foi captado.
+- A chave precisa ter papel **Member** ou superior; com menos, o Deepgram responde `403` e o app avisa.
+
+---
+
 ## Testes
 
 ```bash
@@ -133,7 +145,11 @@ cd frontend
 npm run typecheck
 npm run lint
 npm test
+npm run test:components
 npm run build
+
+cd desktop
+npm test
 ```
 
 ---

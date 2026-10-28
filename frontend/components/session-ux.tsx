@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Layers, Loader2, RotateCcw, X } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import { useShortcut } from "@/components/use-shortcut";
@@ -99,7 +100,7 @@ export function ConfirmDialog({
 }) {
   const { t } = useLocale();
   if (!open) return null;
-  return (
+  const dialog = (
     <div
       className={`${fixed ? "fixed" : "absolute"} inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4`}
       role="presentation"
@@ -156,6 +157,9 @@ export function ConfirmDialog({
       </div>
     </div>
   );
+  // Fixed dialogs leave their parent's stacking context (the sidebar is z-30, like the
+  // floating lesson plan), so they are painted above every panel of the page.
+  return fixed && typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
 
 // --- Compaction ----------------------------------------------------------------------------

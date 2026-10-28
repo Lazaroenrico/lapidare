@@ -72,8 +72,9 @@ def _job_steers(state, session_id):
 
 
 async def _settled(state, job_id, status):
-    await wait_until(lambda: state.active_jobs[job_id]["status"] == status)
-    await wait_until(lambda: state.active_jobs[job_id].get("steer_message_id"))
+    # Generous bound: the first PDF job loads pypdfium2's native library, slow on cold CI runners.
+    await wait_until(lambda: state.active_jobs[job_id]["status"] == status, timeout=15)
+    await wait_until(lambda: state.active_jobs[job_id].get("steer_message_id"), timeout=15)
     for _ in range(300):
         if not state.sessions.is_running("sess-jobs"):
             return state.active_jobs[job_id]
