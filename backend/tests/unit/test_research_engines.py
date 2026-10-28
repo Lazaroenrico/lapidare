@@ -151,8 +151,7 @@ async def test_sdk_research_takes_sources_from_grounding():
     result = await engine.research("q", slot=SimpleNamespace(model_id="gemini-2.5-flash"))
     assert result.brief.startswith("## Resumo")
     assert [s.url for s in result.sources] == ["https://python.org/a"]
-    (tool,) = calls[0]["config"].tools
-    assert tool.google_search is not None
+    assert calls[0]["config"].tools[0].google_search is not None
 
 
 async def test_sdk_research_without_grounding_fails():
@@ -211,3 +210,20 @@ async def test_gemini_cli_research_without_search_fails(tmp_path, monkeypatch):
 def test_research_settings_have_no_mcp_server(tmp_path):
     path = write_research_settings(tmp_path)
     assert "mcpServers" not in json.loads(path.read_text())
+
+
+async def test_sdk_research_adds_url_context_and_its_fetched_pages():
+    from google.genai import types
+
+    metadata = SimpleNamespace(grounding_chunks=[SimpleNamespace(web=SimpleNamespace(uri="https://a.org/", title="A"))])
+    fetched = SimpleNamespace(url_metadata=[SimpleNamespace(retrieved_url="https://b.org/doc"),
+                                            SimpleNamespace(retrieved_url="https://a.org/")])
+    response = SimpleNamespace(text="## Resumo\nok", usage_metadata=None, candidates=[
+        SimpleNamespace(grounding_metadata=metadata, url_context_metadata=fetched)])
+    engine, calls = _sdk(response)
+    result = await engine.research("q")
+    tools = calls[0]["config"].tools
+    assert tools[0].google_search is not None
+    if hasattr(types, "UrlContext"):
+        assert tools[1].url_context is not None
+    assert [s.url for s in result.sources] == ["https://a.org/", "https://b.org/doc"]

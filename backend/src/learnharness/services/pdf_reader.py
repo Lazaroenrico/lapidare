@@ -2,26 +2,23 @@
 
 The path is confined to the vault (``safe_path``) and must name a ``.pdf``. Text is
 extracted page by page with ``pypdf``; pages are triaged by how often the question's terms
-occur; only the selected pages go to the model, which answers citing them as ``(p. N)``.
-A PDF with no extractable text is refused: nothing read, nothing answered.
+occur; the selected pages go to the model, which answers citing them as ``(p. N)``. The loop
+that adds vision lives in ``pdf_agent``; this module keeps path resolution, extraction and triage.
 """
 from __future__ import annotations
 
-import asyncio
 import re
 import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from learnharness.core.contracts.jobs import PdfAnswer
 from learnharness.vault.safety import safe_path
 
 MAX_PAGES_READ = 8
 MAX_CHARS_PER_PAGE = 6_000
 MIN_TERM_LENGTH = 4
 _WORD = re.compile(r"\w+", re.UNICODE)
-_PAGE_CITE = re.compile(r"\(p\.\s*(\d+)\)")
 # Folded (no accents, casefolded) words too common to locate a page.
 _STOPWORDS = frozenset({
     "como", "qual", "quais", "onde", "quando", "porque", "sobre", "entre", "para", "pelo", "pela",
@@ -127,24 +124,6 @@ def build_pdf_prompt(file_name: str, question: str, pages: list[str], selected: 
 
 
 async def run_pdf_job(state, payload: dict[str, Any], progress: Callable[[str], None]) -> dict[str, Any]:
-    """Job body: resolve, extract, triage, ask the background-slot engine."""
-    target, rel = resolve_pdf(state.vault_path, payload["path"])
-    progress(f"extraindo texto de {target.name}")
-    pages = await asyncio.to_thread(extract_pages, target)  # pypdf is CPU-bound.
-    selected, matched = triage(pages, payload["question"])
-    if not selected:
-        raise PdfPathError(f"nada pôde ser lido de {target.name} (sem texto extraível; PDFs escaneados precisam de OCR)")
-    progress("lendo páginas " + ", ".join(str(n) for n in selected))
-    config = state.get_config()
-    slot = config.slots.background
-    prompt = build_pdf_prompt(target.name, payload["question"], pages, selected, config.language)
-    reply = await state.engine(slot).run_structured(prompt=prompt, schema=PdfAnswer, slot=slot)
-    answer = reply.answer.strip()
-    if not answer:
-        raise ValueError("o modelo não respondeu com base no PDF")
-    cited = {int(n) for n in _PAGE_CITE.findall(answer)} | set(reply.pages_cited)
-    return {
-        "path": rel, "file": target.name, "question": payload["question"], "answer": answer,
-        "page_count": len(pages), "pages_read": selected,
-        "pages_cited": sorted(n for n in cited if n in selected), "terms_matched": matched,
-    }
+    """Job body: the reading agent (text triage, vision on the pages that need it, cited answer)."""
+    from learnharness.services.pdf_agent import run_pdf_agent
+    return await run_pdf_agent(state, payload, progress)

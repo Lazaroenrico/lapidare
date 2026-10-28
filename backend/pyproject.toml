@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.12,<1",
     "mcp>=2.3,<3",
     "pypdf>=6.21.2",
+    "pypdfium2>=5.14.0",
 ]
 
 [dependency-groups]

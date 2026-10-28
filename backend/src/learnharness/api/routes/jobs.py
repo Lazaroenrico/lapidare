@@ -105,3 +105,15 @@ async def retry_background_job(job_id: str, request: Request) -> dict[str, Any]:
         return state.jobs.retry(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found") from None
+
+
+@jobs_router.post("/api/jobs/{job_id}/cancel")
+async def cancel_background_job(job_id: str, request: Request) -> dict[str, Any]:
+    """Cancel a queued or running job (recorded as `interrupted`; finished job -> 409)."""
+    state = get_app_state(request.app)
+    try:
+        return await state.jobs.cancel(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
