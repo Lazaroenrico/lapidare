@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Loader2, Send, SkipForward } from "lucide-react";
+import { ChevronRight, Loader2, SkipForward } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import { LessonProse } from "@/components/lesson-prose";
 import { QuestionDock } from "@/components/question-dock";
@@ -11,6 +11,7 @@ import { JobCard } from "@/components/job-cards";
 import { appendDictation, useDictation } from "@/components/use-dictation";
 import { MicButton } from "@/components/mic-button";
 import { dictationText } from "@/lib/dictation-i18n";
+import { ComposerControls, ComposerField, ComposerSendButton } from "@/components/composer-parts";
 import {
   dockKeyAction,
   dockSubmission,
@@ -209,8 +210,13 @@ export function PracticeDock({
   onSubmit,
   onRequestDismiss,
   steerable = false,
+  modeToggle,
+  modelControls,
 }: {
   state: DockState;
+  /** Home composer row: `TEACH | PRACTICE` and model · effort, owned by the chat view. */
+  modeToggle?: React.ReactNode;
+  modelControls?: React.ReactNode;
   pendingQuiz: boolean;
   /** Fase 12: the agent is running; non-empty text goes to /steer as `{kind: "text"}`. */
   steerable?: boolean;
@@ -263,72 +269,71 @@ export function PracticeDock({
         : t.dockFreePlaceholder;
   const canSend = steerable ? steerText.length > 0 : !state.busy && (attempt ? draft.trim().length > 0 : true);
 
+  const action = state.awaitingAnswer && !steerable ? (
+    <button
+      type="button"
+      onClick={() => document.querySelector("[data-pending-question]")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+      className="flex items-center gap-1.5 h-10 px-3 rounded-xl border border-border bg-accent hover:bg-border text-foreground font-ui text-[11.5px] font-semibold cursor-pointer active:scale-95 transition-all shrink-0"
+    >
+      <ChevronRight className="w-4 h-4 rotate-90" />
+      <span>{t.dockGoToQuestion}</span>
+    </button>
+  ) : state.canNext && !draft.trim() ? (
+    <button type="button" onClick={() => void submit()} className="flex items-center gap-1.5 h-10 px-3 rounded-xl border border-border bg-accent hover:bg-border text-foreground font-ui text-[11.5px] font-semibold cursor-pointer active:scale-95 transition-all shrink-0">
+      <SkipForward className="w-4 h-4" />
+      <span>{t.dockNext}</span>
+    </button>
+  ) : (
+    <ComposerSendButton
+      onClick={() => void submit()}
+      disabled={!canSend}
+      busy={state.working && !steerable}
+      label={t.dockSend}
+    />
+  );
+
   return (
-    <footer ref={dockRef} className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
+    <footer ref={dockRef} className="px-4 pt-2 pb-3 bg-background shrink-0 z-20">
       <div className="max-w-4xl mx-auto flex flex-col gap-2">
-        {attempt && (
-          <label htmlFor="practice-dock-input" className="font-ui text-[11px] uppercase tracking-wider text-muted-foreground">
-            {t.dockAttemptLabel}
-          </label>
-        )}
-        <div className="flex items-end gap-2">
-          <MicButton
-            variant="icon"
-            configured={dictation.supported}
-            state={dictation.state}
-            level={dictation.level}
-            onToggle={dictation.toggle}
-            label={dt.start}
-            stopLabel={dt.stop}
-          />
-          <textarea
-            id="practice-dock-input"
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={placeholder}
-            aria-label={attempt ? t.dockAttemptLabel : t.dockFreePlaceholder}
-            rows={attempt ? 3 : 1}
-            disabled={pendingQuiz}
-            className={`flex-1 resize-none bg-card border border-border rounded-lg px-4 py-2.5 font-prose text-[15px] leading-relaxed text-foreground placeholder-muted-foreground focus:border-foreground transition-colors disabled:opacity-60 ${attempt ? "min-h-[84px]" : ""}`}
-          />
-          {state.awaitingAnswer && !steerable ? (
-            <button
-              type="button"
-              onClick={() => document.querySelector("[data-pending-question]")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-border bg-accent hover:bg-border text-foreground font-ui text-[11.5px] font-semibold cursor-pointer active:scale-95 transition-all shrink-0"
-            >
-              <ChevronRight className="w-4 h-4 rotate-90" />
-              <span>{t.dockGoToQuestion}</span>
-            </button>
-          ) : state.canNext && !draft.trim() ? (
-            <button
-              type="button"
-              onClick={() => void submit()}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-border bg-accent hover:bg-border text-foreground font-ui text-[11.5px] font-semibold cursor-pointer active:scale-95 transition-all shrink-0"
-            >
-              <SkipForward className="w-4 h-4" />
-              <span>{t.dockNext}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={!canSend}
-              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg border font-ui text-[11.5px] font-semibold transition-all shrink-0 ${
-                canSend
-                  ? "bg-accent hover:bg-border border-border text-foreground cursor-pointer active:scale-95"
-                  : "bg-card border-accent text-muted-foreground cursor-not-allowed"
-              }`}
-              aria-label={t.dockSend}
-            >
-              {state.working && !steerable ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              <span>{t.dockSend}</span>
-            </button>
+        <div className="flex items-baseline gap-2 flex-wrap font-ui text-[10.5px] text-muted-foreground">
+          {attempt && (
+            <label htmlFor="practice-dock-input" className="text-[11px] uppercase tracking-wider">
+              {t.dockAttemptLabel}
+            </label>
           )}
+          <span>{attempt ? t.dockAttemptHint : t.dockFreeHint}</span>
         </div>
-        <span className="font-ui text-[10.5px] text-muted-foreground">{attempt ? t.dockAttemptHint : t.dockFreeHint}</span>
+        <ComposerField
+          id="practice-dock-input"
+          textareaRef={textareaRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          aria-label={attempt ? t.dockAttemptLabel : t.dockFreePlaceholder}
+          rows={attempt ? 3 : 1}
+          disabled={pendingQuiz}
+          className={attempt ? "min-h-[84px]" : ""}
+          action={action}
+        />
+        <ComposerControls
+          mode={modeToggle}
+          mic={
+            dictation.supported ? (
+              <MicButton
+                variant="pill"
+                configured
+                state={dictation.state}
+                level={dictation.level}
+                onToggle={dictation.toggle}
+                label={dt.start}
+                stopLabel={dt.stop}
+                text={dictation.state === "listening" ? dt.stop : dt.bar}
+              />
+            ) : null
+          }
+          model={modelControls}
+        />
       </div>
     </footer>
   );

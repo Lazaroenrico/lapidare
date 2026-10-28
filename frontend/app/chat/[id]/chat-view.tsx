@@ -14,12 +14,12 @@ import {
   FileText,
   Loader2,
   RotateCcw,
-  Send,
   Sparkles,
 } from "lucide-react";
-import type { EffortLevel, ModelSlotConfig, SessionRecord, SseEventType } from "@/lib/types";
+import type { EffortLevel, ModelSlotConfig, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
 import { buildTranscript, normalizePhase } from "@/lib/session-wire";
 import {
+  createChat,
   createDemo,
   createDrawing,
   dismissPracticeProblem,
@@ -56,7 +56,8 @@ import {
   LocalSteerBubble,
   SessionTitle,
 } from "@/components/session-ux";
-import { modelChoicePayload, type ModelChoice } from "@/lib/model-choice";
+import { differsFromSlot, modelChoicePayload, pinnedEffort, type ModelChoice } from "@/lib/model-choice";
+import { ComposerControls, ComposerField, ComposerSendButton, EffortMenu, ModeToggle } from "@/components/composer-parts";
 import {
   activeProblem,
   buildPracticeTranscript,
@@ -220,10 +221,17 @@ export function ChatView() {
   });
 
   const isPracticeSession = session?.mode === "PRACTICE";
+  // Composer toggle set to the other mode: the next message opens a new session in it.
+  const [nextMode, setNextMode] = useState<SessionMode | null>(null);
+  useEffect(() => setNextMode(null), [id]);
+  const switchingMode = Boolean(session && nextMode && nextMode !== session.mode);
 
   // TEACH follow-up bar dictation (mic button and ⌘D via lib/command-events claim rules).
   const followUpRef = useRef<HTMLFormElement | null>(null);
-  const dictation = useDictation(locale, { field: followUpRef, enabled: Boolean(session) && !isPracticeSession });
+  const dictation = useDictation(locale, {
+    field: followUpRef,
+    enabled: Boolean(session) && (!isPracticeSession || switchingMode),
+  });
   const dt = dictationText(locale);
   dictation.setSink((spoken) => setInputMessage((prev) => appendDictation(prev, spoken)));
 
@@ -323,6 +331,27 @@ export function ChatView() {
     disabled: modelBusy || !id,
     apply: (next) => void handleModelChange(next),
   });
+
+  // Toggle on the other mode: start a new session with the typed text (like the Home composer).
+  const handleStartInMode = async () => {
+    const topic = inputMessage.trim();
+    if (!topic || !nextMode || isSending) return;
+    setIsSending(true);
+    setActionError(null);
+    try {
+      const created = await createChat({
+        mode: nextMode,
+        topic,
+        ...(differsFromSlot(modelValue, strongSlot) ? modelChoicePayload(modelValue) : {}),
+      });
+      setInputMessage("");
+      router.push(`/chat/${created.id}`);
+    } catch (err) {
+      setActionError(`${t.sendFailed} ${err instanceof Error ? err.message : ""}`.trim());
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   // Handle open citation drawer (stable: every memoized LessonProse receives it)
   const handleOpenCitation = useCallback((sourceName: string, paragraphId: string) => {
@@ -650,6 +679,43 @@ export function ChatView() {
     pendingQuiz: isWaitingQuiz,
   });
 
+  const followUpPlaceholder = switchingMode
+    ? nextMode === "PRACTICE"
+      ? t.practicePrompt
+      : t.composerPlaceholder
+    : isWaitingQuiz
+      ? t.answerQuizFirst
+      : isRunning
+        ? t.uxSteerPlaceholder
+        : t.followUpPlaceholder;
+  const modeToggle = (
+    <ModeToggle
+      mode={nextMode ?? session.mode}
+      onChange={(m) => setNextMode(m === session.mode ? null : m)}
+    />
+  );
+  const modelControls = (
+    <>
+      <ModelPicker
+        pill
+        engine={activeSlot?.engine ?? strongSlot?.engine ?? "agy"}
+        value={modelValue}
+        defaultModel={strongSlot?.model}
+        placement="up"
+        busy={modelBusy}
+        disabled={modelBusy}
+        className="shrink-0"
+        onChange={(next) => void handleModelChange(next)}
+      />
+      <EffortMenu
+        value={modelValue.effort}
+        pinned={pinnedEffort(modelValue.model)}
+        disabled={modelBusy}
+        onChange={(effort) => void handleModelChange({ ...modelValue, effort })}
+      />
+    </>
+  );
+
   const renderMessage = (message: SessionRecord["messages"][number], key: string): React.ReactNode => {
     if (session.compaction && message.id === compactionAnchor) {
       return (
@@ -760,17 +826,8 @@ export function ChatView() {
           </div>
         </div>
 
-        {/* Model chip + session usage, then Simulador Interativo & Desenhar de Memória */}
+        {/* Session usage, then Simulador Interativo & Desenhar de Memória (model · effort live under the composer) */}
         <div className="flex flex-wrap items-center gap-2">
-          <ModelPicker
-            engine={activeSlot?.engine ?? strongSlot?.engine ?? "agy"}
-            value={modelValue}
-            defaultModel={strongSlot?.model}
-            placement="down"
-            busy={modelBusy}
-            disabled={modelBusy}
-            onChange={(next) => void handleModelChange(next)}
-          />
           <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
           {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip sessionId={session.id} usage={session.usage} />}
           {!isPractice && (
@@ -981,8 +1038,9 @@ export function ChatView() {
         </div>
       )}
 
-      {/* 4b. Bottom input: PracticeDock (PRACTICE) or the follow-up bar (TEACH) */}
-      {isPractice ? (
+      {/* 4b. Bottom input, in the Home composer layout: PracticeDock (PRACTICE), the
+          follow-up field (TEACH), or a new session when the toggle is on the other mode. */}
+      {isPractice && !switchingMode ? (
         <PracticeDock
           state={practiceDock}
           pendingQuiz={isWaitingQuiz}
@@ -992,58 +1050,61 @@ export function ChatView() {
             setDismissError(null);
             setDismissOpen(true);
           }}
+          modeToggle={modeToggle}
+          modelControls={modelControls}
         />
       ) : (
-      <footer className="px-4 py-3 bg-background border-t border-border shrink-0 z-20">
+      <footer className="px-4 pt-2 pb-3 bg-background shrink-0 z-20">
         <form
           ref={followUpRef}
-          onSubmit={handleSendMessage}
-          className="max-w-4xl mx-auto flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void (switchingMode ? handleStartInMode() : handleSendMessage());
+          }}
+          className="max-w-4xl mx-auto flex flex-col gap-2"
         >
-          <MicButton
-            variant="icon"
-            configured={dictation.supported}
-            state={dictation.state}
-            level={dictation.level}
-            onToggle={dictation.toggle}
-            label={t.dictateMessage}
-            stopLabel={dt.stop}
-          />
-
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              placeholder={
-                isWaitingQuiz
-                  ? t.answerQuizFirst
-                  : isRunning
-                  ? t.uxSteerPlaceholder
-                  : t.followUpPlaceholder
+          {switchingMode && nextMode && (
+            <p className="font-ui text-[10.5px] text-muted-foreground">{t.composerNewSession(nextMode)}</p>
+          )}
+          <ComposerField
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
               }
-              disabled={isSending}
-              className="w-full bg-card border border-border rounded-lg px-4 py-2.5 text-sm font-prose text-foreground placeholder-muted-foreground focus:border-foreground transition-colors"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={!inputMessage.trim() || isSending}
-            className={`p-2.5 rounded-lg border font-ui text-xs uppercase tracking-wider font-semibold transition-all cursor-pointer shrink-0 ${
-              !inputMessage.trim() || isSending
-                ? "bg-card border-accent text-muted-foreground cursor-not-allowed"
-                : "bg-accent hover:bg-border border-border text-foreground active:scale-95"
-            }`}
-            title={t.sendMessage}
-            aria-label={t.sendMessage}
-          >
-            {isSending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-          </button>
+            }}
+            placeholder={followUpPlaceholder}
+            aria-label={followUpPlaceholder}
+            disabled={isSending}
+            action={
+              <ComposerSendButton
+                onClick={() => followUpRef.current?.requestSubmit()}
+                disabled={!inputMessage.trim() || isSending}
+                busy={isSending}
+                label={t.sendMessage}
+              />
+            }
+          />
+          <ComposerControls
+            mode={modeToggle}
+            mic={
+              dictation.supported ? (
+                <MicButton
+                  variant="pill"
+                  configured
+                  state={dictation.state}
+                  level={dictation.level}
+                  onToggle={dictation.toggle}
+                  label={t.dictateMessage}
+                  stopLabel={dt.stop}
+                  text={dictation.state === "listening" ? dt.stop : dt.bar}
+                />
+              ) : null
+            }
+            model={modelControls}
+          />
         </form>
       </footer>
       )}
