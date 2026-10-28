@@ -846,7 +846,7 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
   - menu ⋯: Extrair para o grafo, Remover do grafo (TEACH), Renomear, Exportar Markdown, Excluir (com "remover também os nós");
   - bandeja BACKGROUND AGENTS, entrada **Lixeira (N)** (só com N > 0) e link para Configurações.
 - **`session-trash.tsx`:** `useSessionTrash` (lista refeita em `session:updated` com `deleted`/`restored`/`purged`/`resync`, nunca por polling), `SessionTrashList` (título, tag de modo, "excluída há…", nº de mensagens, aviso "nós do grafo removidos" que não voltam; **Restaurar** e **Excluir definitivamente** com `ConfirmDialog`) e `SessionTrashDialog` (modal da sidebar; restaurar navega para `/chat/{id}`, exceto quando o grafo foi desvinculado: aí mostra o aviso com link). A mesma lista aparece em Configurações → Geral.
-- **`setup-dialog.tsx`, `slot-editor.tsx`, `agy-permission-card.tsx`:** onboarding (conector e slots, Vault e idioma, MCP genérico, trilha opcional).
+- **`setup-dialog.tsx`, `slot-editor.tsx`, `agy-permission-card.tsx`:** onboarding (conector e slots, Vault e idioma, MCP genérico, trilha opcional). A pasta do Vault passa por `GET /api/setup/vault-check` (`vault/target.py`): caminho relativo, arquivo ou pasta sem escrita são recusados, e pasta inexistente só vira Vault novo com confirmação. No desktop, "Escolher pasta…" abre o diálogo nativo (`lapidare:vault:pick`), que só devolve o caminho.
 
 ### 13.3 `lib/`: módulos puros e testes
 
@@ -906,7 +906,7 @@ Os testes de componente (Fase 22, `npm run test:components`, `tsx` + `react-dom/
 | Grupo | Rotas |
 |---|---|
 | Eventos | `GET /api/events` |
-| Setup | `GET /api/setup/status` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
+| Setup | `GET /api/setup/status` · `GET /api/setup/vault-check` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
 | Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `GET /api/chats/trash` · `POST /api/chats/trash/{file}/restore` · `DELETE /api/chats/trash/{file}?confirm=true` · `POST /api/chats/{id}/graph/unlink` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
 | Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` · *(Fase 16)* `POST /api/graph/import` · `POST /api/graph/import-vault` · `GET /api/graph/importable-notes` · `GET /api/graph/sources` · `GET /api/graph/sources/{id}/note` · `DELETE /api/graph/sources/{id}?mode=preserve-graph\|delete-nodes` |
 | Trilhas | `GET\|POST /api/tracks` · `PUT\|DELETE /api/tracks/{id}` · `POST /api/tracks/{id}/activate` · `POST /api/tracks/{id}/regenerate` · *(Fase 15)* `POST /api/tracks/{id}/leveling` · `POST /api/tracks/{id}/leveling/{session_id}/undo` |

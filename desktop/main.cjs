@@ -287,11 +287,11 @@ function fromApp(e) {
   const url = e.senderFrame && e.senderFrame.url;
   return trustedIds.has(e.sender.id) && policy.isAppSender(url, appOrigin);
 }
+const guard = (fn) => async (e, ...a) => {
+  if (!fromApp(e)) throw new Error("origem nao autorizada");
+  return fn(...a);
+};
 function setupUpdateIpc() {
-  const guard = (fn) => async (e, ...a) => {
-    if (!fromApp(e)) throw new Error("origem nao autorizada");
-    return fn(...a);
-  };
   ipcMain.handle(CH.get, guard(() => updState));
   ipcMain.handle(CH.check, guard(() => runCheck(true)));
   ipcMain.handle(CH.open, guard(async () => {
@@ -310,6 +310,20 @@ function setupUpdateIpc() {
     quitting = true;
     killBackend();
     updater.quitAndInstall();
+  }));
+}
+
+// Seletor nativo de pasta do Vault: devolve so o caminho escolhido (ou null), nunca le a pasta.
+function setupVaultIpc() {
+  ipcMain.handle("lapidare:vault:pick", guard(async (current) => {
+    const opts = { title: "Escolher pasta do Vault", properties: ["openDirectory", "createDirectory"] };
+    if (typeof current === "string" && current.trim()) {
+      const p = current.trim().replace(/^~(?=$|\/)/, os.homedir());
+      if (path.isAbsolute(p)) opts.defaultPath = p;
+    }
+    const win = BrowserWindow.getFocusedWindow() || mainWindow;
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   }));
 }
 
@@ -370,6 +384,7 @@ function setupDesktopIntegration() {
 async function boot() {
   setupLog();
   setupUpdateIpc();
+  setupVaultIpc();
   setupDesktopIntegration();
   const editMenu = { label: "Editar", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] };
   Menu.setApplicationMenu(Menu.buildFromTemplate(IS_MAC ? [{ role: "appMenu" }, editMenu, { role: "windowMenu" }] : [editMenu]));

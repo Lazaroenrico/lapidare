@@ -30,6 +30,7 @@ from learnharness.services.sessions import now
 from learnharness.vault.bootstrap import bootstrap_vault, save_config
 from learnharness.vault.safety import atomic_write, safe_path, validate_folders
 from learnharness.vault.sync_warning import vault_location_warning
+from learnharness.vault.target import describe_vault_target, resolve_vault_target
 
 CONNECTOR_TEST_TIMEOUT = 90.0
 
@@ -128,6 +129,14 @@ async def get_setup_status(request: Request):
             "vault_warning": vault_location_warning(state.vault_path)}
 
 
+@setup_router.get("/vault-check")
+async def check_vault(path: str = ""):
+    """Read-only look at a candidate Vault folder (exists? Obsidian? Lapidare?) before the setup adopts it."""
+    result = describe_vault_target(path)
+    result["warning"] = vault_location_warning(Path(result["path"])) if result["ok"] else None
+    return result
+
+
 @setup_router.get("/models")
 async def get_models(engine: EngineKind, request: Request):
     """Models the connector actually offers this account (``agy models``, the SDK list, or static)."""
@@ -167,7 +176,7 @@ async def test_connector(payload: ConnectorProbePayload, request: Request):
 @setup_router.post("/complete")
 async def complete_setup(payload: SetupCompletePayload, request: Request):
     state = get_app_state(request.app)
-    target = Path(payload.vault_path or state.vault_path).expanduser().resolve()
+    target = resolve_vault_target(payload.vault_path) if payload.vault_path is not None else state.vault_path
     track = payload.track
     repo = payload.repo_path or (track.repo_path if track else None)
     repo_path = Path(repo).expanduser().resolve() if repo else None

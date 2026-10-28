@@ -8,6 +8,7 @@ import {
   type RestoreResult,
   type TrashEntry,
 } from "./session-trash";
+import type { VaultCheck } from "./vault-pick";
 /**
  * Typed HTTP client helper functions calling the /api/* backend routes.
  * Follows notify -> fetch architecture without polling.
@@ -208,6 +209,10 @@ export async function completeSetup(
   if (result.success) window.dispatchEvent(new Event("harness:config"));
   return {...result, config: decodeConfig(result.config)};
 }
+
+/** Olha (só leitura) a pasta candidata a Vault antes do Setup adotá-la (erros inline, silent). */
+export const checkVaultPath = (path: string, signal?: AbortSignal) =>
+  fetchJson<VaultCheck>(`/api/setup/vault-check?path=${encodeURIComponent(path)}`, { signal }, { silent: true });
 
 /** Estado da permissão global `mcp(harness/*)` do agy (erros inline, silent). */
 /** Lista de modelos do motor (agy: `agy models`; demais: API ou lista estática). */

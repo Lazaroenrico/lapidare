@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld("lapidare", {
     openRelease: () => ipcRenderer.invoke("lapidare:updates:open-release"),
     setAuto: (on) => ipcRenderer.invoke("lapidare:updates:set-auto", on === true),
   },
+  vault: {
+    pick: (current) => ipcRenderer.invoke("lapidare:vault:pick", typeof current === "string" ? current : ""),
+  },
 });

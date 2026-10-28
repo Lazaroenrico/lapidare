@@ -25,7 +25,9 @@ import type {
   ModelSlots,
   TrackConfig,
 } from "@/lib/types";
-import { completeSetup, getSetupStatus } from "@/lib/api";
+import { checkVaultPath, completeSetup, getSetupStatus } from "@/lib/api";
+import { getBridge } from "@/lib/updates";
+import { needsCreateConfirm, vaultHint, vaultPickText, type VaultCheck } from "@/lib/vault-pick";
 import { McpServerManager } from "@/components/mcp-server-manager";
 import { TrackCreateForm } from "@/components/track-create-form";
 import { isGithubRepoUrl } from "@/lib/import-wire";
@@ -72,6 +74,13 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
   // Step 2: Language & Vault
   const [language, setLanguage] = useState<"pt-br" | "en">("pt-br");
   const [vaultPath, setVaultPath] = useState<string>(DEFAULT_VAULT_PATH);
+  const vp = vaultPickText(locale);
+  const [vaultCheck, setVaultCheck] = useState<VaultCheck | null>(null);
+  const [checkingVault, setCheckingVault] = useState<boolean>(false);
+  // A missing folder waiting for an explicit "create" before the setup finishes.
+  const [pendingCreate, setPendingCreate] = useState<VaultCheck | null>(null);
+  // Native folder picker: desktop app only (set after mount to keep hydration stable).
+  const [canPickFolder, setCanPickFolder] = useState<boolean>(false);
 
   // Step 3: Content MCPs (generic; each server is saved by McpServerManager)
   const [selectedMcp, setSelectedMcp] = useState<string | null>(null);
@@ -119,9 +128,46 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    setCanPickFolder(typeof getBridge()?.vault?.pick === "function");
+  }, []);
+
+  // Describe the typed folder (exists? Obsidian? Lapidare?) once typing pauses.
+  useEffect(() => {
+    if (!isOpen || step !== 2) return;
+    const ctrl = new AbortController();
+    setCheckingVault(true);
+    const timer = window.setTimeout(() => {
+      checkVaultPath(vaultPath, ctrl.signal)
+        .then((res) => setVaultCheck(res))
+        .catch(() => setVaultCheck(null))
+        .finally(() => {
+          if (!ctrl.signal.aborted) setCheckingVault(false);
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [isOpen, step, vaultPath]);
+
   if (!isOpen) return null;
 
-  const handleFinishSetup = async () => {
+  const pickVaultFolder = async () => {
+    try {
+      const picked = await getBridge()?.vault?.pick(vaultPath);
+      if (picked) {
+        setVaultPath(picked);
+        setPendingCreate(null);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const hint = vaultHint(vaultCheck, locale);
+
+  const handleFinishSetup = async (confirmedPath: string | null = null) => {
     // Validate the optional first track before saving anything.
     const built = createFirstTrack ? buildCreateTrack({ ...trackDraft, activate: true }, isGithubRepoUrl) : null;
     if (built && !built.ok) {
@@ -131,6 +177,29 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
     setTrackError(null);
     setSubmitting(true);
     setErrorMsg(null);
+
+    // Never create a Vault by accident (typo, relative path, a file): check first.
+    let check: VaultCheck;
+    try {
+      check = await checkVaultPath(vaultPath);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : t.sdSaveError);
+      setSubmitting(false);
+      return;
+    }
+    setVaultCheck(check);
+    if (!check.ok) {
+      setPendingCreate(null);
+      setSubmitting(false);
+      setStep(2);
+      return;
+    }
+    if (needsCreateConfirm(check, confirmedPath)) {
+      setPendingCreate(check);
+      setSubmitting(false);
+      return;
+    }
+    setPendingCreate(null);
 
     // Fase 14: the setup never replaces tracks; a new one is created through /api/tracks.
     const track: TrackConfig = { mode: "free", active: false };
@@ -426,12 +495,43 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
                       <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
                       {t.sdVaultPathLabel}
                     </label>
-                    <input
-                      type="text"
-                      value={vaultPath}
-                      onChange={(e) => setVaultPath(e.target.value)}
-                      className="w-full bg-card border border-border rounded px-3 py-2 font-ui text-xs text-foreground"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={vaultPath}
+                        onChange={(e) => {
+                          setVaultPath(e.target.value);
+                          setPendingCreate(null);
+                        }}
+                        aria-describedby="setup-vault-hint"
+                        className="flex-1 min-w-0 bg-card border border-border rounded px-3 py-2 font-ui text-xs text-foreground"
+                      />
+                      {canPickFolder && (
+                        <button
+                          type="button"
+                          onClick={pickVaultFolder}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded border border-border bg-card text-foreground hover:bg-accent cursor-pointer transition-colors font-ui text-xs"
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
+                          <span>{vp.choose}</span>
+                        </button>
+                      )}
+                    </div>
+                    <p
+                      id="setup-vault-hint"
+                      aria-live="polite"
+                      className={`font-ui text-[11px] min-h-4 ${
+                        checkingVault
+                          ? "text-muted-foreground"
+                          : hint?.tone === "error"
+                            ? "text-danger"
+                            : hint?.tone === "ok"
+                              ? "text-success"
+                              : "text-muted-foreground"
+                      }`}
+                    >
+                      {checkingVault ? vp.checking : hint?.message}
+                    </p>
 
                     {/* Non-destructive adoption callout */}
                     <div className="p-3 bg-card border border-border rounded text-xs space-y-1">
@@ -551,6 +651,39 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
           )}
         </div>
 
+        {pendingCreate && step === 4 && (
+          <div
+            role="alertdialog"
+            aria-label={vp.confirmCreate(pendingCreate.path ?? "")}
+            className="px-4 py-3 border-t border-border bg-card flex items-center justify-between gap-3 font-ui text-xs"
+          >
+            <span className="flex items-center gap-2 text-foreground min-w-0">
+              <AlertCircle className="w-4 h-4 shrink-0 text-warning" />
+              <span className="break-all">{vp.confirmCreate(pendingCreate.path ?? "")}</span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingCreate(null);
+                  setStep(2);
+                }}
+                className="px-3 py-1.5 rounded border border-border bg-background text-foreground hover:bg-accent cursor-pointer transition-colors"
+              >
+                {vp.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFinishSetup(pendingCreate.path)}
+                disabled={submitting}
+                className="px-3 py-1.5 rounded bg-foreground text-background hover:bg-foreground/90 cursor-pointer transition-colors font-semibold"
+              >
+                {vp.confirmAction}
+              </button>
+            </span>
+          </div>
+        )}
+
         {/* Modal Footer Controls */}
         <div className="p-4 border-t border-border flex items-center justify-between bg-background font-ui text-xs">
           {step > 1 ? (
@@ -579,8 +712,8 @@ export function SetupDialog({ isOpen, onClose, onComplete }: SetupDialogProps) {
           ) : (
             <button
               type="button"
-              onClick={handleFinishSetup}
-              disabled={submitting}
+              onClick={() => handleFinishSetup()}
+              disabled={submitting || pendingCreate !== null}
               className="flex items-center gap-1.5 px-5 py-2 rounded bg-foreground text-background hover:bg-foreground/90 cursor-pointer transition-colors font-semibold"
             >
               {submitting ? (

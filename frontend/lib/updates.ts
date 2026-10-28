@@ -24,6 +24,10 @@ export interface LapidareBridge {
     openRelease(): Promise<unknown> | void;
     setAuto(on: boolean): Promise<unknown> | void;
   };
+  /** Native folder picker (absent in builds before it existed and in the browser). */
+  vault?: {
+    pick(current: string): Promise<string | null>;
+  };
 }
 
 declare global {
