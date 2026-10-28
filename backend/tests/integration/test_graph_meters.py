@@ -53,8 +53,10 @@ def _teach(session_id: str, text: str = "x" * 400, **extra) -> SessionRecord:
 def test_context_window_by_family_prefix_and_unknown_is_none() -> None:
     assert context_window("gemini-2.5-pro") == 1_048_576
     assert context_window("models/gemini-3.8-flash-low") == 1_048_576
-    assert context_window("gemini-1.5-pro-002") == 2_097_152
-    assert context_window("gemini-2.5-flash-image") == 32_768  # longest prefix wins
+    assert context_window("gemini-2.5-flash-image") == 65_536  # longest prefix wins
+    assert context_window("gemini-3.1-flash-image") == 131_072
+    assert context_window("gemini-4-argon") == 1_048_576
+    assert context_window("gemini-1.5-pro-002") is None  # shut down: no published page
     assert context_window("claude-opus-5-5-high") is None
     assert context_window("auto") is None and context_window(None) is None
 
@@ -132,7 +134,7 @@ def test_small_window_model_reports_window_limit(tmp_path) -> None:
         poll_until(lambda: client.get(f"/api/chats/{chat['id']}").json(), lambda s: s["usage"]["turns"] == 1)
         client.put(f"/api/chats/{chat['id']}/settings", json={"model_id": "gemini-2.5-flash-image"})
         usage = client.get(f"/api/chats/{chat['id']}").json()["usage"]
-        assert (usage["context_limit"], usage["limit_kind"]) == (32_768 - 16_000, "window")
+        assert (usage["context_limit"], usage["limit_kind"]) == (65_536 - 16_000, "window")
 
 
 # ----------------------------------------------------------------- context meter

@@ -1,6 +1,23 @@
 /** PT-BR / EN strings of the Fase 21 meters, graph toggles and unlink. Pick with `metersText(locale)`. */
 import type { TurnRow } from "./usage";
 
+const JOB_KIND_PT: Record<string, string> = {
+  extraction: "extração",
+  research: "pesquisa",
+  pdf: "PDF",
+  visual: "visual",
+  demo: "demo",
+  notes_import: "importar notas",
+};
+const JOB_KIND_EN: Record<string, string> = {
+  extraction: "extraction",
+  research: "research",
+  pdf: "PDF",
+  visual: "visual",
+  demo: "demo",
+  notes_import: "notes import",
+};
+
 const ptBR = {
   ringLabel: "Cobertura da extração para o grafo",
   contextTitle: "Contexto da sessão",
@@ -10,6 +27,11 @@ const ptBR = {
   lastTurnNone: "Sem turno registrado.",
   turnRow: { input: "Entrada", output: "Saída", thinking: "Raciocínio", cached: "Cache" } as Record<TurnRow["key"], string>,
   sessionTotal: "Total da sessão",
+  turnsTitle: (n: number) => `Turnos (últimos ${n})`,
+  turnsNone: "Sem turnos no registro de uso.",
+  turnBar: (turn: number, total: string, peak: boolean) => `Turno ${turn}: ${total} tokens${peak ? " (o mais caro)" : ""}`,
+  background: "Em segundo plano",
+  jobKind: (kind: string) => JOB_KIND_PT[kind] ?? kind,
   extractionSwitch: "Extrair automaticamente para o grafo",
   extractionSwitchHint: "Desligado, a sessão não alimenta o grafo e a extração manual fica bloqueada. Importar notas continua funcionando.",
   extractionSaved: "Salvo.",
@@ -37,6 +59,11 @@ const en: typeof ptBR = {
   lastTurnNone: "No turn recorded.",
   turnRow: { input: "Input", output: "Output", thinking: "Thinking", cached: "Cache" },
   sessionTotal: "Session total",
+  turnsTitle: (n) => `Turns (last ${n})`,
+  turnsNone: "No turns in the usage log.",
+  turnBar: (turn, total, peak) => `Turn ${turn}: ${total} tokens${peak ? " (most expensive)" : ""}`,
+  background: "In the background",
+  jobKind: (kind) => JOB_KIND_EN[kind] ?? kind,
   extractionSwitch: "Extract to the graph automatically",
   extractionSwitchHint: "When off, the session does not feed the graph and manual extraction is blocked. Importing notes still works.",
   extractionSaved: "Saved.",

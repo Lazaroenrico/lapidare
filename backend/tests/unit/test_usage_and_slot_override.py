@@ -138,6 +138,15 @@ async def test_session_usage_accumulates_and_jobs_feed_the_ledger(metered, monke
     assert summary["total"] == {"input_tokens": 250, "output_tokens": 25, "thinking_tokens": 10, "turns": 3}
     assert summary["by_session"] == [{"session_id": session.id, "title": "Atenção", "total_tokens": 230}]
 
+    # A job that serves a session tags its ledger rows with it but leaves the session total alone.
+    record = state.jobs.submit("track_gen", {"topic": "y", "session_id": session.id})
+    await state.jobs.tasks[record["job_id"]]
+    assert (state.usage.rows()[-1]["session_id"], state.usage.rows()[-1]["job_kind"]) == (session.id, "track_gen")
+    assert state.sessions.get(session.id).usage.input_tokens == 200
+    background = state.usage.session_turns(session.id)["background"]
+    assert background == [{"job_kind": "track_gen", "input_tokens": 50, "output_tokens": 5,
+                           "thinking_tokens": 0, "cached_tokens": None, "calls": 1}]
+
 
 def test_usage_route_splits_today_from_total(tmp_path):
     engine = MeteredEngine()
@@ -157,6 +166,59 @@ def test_usage_route_splits_today_from_total(tmp_path):
     assert data["total"] == {"input_tokens": 1100, "output_tokens": 10, "thinking_tokens": 5, "turns": 2}
     assert [s["session_id"] for s in data["by_session"]] == ["sess-old", chat["id"]]
     assert data["by_session"][1] == {"session_id": chat["id"], "title": "Softmax", "total_tokens": 115}
+
+
+def _row(session_id, *, turn=None, job_kind=None, inp=0, out=0, thinking=0, cached=None, at="2026-10-28T12:00:00+00:00"):
+    return json.dumps({"at": at, "session_id": session_id, "job_kind": job_kind, "model_id": "m",
+                       "input_tokens": inp, "output_tokens": out, "thinking_tokens": thinking,
+                       "turn": turn, "cached_tokens": cached}) + "\n"
+
+
+def test_session_usage_route_sums_turns_and_splits_background(tmp_path):
+    vault = configure_vault(tmp_path / "Vault")
+    state = AppState(vault_path=vault, engine_factory=lambda slot: FakeEngine())
+    with TestClient(create_app(state=state)) as client:
+        chat = client.post("/api/chats", json={"topic": "Softmax"}).json()
+        sid = chat["id"]
+        poll_until(lambda: client.get(f"/api/chats/{sid}").json(), lambda s: s["status"] != "running")
+        ledger = vault / ".harness" / "usage.jsonl"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(
+            _row(sid, inp=7)  # legacy row: no turn, no job_kind
+            + _row(sid, turn=2, inp=50, out=5, cached=20, at="2026-10-28T12:05:00+00:00")
+            + _row(sid, turn=1, inp=100, out=10, thinking=3, at="2026-10-28T12:00:00+00:00")
+            + _row(sid, turn=1, inp=30, out=2, at="2026-10-28T12:00:09+00:00")
+            + _row(sid, job_kind="extraction", inp=400, out=40)
+            + _row(sid, job_kind="extraction", inp=100, out=10, cached=5)
+            + _row("other-session", turn=1, inp=999)
+            + "{incomplete\n",
+            encoding="utf-8")
+        data = client.get(f"/api/usage/sessions/{sid}").json()
+        missing = client.get("/api/usage/sessions/does-not-exist")
+    assert data["session_id"] == sid
+    assert data["turns"] == [
+        {"turn": 1, "at": "2026-10-28T12:00:00+00:00", "input_tokens": 130, "output_tokens": 12,
+         "thinking_tokens": 3, "cached_tokens": None, "calls": 2},
+        {"turn": 2, "at": "2026-10-28T12:05:00+00:00", "input_tokens": 50, "output_tokens": 5,
+         "thinking_tokens": 0, "cached_tokens": 20, "calls": 1},
+    ]
+    assert data["background"] == [{"job_kind": "extraction", "input_tokens": 500, "output_tokens": 50,
+                                   "thinking_tokens": 0, "cached_tokens": 5, "calls": 2}]
+    assert data["untracked"]["input_tokens"] == 7
+    assert missing.status_code == 404
+
+
+def test_session_turns_without_ledger_is_empty(tmp_path):
+    from learnharness.services.usage import MAX_TURNS, UsageService
+
+    vault = configure_vault(tmp_path / "Vault")
+    service = UsageService(SimpleNamespace(vault_path=vault))
+    assert service.session_turns("s") == {"session_id": "s", "turns": [], "background": []}
+    ledger = vault / ".harness" / "usage.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("".join(_row("s", turn=t, inp=1) for t in range(MAX_TURNS + 5)), encoding="utf-8")
+    turns = service.session_turns("s")["turns"]
+    assert len(turns) == MAX_TURNS and turns[0]["turn"] == 5 and turns[-1]["turn"] == MAX_TURNS + 4
 
 
 # ----------------------------------------------------------------- per-session model

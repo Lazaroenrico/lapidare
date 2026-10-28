@@ -5,15 +5,17 @@ from __future__ import annotations
 # Headroom kept below the window for the next reply and tool output.
 WINDOW_RESERVE = 16_000
 
-# Longest matching prefix wins. Input-token limits published by Google for each Gemini
-# family (ai.google.dev model pages); ids of other vendors are deliberately absent.
+# Longest matching prefix wins. "Input token limit" of each model page on ai.google.dev
+# (checked 2026-10-28; gemini-4-argon publishes one unified context window). Shut-down
+# families (1.5, 2.0) and ids of other vendors are deliberately absent.
 _WINDOWS: dict[str, int] = {
-    "gemini-1.5-pro": 2_097_152,
-    "gemini-1.5-flash": 1_048_576,
-    "gemini-2.0": 1_048_576,
     "gemini-2.5": 1_048_576,
-    "gemini-2.5-flash-image": 32_768,
+    "gemini-2.5-flash-image": 65_536,
     "gemini-3": 1_048_576,
+    "gemini-3-pro-image": 65_536,
+    "gemini-3.1-flash-image": 131_072,
+    "gemini-3.1-flash-lite-image": 65_536,
+    "gemini-4-argon": 1_048_576,
 }
 
 

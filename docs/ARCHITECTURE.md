@@ -5,7 +5,7 @@ Este documento descreve a arquitetura **atual** do Lapidare: camadas do backend,
 > [!NOTE]
 > **Nome.** O produto se chama **Lapidare** (antes *LearnHarness*). Os identificadores técnicos mantêm o nome antigo por compatibilidade: o pacote Python `learnharness`, as variáveis `LEARNHARNESS_*`, a pasta `.harness/` do Vault, o servidor MCP interno `harness`, as chaves `learnharness:*` do `localStorage` e `~/.config/learnharness/`.
 >
-> **Estado.** Fases 8 a 15 implementadas (a Fase 15, nivelamento de trilha, está na seção [10.4](#104-fase-15--nivelamento-por-busca-binária)).
+> **Estado.** Fases 8 a 23 implementadas (a Fase 15, nivelamento de trilha, está na seção [10.4](#104-fase-15--nivelamento-por-busca-binária); a Fase 23 é o fechamento das fases 19 a 22, ver [seção 16](#16-histórico-de-fases)).
 
 Leia também: [`AGENTS.md`](../AGENTS.md) (invariantes) e [`CONTEXT_AND_BEHAVIOR.md`](CONTEXT_AND_BEHAVIOR.md) (comportamento esperado de cada tela).
 
@@ -70,7 +70,7 @@ Os tokens moram em `frontend/app/globals.css` (fonte única). `lib/palette.ts` o
 | `--muted-foreground` | `#a99cd0` | Rótulos e metadados |
 | `--success` / `--warning` / `--danger` | `#34d399` / `#e0a030` / `#f87171` | Estados |
 
-- **Fontes** (embarcadas em `public/fonts/`): `--font-title` CMU Serif (`cmunbx.ttf`, `cmunrm.ttf`), `--font-prose` Source Sans 3 (16px / 1.5, ajustável de 14 a 20px em **Aparência** via `--prose-size`) e `--font-ui` JetBrains Mono.
+- **Fontes** (embarcadas em `public/fonts/`): `--font-title` CMU Serif (`cmunbx.ttf`, `cmunrm.ttf`), `--font-prose` Source Sans 3 (16px / 1.5, ajustável de 14 a 20px em **Aparência** via `--prose-size`) e `--font-ui` JetBrains Mono. Os pesos reais estão embarcados (Fase 22): Source Sans 3 400/600/700 e JetBrains Mono 400/700, mais o CMU Bold 700, cada um com `@font-face` próprio em `globals.css` e a licença OFL ao lado (sem negrito sintético).
 - **Foco:** `*:focus, *:focus-visible { outline: none }`.
 - **Tema:** só escuro.
 
@@ -267,7 +267,7 @@ Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
 `services/jobs.py`:
 
 - **Persistência:** fila *append-only* em `.harness/jobs.jsonl`. Cada `save()` grava o registro inteiro e emite `jobs:updated`; a leitura fica com o último estado de cada `job_id`.
-- **Concorrência:** `asyncio.Semaphore(2)`. Estados: `queued → running → completed | failed | interrupted`. `POST /api/jobs/{id}/retry` reabre jobs `failed`/`interrupted`.
+- **Concorrência:** `asyncio.Semaphore(2)`. Estados: `queued → running → completed | failed | interrupted`. `POST /api/jobs/{id}/retry` reabre jobs `failed`/`interrupted`. `POST /api/jobs/{id}/cancel` cancela um job `queued`/`running` (`JobManager.cancel`): grava `interrupted` com `error = "cancelado pelo usuário"` e entrega um steer de falha uma única vez; o desligamento do servidor continua sem steer; job já terminado devolve `409` e id desconhecido, `404`. O cancelado pode ser retentado.
 - **Deduplicação** por `dedup_key`: `extract:<session_id>` (só enquanto `queued`) e `track:<track_id>`.
 - **Uso:** cada job instala uma captura de uso com `job_kind` (seção 5.6).
 
@@ -276,8 +276,8 @@ Eventos (`core/events.py: SseEventType`, espelhado em `frontend/lib/types.ts`):
 | `extraction` | Gatilho do fim de turno, conclusão, `POST /api/graph/extract/{id}`, `POST /api/jobs/extract` | `GraphService.extract_session` (seção 8) |
 | `track_gen` | `POST /api/tracks` (`goal`/`repo`/`github`), `/regenerate`, Setup, import do GitHub | `TrackService.generate(track_id)` |
 | `demo_builder` | Ferramenta `spawn_demo`, `POST /api/demos` | `services/demos.run_demo_job` → `viz/demos/<slug>.html` |
-| `research` | Ferramenta `research` | `services/research.run_research_job` |
-| `pdf` | Ferramenta `read_pdf` | `services/pdf_reader.run_pdf_job` |
+| `research` | Ferramenta `research` | `services/research.run_research_job` → laço multi-etapas em `services/research_agent.py` (seção 9) |
+| `pdf` | Ferramenta `read_pdf` | `services/pdf_reader.run_pdf_job` → `services/pdf_agent.py` (texto + visão, seção 9) |
 | `visual` | Ferramenta `visual` | `services/visuals.run_visual_job` → `viz/visuals/<slug>.svg` |
 | `notes_import` | `POST /api/graph/import`, `POST /api/graph/import-vault` (Fase 16) | `services/graph_notes.run_import_job`: até 3 arquivos em paralelo, `record.files[]` com status por arquivo (seção 8.4) |
 
@@ -359,8 +359,11 @@ Atributos que o runner de sessão consulta:
   - ACP: `_meta.quota.token_count`;
   - gemini headless: `result.stats`;
   - SDK: `usage_metadata`.
-- **Captura** (`services/usage.py: UsageCapture`): `SessionService.run` e `JobManager.run` instalam uma captura por turno ou job. Por ser um `ContextVar`, sessões e jobs concorrentes nunca se misturam. Cada relatório vira uma linha em `.harness/usage.jsonl` (`{at, session_id, job_kind, model_id, input_tokens, output_tokens, thinking_tokens}`) e emite `usage:updated`. Ao fim do turno, o total acumula em `SessionRecord.usage` (`SessionUsage`, com `turns`).
+- **Captura** (`services/usage.py: UsageCapture`): `SessionService.run` e `JobManager.run` instalam uma captura por turno ou job. Por ser um `ContextVar`, sessões e jobs concorrentes nunca se misturam. Cada relatório vira uma linha em `.harness/usage.jsonl` (`{at, session_id, job_kind, model_id, input_tokens, output_tokens, thinking_tokens, turn, cached_tokens}`; `turn` (= `SessionRecord.turn_seq`, incrementado a cada execução) e `cached_tokens` são opcionais, e linhas antigas sem eles continuam legíveis) e emite `usage:updated`. Ao fim do turno, o total acumula em `SessionRecord.usage` (`SessionUsage`, com `turns`). Desde a Fase 23, o job grava também o `session_id` do payload (quando houver) com `charge=False`: a linha aparece no uso por turno da sessão, mas não soma no total dela.
+- **Medidor de contexto (Fase 21):** `SessionUsage` ganha `context_tokens` (entrada + saída do **último** relatório; volta a `None` após uma compactação) e `last_turn` (soma dos relatórios do último turno, com `cached_tokens` quando o provedor informa). `core/model_limits.py` (puro) tem `context_window(model_id)` (tabela por prefixo de família Gemini; `None` se desconhecida) e `context_limit(compaction_tokens, window)`, que devolve `(limite, "compaction" | "window")`: vence a janela menos a reserva de 16 000 tokens quando ela vem antes do limiar de compactação. `GET /api/chats/{id}` inclui em `usage` `context_tokens`, `context_limit`, `limit_kind` e `last_turn`.
 - **Leitura:** `GET /api/usage` → `{today, total, by_session: top 10}`. A UI mostra a pílula na Home e o uso no cabeçalho da sessão (`lib/usage.ts`).
+- **Uso por turno (Fase 23):** `GET /api/usage/sessions/{session_id}` (`UsageService.session_turns`; 404 para sessão inexistente) → `{session_id, turns: [{turn, input_tokens, output_tokens, thinking_tokens, cached_tokens?, calls, at}], background: [{job_kind, …tokens, calls}], untracked?}`: `turns` traz os últimos turnos de ensino (mais antigo primeiro), `background` soma as linhas de job por `job_kind` e `untracked` (só quando não zero) reúne linhas antigas sem `turn` nem `job_kind`.
+- **Popover do chip** (`components/session-usage-chip.tsx`): barra de contexto ("42k / 150k até compactar" ou "até o limite do modelo"; "?" sem `context_tokens`), último turno, total da sessão e a seção **Turnos** (mini-barras dos últimos 10 turnos + totais de segundo plano por `job_kind`), tudo formatado por funções puras de `lib/usage.ts`.
 
 ---
 
@@ -540,6 +543,13 @@ Sessões inexistentes respondem `404` (`SessionNotFound`).
 
 O *fold* é puro (`core/graph_merge.fold_nodes` / `fold_chains`), e o I/O fica em `vault/graph_store.py`. O antigo `.harness/chains.jsonl` (na raiz de `.harness/`) e as notas `Conceitos/*.md` sem `harness_id` continuam visíveis como nós `legacy` (`GraphService._legacy`).
 
+**Cobertura, extração e desvínculo (Fase 21).**
+
+- `GraphService.coverage_for(session)` devolve `SessionCoverage {uncovered_tokens, chunk_tokens, extracting, enabled}` (a mesma conta do gatilho `maybe_extract`; `None` em PRACTICE), incluída em `GET /api/chats/{id}` como `coverage`. No cabeçalho do chat, `components/extraction-ring.tsx` (lógica pura em `lib/coverage-ring.ts: ringState`) é um anel SVG que pulsa durante a extração, some quando `enabled` é falso e, ao clicar, extrai agora.
+- `GraphSettings.extraction_enabled` (padrão `true`, no mesmo `GET|PUT /api/settings/agent`): desligado, `maybe_extract` não faz nada e `POST /api/graph/extract/{id}` devolve `409` ("a extração para o grafo está desligada nas configurações"). O import de notas segue funcionando.
+- `POST /api/chats/{id}/graph/unlink` (`GraphService.unlink_chat`) tira os traços da sessão do grafo e grava `{session_id, reset: true}` em `coverage.jsonl`, então a prosa volta a contar como não coberta e pode ser extraída de novo; `409` com turno rodando ou extração em fila, `404` sem sessão; emite `graph:updated` e `session:updated`. Na sidebar: **Remover do grafo** (só TEACH).
+- Em Configurações → Grafo, o switch `rendering` (`lib/graph-settings.ts`, localStorage) troca o `GraphView` por `components/minimal-home.tsx` na Home: contagens (`lib/home-counts.ts`) de nós, cadeias, sessões e fontes, `☍ Chains`, `↑ Import` e o pill de uso, refeitas em `graph:updated`.
+
 ### 8.2 Pipeline de extração (LangGraph)
 
 ```mermaid
@@ -606,11 +616,14 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
 
 | Ferramenta | Job | Execução | Resultado |
 |---|---|---|---|
-| `research(question, context)` | `research` | Primeiro conector configurado com pesquisa, na ordem agy → google-genai → gemini CLI (`services/research.py`). Sem conector capaz, falha com mensagem clara | `{brief (Resumo / Achados citados / Fontes / Lacunas), sources[{title,url}], engine}` |
-| `read_pdf(path, question)` | `pdf` | `path` relativo ao Vault, só `.pdf` (`resolve_pdf`); `pypdf` página a página; triagem por termos; até 8 páginas | `{file, answer citando (p. N), pages_read}`; recusa se nada foi lido |
+| `research(question, context)` | `research` | Primeiro conector configurado com pesquisa, na ordem agy → google-genai → gemini CLI (`services/research.py`). Sem conector capaz, falha com mensagem clara. Laço multi-etapas (`services/research_agent.py`, abaixo) | `{brief (Resumo / Achados citados / Fontes / Lacunas), sources[{title,url}], engine, facets}` |
+| `read_pdf(path, question)` | `pdf` | `path` relativo ao Vault, só `.pdf` (`resolve_pdf`); `pypdf` + triagem por termos (até 8 páginas) e **visão** das páginas que importam (`services/pdf_agent.py`, abaixo) | `{file, answer citando (p. N), pages_read, pages_viewed, figures, warnings?}`; recusa se nada foi lido nem visto |
 | `visual(brief)` | `visual` | O modelo gera um SVG validado por `core/svg_validation` (raiz `<svg>` com `viewBox`, sem `<script>`, `foreignObject` ou `on*`, `href` só `#…`/`data:`, ≤ 300 KB), com até 2 correções; depois é **conferido por visão** (abaixo), com até 2 edições | `viz/visuals/<slug>.svg` + `{checked, check_notes}` |
 | `spawn_demo(title, topic, description)` | `demo_builder` | `mcp/demo_builder.py` gera um HTML autocontido validado; depois ele é **testado no Chromium headless** (abaixo), com até 3 correções | `viz/demos/<slug>.html` + `verified` |
 
+- **Pesquisa em várias etapas (Fase 20, `services/research_agent.py`):** (1) planeja de 2 a 5 facetas (`ResearchPlan`, com cada faceta de 1 a 3 queries; se falhar, uma faceta igual à pergunta); (2) busca por faceta com `engine.research`, no máximo 2 em paralelo (uma faceta que falha não derruba as outras; se todas falharem, o job falha); (3) uma rodada opcional de lacunas (`ResearchGaps`, até 2 facetas de `follow_up`); (4) sintetiza com a lista numerada das fontes coletadas e **valida as citações** `[n]` (rodada de correção; se persistir, as referências inválidas saem do texto; fontes inventadas são descartadas). Limites: `MAX_FACETS=5`, `MAX_ENGINE_CALLS=8`, `MAX_ROUNDS=2`. Funções puras em `core/research.py` (`merge_sources`, `validate_citations`, `clamp_plan`). O `genai` pesquisa com `google_search` + `url_context`. O progresso aparece na atividade do job ("planejando facetas", "faceta 2/4: …", "conferindo lacunas", "sintetizando"); o `ResearchCard` mostra as facetas como chips.
+- **PDF com visão (Fase 20, `services/pdf_agent.py` + `services/pdf_render.py`):** extrai o texto (`pypdf`) e dicas de imagem por página; a triagem (`PdfTriage`) indica as páginas a *ver* (figura, tabela, equação); cada uma (até 4, `core/pdf_reading.select_visual_pages`) é renderizada com `pypdfium2` (`render_page_png`, PNG montado com `zlib`/`struct`, sem Pillow) e lida por `engine.review_image` (`PdfPageReading`); a síntese (`PdfAnswer`) valida as citações `(p. N)` contra páginas lidas ∪ vistas. **PDF escaneado** (sem texto) pula a triagem e vê as 4 primeiras páginas; só falha se a visão também não existir. Sem `review_image` ou com erro de visão, degrada para texto com `warnings`. No máximo 7 chamadas de modelo por job. O `PdfCard` mostra "páginas vistas" e as figuras.
+- **Cancelamento:** o job de qualquer `kind` pode ser cancelado (seção 4.5); a bandeja tem ⏹ nos ativos.
 - **Artefatos verificados (Fase 17, `services/browser_check.py`):** o Chromium do sistema é detectado em tempo de execução (`LEARNHARNESS_CHROMIUM` = caminho ou `off`; senão `chromium`, `chromium-browser`, `google-chrome` no `PATH`; senão `/usr/bin/chromium`). Cada execução é um subprocesso asyncio em grupo de processos próprio, com `--user-data-dir` descartável (nunca o perfil do usuário), no máximo 2 simultâneas por loop e morta no timeout (30 s).
   - **Demo** (`services/demos.build_verified_demo`): o HTML vai com a CSP de produção (`harden_demo_html`) e uma sonda injetada no início do `<head>` que registra exceções não capturadas, *unhandled rejections*, violações de CSP, falhas de carga e `console.error` num atributo de `<html>`; depois do `load`, a sonda move cada slider (mín., máx., volta), clica cada botão e dispara `resize`. Roda com `--headless=new --dump-dom --virtual-time-budget=4000` e os erros são lidos do DOM serializado, com a linha do código citada. O stderr (`INFO:CONSOLE … "Uncaught …"`) é só o plano B quando a sonda nem rodou: o Chromium não distingue ali `console.log` de `console.error`. Página que não termina (laço infinito) também é erro. Com erro, o modelo recebe os erros + o HTML anterior (`runtime_fix_prompt`) e devolve a correção, que passa de novo pelo validador estático e pelo navegador, até **3 rodadas**; só HTML que rodou limpo é salvo (`verified: true`). Ainda com erro, o job falha com os erros (`DemoRuntimeError`) e nada é salvo.
   - **Visual** (`services/visuals.produce_visual`): o SVG válido é renderizado como `<img src="data:image/svg+xml…">` (igual ao `VisualCard`) a 1200 px de largura, altura pela proporção do `viewBox`, com `--screenshot`. O PNG vai ao modelo por `engine.review_image(…, VisualCheck)` (política `vision` no agy, imagem inline no SDK, `@png` no gemini CLI) com a pergunta "comunica o brief? há texto sobreposto, cortado ou ilegível?". `VisualCheck {communicates_brief, problems[], notes}` reprovado gera uma edição do SVG anterior com os problemas vistos, até **2 rodadas**. O resultado ganha `checked` e `check_notes` (as notas do modelo, ou "Problemas: …" se ainda reprovado; o SVG válido é entregue mesmo assim).
@@ -628,7 +641,7 @@ O professor **despacha** trabalho e continua ensinando. As ferramentas retornam 
   - `DemoCard` em iframe `sandbox="allow-scripts"` (`demo-iframe.tsx`);
   - `FailedJobChip` para falhas e `DispatchLabel` ("Despachado → concluído" com o tempo);
   - steers `learner` aparecem como mensagem do aluno com selo (`LearnerSteerBadge`).
-  - Os jobs aparecem na bandeja **BACKGROUND AGENTS** da sidebar, por `GET /api/jobs`.
+  - Os jobs aparecem na bandeja **BACKGROUND AGENTS** da sidebar, por `GET /api/jobs`. `lib/jobs-tray.ts: partitionTrayJobs` separa `running` (`queued`/`running`, com `activity` e ⏹ cancelar) de `failed` (`failed`/`interrupted` nas últimas 24 h, o mais recente primeiro): seção recolhível "Falharam (N)" com o `error` e **Tentar de novo**.
 
 ---
 
@@ -746,6 +759,8 @@ O watcher (`vault/watcher.py`, `watchfiles`) ignora tudo em `.harness/` exceto `
 | `tracks[]`, `active_track_id` | Seção 10 |
 | `prompt_overrides` | `{path: bool}` |
 | `graph.extraction_chunk_tokens` | Padrão 4096 (mínimo 500 na rota) |
+| `graph.extraction_enabled` | *(Fase 21)* Padrão `true`; desligado, a extração automática e a manual (`409`) ficam bloqueadas |
+| `dictation.language` | *(Fase 22)* `multi` (padrão), `pt-BR`, `pt`, `en`, `en-US`, `es`, `fr`, `de`, `it`, `ja`; `GET\|PUT /api/settings/dictation` |
 | `agent.tools.{research,pdf,visual,demo}`, `agent.compaction_tokens` | Toggles e limiar (mínimo 32 000); `GET/PUT /api/settings/agent` emite `config:updated` |
 
 **Migrações na leitura** (puras, em `core/contracts/config.py`):
@@ -757,12 +772,15 @@ O watcher (`vault/watcher.py`, `watchfiles`) ignora tudo em `.harness/` exceto `
 - fases `awaiting_answer`/`consolidating` são normalizadas;
 - `praxis_id` no frontmatter de fontes é lido como `mcp_item_id`.
 
+Os campos novos das Fases 21 e 22 (`extraction_enabled`, `dictation`, `usage.context_tokens`, `turn_seq`) são opcionais e têm default, então `schema_version` continua `2`.
+
 A gravação usa só o formato novo.
 
 ### 11.5 Segredos (fora do Vault)
 
 - Tokens de MCP de conteúdo ficam em `$XDG_CONFIG_HOME/learnharness/secrets.json` (padrão `~/.config`, modo `0600`, `services/secrets.py`). O `config.json` guarda só o `auth_ref`: uma chave nesse arquivo ou `env:VAR`. O token nunca volta nas respostas da API, e em `stdio` chega ao processo só por variável de ambiente.
 - Login OAuth de MCP remoto (`auth_mode: "oauth"`, só `http`/`sse`): tokens e o registro dinâmico do cliente ficam em `$XDG_CONFIG_HOME/learnharness/mcp-oauth/<hash(nome,url)>.json` (diretório `0700`, arquivo `0600`, escrita atômica; `services/mcp_oauth_store.py`), nunca no Vault. `POST /api/import/mcp/servers/{name}/oauth/login` inicia o fluxo em segundo plano (`mcp/oauth_flow.py`) e devolve `authorization_url`; a UI a abre com `window.open` (no desktop o Electron a encaminha ao navegador do sistema). O redirect chega a um receptor só em `127.0.0.1:<porta efêmera>/callback` (timeout de 5 min, um fluxo por servidor, `state` e `Host` verificados). Ao terminar, `config:updated {kind:"mcp_oauth"}` faz a UI rebuscar `oauth.status` (`signed_out|pending|signed_in|error`) em `GET /api/import/mcp/servers`. `POST .../oauth/logout` apaga os tokens.
+- A chave do Deepgram (ditado, `deepgram_api_key`) fica no mesmo `secrets.json` (`0600`), nunca no Vault nem nas respostas (`GET /api/settings/dictation` só diz `configured`). O backend a usa só para emitir tokens de 60 s (`services/dictation.mint_token`, `POST …/v1/auth/grant`, via `httpx`): `401` → `DictationKeyInvalid`, `403` → `DictationRoleInsufficient` (a chave precisa de papel Member ou superior), rede/outros → `DictationUnavailable` (rotas: `401`/`403`/`502`; sem chave, `409`). O áudio nunca passa pelo backend.
 - A chave do `google-genai` vem de `GEMINI_API_KEY` ou da memória do processo (`AppState.api_key`).
 - O token do GitHub vem de `GITHUB_TOKEN`/`GH_TOKEN` ou de `gh auth token`.
 - O token MCP do agy fica só no work dir da sessão (`0600`).
@@ -808,7 +826,10 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
 - **Ajustes (⚙, `lib/graph-settings.ts`, chave `learnharness:graph-settings:v2`):** Exibição (tamanho do nó, espessura/opacidade da aresta, tamanho do rótulo, zoom para rótulos nítidos, nomes das sessões on/off + tamanho), Regiões (opacidade, dilatação, desfoque), Layout radial (raio do anel interno, espaço entre níveis, força dos níveis) e Física (repulsão, atração, comprimento da aresta, atração ao centro, coesão de cluster, atrito). O mesmo componente de controle serve o painel e Configurações → Grafo.
 - **Origem em nota (Fase 16):** o cartão do nó lista "nota: <título>" (com `^pN` quando houver) e abre a nota no mesmo painel somente leitura (`ConceptNotePane` com `sourceId`, via `GET /api/graph/sources/{id}/note`, frontmatter omitido) ou no Obsidian, se ligado. Um nó só de notas não mostra "Sessões de origem".
 - **`import-notes-panel.tsx` (Adicionar ao grafo):** "Notas do Vault" (árvore por pasta com busca sem acento, seleção por pasta, selo "no grafo") ou "Arquivos locais" (vários, arrastar e soltar); resultado por arquivo acompanhado por `jobs:updated` → `GET /api/jobs`; lista "Notas no grafo" com **Tirar do grafo** (manter ou remover os nós). A bandeja BACKGROUND AGENTS mostra uma linha por arquivo dos jobs `notes_import`.
-- **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts`, Web Speech; desativado temporariamente, volta na Fase 22), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
+- **`composer.tsx`:** modo, texto, Ditar (`use-dictation.ts` + `public/dictation-worklet.js`; Deepgram, ver abaixo), seletor de modelo e chip da trilha. Durante um turno, envia por `/steer` com o selo "na fila" (`LocalSteerBubble`).
+- **Ditado (Fase 22, Deepgram):** `use-dictation.ts` pede um token curto a `POST /api/dictation/token`, abre o microfone (`getUserMedia`) e um `AudioWorklet` (`public/dictation-worklet.js`: reduz para 16 kHz, Int16 LE, blocos de ~100 ms mais o RMS do medidor) e transmite o áudio por WebSocket **direto do renderer ao Deepgram** (`lib/dictation-core.ts`: `listenUrl`, `reduceTranscript`, máquina `idle → requesting → listening → finishing → idle`, `errorMessage`). O texto só é inserido no sink ativo ao parar (`CloseStream`, teto de 3 s); `Esc` descarta. O `mic-button.tsx` só aparece com chave configurada (`GET /api/settings/dictation`, refeito em `config:updated`) e mostra o nível do RMS; está no composer, no QuestionDock, no PracticeDock e na barra de follow-up. Strings em `lib/dictation-i18n.ts`.
+- **`session-usage-chip.tsx`, `extraction-ring.tsx`, `minimal-home.tsx`:** popover de uso/contexto, anel de cobertura e Home mínima (seções 5.6 e 8.1). `use-cycle-effort.ts` liga `cycleEffort` (`lib/model-choice.ts: nextEffort`) ao chat (persiste) e ao composer da Home (local).
+- **`update-banner.tsx` + `use-update-state.ts` + `lib/updates.ts`:** faixa no topo do layout, só no desktop (`window.lapidare`), com `bannerFor(state, locale)`: `staged` → "Reiniciar"; `available` em modo `notify` → "Baixar". Não pode ser dispensada.
 - **`question-dock.tsx` + `lib/question-core.ts`:**
   - opções embaralhadas de forma determinística por `quiz_id`;
   - "Não sei" e slider de confiança;
@@ -822,14 +843,14 @@ Tudo vai para `Fontes/` (somente leitura), com parágrafos `^pN` e frontmatter d
   - busca difusa (`⌘⇧F`);
   - filtros Ensino / Todas / Prática e filtro por trilha;
   - status por linha;
-  - menu ⋯: Extrair para o grafo, Renomear, Exportar Markdown, Excluir (com "remover também os nós");
+  - menu ⋯: Extrair para o grafo, Remover do grafo (TEACH), Renomear, Exportar Markdown, Excluir (com "remover também os nós");
   - bandeja BACKGROUND AGENTS, entrada **Lixeira (N)** (só com N > 0) e link para Configurações.
 - **`session-trash.tsx`:** `useSessionTrash` (lista refeita em `session:updated` com `deleted`/`restored`/`purged`/`resync`, nunca por polling), `SessionTrashList` (título, tag de modo, "excluída há…", nº de mensagens, aviso "nós do grafo removidos" que não voltam; **Restaurar** e **Excluir definitivamente** com `ConfirmDialog`) e `SessionTrashDialog` (modal da sidebar; restaurar navega para `/chat/{id}`, exceto quando o grafo foi desvinculado: aí mostra o aviso com link). A mesma lista aparece em Configurações → Geral.
 - **`setup-dialog.tsx`, `slot-editor.tsx`, `agy-permission-card.tsx`:** onboarding (conector e slots, Vault e idioma, MCP genérico, trilha opcional).
 
 ### 13.3 `lib/`: módulos puros e testes
 
-Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com `node --test` (`frontend/tests/*.test.cjs`, cerca de 181 casos):
+Os testes de componente (Fase 22, `npm run test:components`, `tsx` + `react-dom/server` `renderToStaticMarkup`, sem DOM, helper `tests/components/render.tsx`) cobrem `ExtractionRing`, `UpdateBanner` e o botão de microfone. Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com `node --test` (`frontend/tests/*.test.cjs`, 30 arquivos):
 
 | Módulo | Responsabilidade |
 |---|---|
@@ -842,6 +863,8 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `tracks.ts`, `tracks-i18n.ts`, `settings-i18n.ts` | Trilhas e strings |
 | `notes-import.ts` | Fase 16: requisições (`files[]`, `import-vault`, fontes), decoders, fusão do status por arquivo do job, árvore de notas com busca, `stripFrontmatter` e strings PT-BR/EN |
 | `session-trash.ts` | Decoder da lixeira (`decodeTrashList`, `decodeRestoreResult`), caminhos das rotas, filtro de SSE (`touchesTrash`) e strings PT-BR/EN |
+| `jobs-tray.ts`, `coverage-ring.ts`, `home-counts.ts` | Fases 19 e 21: bandeja de jobs (`partitionTrayJobs`), anel de cobertura (`ringState`), contagens da Home mínima |
+| `dictation-core.ts`, `dictation-i18n.ts`, `updates.ts`, `platform-i18n.ts`, `meters-i18n.ts` | Fases 21 e 22: núcleo do ditado, estado/banner de updates, strings |
 | `api.ts`, `tracks-api.ts`, `settings-api.ts`, `types.ts` | Clientes HTTP e tipos (não puros) |
 
 ### 13.4 Configurações e teclado
@@ -853,7 +876,9 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
   - `graph`: os mesmos ajustes da engrenagem;
   - `appearance`: tamanho da prosa e títulos em serifa;
   - `keyboard`;
-  - `general`: idioma e caminho do Vault.
+  - `general`: idioma e caminho do Vault; no desktop, versão, switch "Atualizar automaticamente" e "Verificar agora" (fora dele, a versão de `/api/health`);
+  - `connectors` inclui também **Ditado (Deepgram)**: chave (password, nunca exibida, só "configurada"), idioma, Testar e Remover;
+  - `graph` inclui os switches "Extrair automaticamente para o grafo" (`extraction_enabled`) e "Mostrar o grafo na Home" (`rendering`).
 - **Registro de atalhos** (`lib/keyboard.ts: SHORTCUTS`): os componentes usam `useShortcut(id, handler)` e nunca criam listeners próprios. Overrides ficam em `learnharness:keymap`, e conflitos são detectados por `conflicts()`.
 
 | id | Padrão | Escopo |
@@ -864,12 +889,12 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 | `toggleSidebar` | `Mod+B` | global |
 | `sessionSearch` | `Mod+Shift+F` | global |
 | `goGraph` | `Mod+G` | global |
-| `dictate` | `Mod+D` | global (`learnharness:toggle-dictation`); desativado temporariamente (volta na Fase 22) |
+| `dictate` | `Mod+D` | global (`learnharness:toggle-dictation`) |
 | `modelPicker` | `Mod+K` | global (`learnharness:open-model-picker`) |
+| `cycleEffort` | `Shift+Tab` | global (`CYCLE_EFFORT_EVENT`; alterna o esforço no chat e no composer da Home; não age com o seletor ou um diálogo abertos) |
 | `find` | `Mod+F` | sessão (busca literal com CSS Custom Highlight API) |
 | `rename` | `F2` | sessão |
 | `abort` | `Escape` | sessão: dispensar a pergunta → descartar o problema → abortar o turno |
-| `toggleThinking` | `Mod+T` | sessão |
 | `continueTrack` | `Mod+Enter` | home |
 
 - **`localStorage`** (sempre em `try/catch`): `learnharness:graph-settings:v2`, `learnharness:appearance`, `learnharness:keymap`, `learnharness:roadmap-scope`, `learnharness:sidebar-collapsed`, `learnharness:sidebar-track-filter`, `learnharness:quiz-memory`, `learnharness:visual-invert` e `learnharness:setup-dismissed`.
@@ -882,14 +907,16 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 |---|---|
 | Eventos | `GET /api/events` |
 | Setup | `GET /api/setup/status` · `GET /api/setup/models` · `POST /api/setup/connectors/test` · `POST /api/setup/complete` · `GET\|POST /api/setup/agy-permission` |
-| Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `GET /api/chats/trash` · `POST /api/chats/trash/{file}/restore` · `DELETE /api/chats/trash/{file}?confirm=true` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
+| Sessões | `GET\|POST /api/chats` · `GET\|PUT\|DELETE /api/chats/{id}` · `GET /api/chats/trash` · `POST /api/chats/trash/{file}/restore` · `DELETE /api/chats/trash/{file}?confirm=true` · `POST /api/chats/{id}/graph/unlink` · `POST /api/chats/{id}/messages` (alias `/message`) · `POST …/steer` · `POST …/answer` · `POST …/abort` · `POST …/questions/dismiss` · `POST …/practice/dismiss` · `POST …/resume` · `PUT …/settings` · `GET …/markdown` |
 | Grafo | `GET /api/graph` · `GET /api/graph/concepts/{id}/note` · `DELETE /api/graph/nodes/{id}` · `PUT /api/graph/positions` · `POST /api/graph/extract/{session_id}` · *(Fase 16)* `POST /api/graph/import` · `POST /api/graph/import-vault` · `GET /api/graph/importable-notes` · `GET /api/graph/sources` · `GET /api/graph/sources/{id}/note` · `DELETE /api/graph/sources/{id}?mode=preserve-graph\|delete-nodes` |
 | Trilhas | `GET\|POST /api/tracks` · `PUT\|DELETE /api/tracks/{id}` · `POST /api/tracks/{id}/activate` · `POST /api/tracks/{id}/regenerate` · *(Fase 15)* `POST /api/tracks/{id}/leveling` · `POST /api/tracks/{id}/leveling/{session_id}/undo` |
-| Jobs e artefatos | `GET /api/jobs` · `POST /api/jobs/{id}/retry` · `POST /api/jobs/extract` · `POST /api/demos` · `GET /api/demos/{slug}` · `GET /api/visuals/{slug}` |
+| Jobs e artefatos | `GET /api/jobs` · `POST /api/jobs/{id}/retry` · `POST /api/jobs/{id}/cancel` · `POST /api/jobs/extract` · `POST /api/demos` · `GET /api/demos/{slug}` · `GET /api/visuals/{slug}` |
 | Import e fontes | `GET\|POST /api/import/mcp/servers` · `DELETE /api/import/mcp/servers/{name}` · `POST …/{name}/test` · `GET …/{name}/items` · `POST …/{name}/import` · `GET /api/import/catalog` · `POST /api/import/ingest` · `POST /api/import/source` · `POST /api/import/github/preview` · `POST /api/import/github/import` · `POST /api/import/local` · `GET /api/sources/paragraph` · `GET /api/sources/{source}/paragraph/{pN}` |
 | Desenhos | `POST /api/drawings` · `GET\|PUT /api/drawings/{slug}` · `POST /api/drawings/{slug}/review` |
 | Configurações | `GET\|PUT /api/settings/agent` · `GET /api/settings/prompts` · `PUT\|DELETE /api/settings/prompts/{path}` |
-| Uso | `GET /api/usage` |
+| Ditado | `GET\|PUT /api/settings/dictation` · `POST /api/dictation/token` · `POST /api/dictation/test` |
+| Uso | `GET /api/usage` · `GET /api/usage/sessions/{session_id}` (Fase 23) |
+| Saúde | `GET /api/health` → `{status: "ok", version}` (`version` = `LEARNHARNESS_APP_VERSION` ou `null`; não toca no Vault) |
 | MCP interno | `/internal/mcp/` (streamable HTTP, Bearer obrigatório) |
 
 ---
@@ -918,18 +945,22 @@ Os módulos puros (sem React e sem I/O) são compilados com `tsc` e testados com
 **`make check`:**
 
 - `check-backend`: `uv run pytest -q` + `uv run ruff check src tests` + `uv run basedpyright`;
-- `check-frontend`: `npm run typecheck` + `npm run lint` + `npm test` + `npm run build`.
+- `check-frontend`: `npm run typecheck` + `npm run lint` + `npm test` + `npm run test:components` + `npm run build`.
+
+A CI (`.github/workflows/ci.yml`, Fase 19) roda `make check` e `cd desktop && npm ci && npm test` em todo push na `main` e em todo PR (`ubuntu-22.04`, sem empacotar, `concurrency` cancela execuções antigas), com `LEARNHARNESS_CHROMIUM=off` porque os testes de artefato com Chromium real dependem do navegador do runner (rodam localmente onde houver Chromium).
 
 Na época desta revisão:
 
 | Área | Testes |
 |---|---|
-| Backend · unidade (`tests/unit/`, 47 arquivos) | 457 |
-| Backend · integração (`tests/integration/`, 26 arquivos) | 170 |
-| **Backend total** (`pytest --collect-only`) | **627** |
-| Frontend (`tests/*.test.cjs`, 27 arquivos) | ~181 |
+| Backend · unidade (`tests/unit/`, ~53 arquivos) | — |
+| Backend · integração (`tests/integration/`, ~30 arquivos) | — |
+| **Backend total** (`pytest --collect-only`) | **~700** |
+| Frontend · `node --test` (`tests/*.test.cjs`, ~30 arquivos) | — |
+| Frontend · componentes (`tests/components/*.test.tsx`, ~3 arquivos) | — |
+| Desktop (`desktop/tests/*.test.cjs`, `npm test`) | `policy` e `integration` |
 
-Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`.
+Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builder` (33), `test_github_url` (33), `test_agy_engine` (26), `test_plan_mermaid` (19), `test_prompts_loader` (19) e `test_research_engines` (18). As fixtures reais de protocolo ficam em `tests/fixtures/agy/` e `tests/fixtures/acp/`. O **Vault de exemplo** (`tests/fixtures/sample-vault/`: sessões TEACH e PRACTICE, extração para o grafo e um job de pesquisa) é gerado por `backend/scripts/make_sample_vault.py` pelos caminhos de produção, com `FakeEngine` roteirizado e relógio/ids determinísticos; ninguém o edita à mão, e uma mudança de formato o regenera no mesmo commit (`tests/integration/test_sample_vault.py` o abre pelos leitores reais).
 
 ### 15.1 Distribuição desktop (Linux e macOS)
 
@@ -937,7 +968,7 @@ Os maiores blocos do backend são `test_background_jobs` (39), `test_demo_builde
 
 ```
 resources/
-├─ app.asar  → desktop/main.cjs, desktop/policy.cjs (casca; sem lógica do app)
+├─ app.asar  → desktop/main.cjs, desktop/preload.cjs, desktop/policy.cjs (casca; sem lógica do app)
 ├─ python/   → CPython + dependências exatas do uv.lock + learnharness
 └─ web/      → frontend/out (LAPIDARE_EXPORT=1 next build) + fontes do Excalidraw
 ```
@@ -948,7 +979,7 @@ resources/
 2. resolve o `PATH` do login shell, porque um AppImage aberto pelo menu herda um `PATH` mínimo e a detecção de `agy`/`gemini`/`git` depende dele;
 3. escolhe uma porta livre em `127.0.0.1` e gera um segredo aleatório por execução;
 4. inicia `python3 -I -m learnharness.desktop` num grupo de processos próprio, com o log em `~/.config/Lapidare/logs/main.log`;
-5. espera `GET /api/health` e só então abre a janela (`sandbox`, `contextIsolation`, sem preload).
+5. espera `GET /api/health` e só então abre a janela (`sandbox`, `contextIsolation`, `nodeIntegration` desligado; o único preload, `desktop/preload.cjs`, expõe via `contextBridge` só `window.lapidare` com `appVersion` e `updates.*`: nem `ipcRenderer` cru nem o segredo).
 
 Ao sair, manda `SIGTERM` ao grupo e `SIGKILL` 6 s depois.
 
@@ -996,11 +1027,19 @@ Ao final, o `make desktop` apaga a montagem intermediária (`dist/linux-unpacked
 
 - **AppImage** usa o runtime estático novo (`toolsets.appimage: "1.0.3"`, runtime 20251108): monta com FUSE 3 e não exige `libfuse2`. Na primeira execução ele mesmo se integra ao menu de apps (lê `resources/icon.png`; ver `desktop/integration.cjs`). `make desktop-install` faz a mesma integração a partir do build local.
 - **.deb / .rpm** instalam em `/opt/Lapidare` com `lapidare.desktop` (`Categories=Education`, `StartupWMClass=lapidare`) e ícone em `hicolor`; o pacote se chama `lapidare`. Mantenedor e URL vêm do `author`/`homepage` do `desktop/package.json`.
-- **.dmg** (macOS arm64 e x64) **sem assinatura nem notarização** (`identity: null`, `hardenedRuntime: false`); o Gatekeeper avisa na primeira abertura. Sem auto-update no Mac. O ícone é gerado de `desktop/build-resources/icon-1024.png` (a partir de `docs/assets/lapidare_logo.svg`).
+- **.dmg** (macOS arm64 e x64) **sem assinatura nem notarização** (`identity: null`, `hardenedRuntime: false`); o Gatekeeper avisa na primeira abertura. Sem instalação automática no Mac (só aviso, ver abaixo). `mac.extendInfo.NSMicrophoneUsageDescription` justifica o microfone do ditado. O ícone é gerado de `desktop/build-resources/icon-1024.png` (a partir de `docs/assets/lapidare_logo.svg`).
 
 **Portabilidade do backend.** O aviso de Vault em pasta sincronizada lê `/proc/self/mounts`; no macOS o arquivo não existe e a checagem de rede/FUSE simplesmente não avisa (`vault/sync_warning.py`, coberto em `tests/unit/test_sync_hint.py`). `flock` e `start_new_session` funcionam igual no macOS.
 
-**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em paralelo: Linux em `ubuntu-22.04` (AppImage, deb e rpm), macOS em `macos-14` (arm64) e `macos-15-intel` (x64). No Linux há ainda o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`), o backend em `ubuntu:22.04` e `debian:12`, a instalação do `.deb` nessas imagens e do `.rpm` no Fedora. Um único job `publish` cria o release **draft** e sobe os artefatos (sem corrida entre runners); `verify` confere a lista exata de assets (AppImage, deb, rpm, `latest-linux.yml`, dois dmg). Publicar o draft é manual. O auto-update (`electron-updater`, só Linux/AppImage, uma checagem no boot) lê o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`.
+**Release.** `.github/workflows/desktop-release.yml`, disparado por tag `v*` igual a `desktop/package.json`, roda `make check` e empacota em paralelo: Linux em `ubuntu-22.04` (AppImage, deb e rpm), macOS em `macos-14` (arm64) e `macos-15-intel` (x64). No Linux há ainda o smoke do AppImage extraído, um smoke de GUI com `xvfb` (o `main.log` precisa mostrar `ready`), o backend em `ubuntu:22.04` e `debian:12`, a instalação do `.deb` nessas imagens e do `.rpm` no Fedora. Um único job `publish` cria o release **draft** e sobe os artefatos (sem corrida entre runners); `verify` confere a lista exata de assets (AppImage, deb, rpm, `latest-linux.yml`, dois dmg). Publicar o draft é manual. O `desktop-release.yml` também define `LEARNHARNESS_CHROMIUM=off`, como a CI.
+
+**Updates (Fase 22).** `setupUpdater` (`main.cjs`, `electron-updater` lendo o GitHub Releases, o que exige o repositório público, ou `LAPIDARE_UPDATE_FEED` apontando para um feed `generic`) mantém um `UpdateState {status: idle|checking|available|downloading|staged|error|unsupported, mode: auto|notify, autoUpdate, version?, error?}`:
+
+- **AppImage** = `mode: "auto"`: baixa sozinho e instala ao sair (`staged`). **deb, rpm e mac** = `mode: "notify"` (`autoDownload = false`; o auto-update exigiria app assinado no Mac): ao achar versão nova vira `available`, e `openRelease()` abre a página de releases do repositório (`policy.isReleaseUrl` só aceita essa página ou uma tag dela, via `shell.openExternal`). Fora do pacote (dev), `unsupported`.
+- Checa no boot e depois a cada 6 h (`setTimeout` encadeado); pula quando `autoUpdate` está desligado, e a checagem manual sempre funciona. A preferência fica em `userData/updates.json` (padrão `true`).
+- O estado vai por IPC (`lapidare:updates:get|state|check|restart|open-release|set-auto`) a todas as janelas, e o renderer o lê por `window.lapidare.updates` (`preload.cjs`). O banner (`update-banner.tsx`) mostra "Reiniciar" (`staged`; `restart()` só vale nesse estado e reaproveita `killBackend` + `quitAndInstall`) ou "Baixar" (`available` em `notify`).
+
+**Microfone.** `policy.allowPermission(permission, details, appOrigin)` libera só `media` de áudio vindo da origem do app (vídeo, outras origens e as demais permissões são negados) e é usada em `setPermissionRequestHandler` e `setPermissionCheckHandler`; no macOS o main chama antes `systemPreferences.askForMediaAccess("microphone")`.
 
 ---
 
@@ -1019,5 +1058,10 @@ As fases 1 a 7 (Ondas 1 e 2: fundação, Setup/Vault, Home, sala de aula TEACH, 
 | 14 | [`fase-14-multiplas-trilhas.md`](specs/fase-14-multiplas-trilhas.md) | Várias trilhas com uma em foco, `/api/tracks`, migração do `track` legado, roteiro por trilha, MCP genérico |
 | 16 | [`fase-16-18-notas-artefatos-onboarding.md`](specs/fase-16-18-notas-artefatos-onboarding.md) | Notas → grafo: `sources.jsonl`, fatias por título/parágrafo, cobertura por fonte, job `notes_import` por arquivo, aba **Adicionar ao grafo**, origem "nota:" no cartão do nó (seção 8.4) |
 | 15 | [`fase-15-nivelamento.md`](specs/fase-15-nivelamento.md) | nivelamento de trilha por busca binária (`leveling_done`, desfazer) |
+| 19 | [`fase-19-correcoes.md`](specs/fase-19-correcoes.md) | Jobs com falha de volta à bandeja (`partitionTrayJobs`), `Shift+Tab` alterna o esforço (`cycleEffort`), decoder de PDF, remoção do `VaultPort`, CI em push/PR |
+| 20 | [`fase-20-subagentes-google.md`](specs/fase-20-subagentes-google.md) | Pesquisa em várias etapas (`research_agent`), PDF com visão (`pdf_agent` + `pypdfium2`, inclusive escaneados) e cancelamento de jobs |
+| 21 | [`fase-21-grafo-medidores.md`](specs/fase-21-grafo-medidores.md) | Anel de cobertura (`coverage_for`), medidor de contexto e popover de uso, `extraction_enabled` + Home mínima, **Remover do grafo** (`graph/unlink`) |
+| 22 | [`fase-22-plataforma.md`](specs/fase-22-plataforma.md) | Ditado por Deepgram, updates com banner e `preload.cjs`, pesos reais das fontes, testes de componente, Vault de exemplo |
+| 23 | [`fase-23-fechamento.md`](specs/fase-23-fechamento.md) | Fechamento: uso por turno (`GET /api/usage/sessions/{id}`, jobs marcados com a sessão) e seção Turnos do popover, `LEARNHARNESS_CHROMIUM=off` no release, janelas de contexto conferidas, docs das fases 19 a 22 |
 
 Depois da Fase 14 vieram ainda a paleta roxa escura (`149ba9d`), o seletor de modelo redesenhado (`5b8580a`) e a renomeação do produto para Lapidare (`4ac8746`).
