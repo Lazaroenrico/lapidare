@@ -6,7 +6,7 @@
   "description": "Lapidare - learning harness local-first",
   "main": "main.cjs",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": "Lazaro Enrico <lazaroenrico@gmail.com>",
   "homepage": "https://github.com/Lazaroenrico/lapidare",
   "scripts": {
