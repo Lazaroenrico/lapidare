@@ -16,6 +16,7 @@ import { McpServerManager } from "./mcp-server-manager";
 import { McpItemsBrowser } from "./import-mcp-items";
 import { GithubImportPanel } from "./import-github-panel";
 import { LocalImportPanel } from "./import-local-panel";
+import { NotebookConnector } from "./notebook-connector";
 import { NotesGraphPanel } from "./import-notes-panel";
 import { notesText } from "@/lib/notes-import";
 import { Banner, cx, errMsg } from "./import-ui";
@@ -28,8 +29,8 @@ interface ImportDialogProps {
   initialTab?: ImportTab;
 }
 
-export type ImportTab = "mcp" | "github" | "local" | "graph";
-const TABS: ImportTab[] = ["mcp", "github", "local", "graph"];
+export type ImportTab = "mcp" | "github" | "local" | "graph" | "notebook";
+const TABS: ImportTab[] = ["mcp", "github", "local", "graph", "notebook"];
 
 export function ImportDialog({ isOpen, onClose, onImportComplete, initialTab }: ImportDialogProps) {
   if (!isOpen) return null;
@@ -45,7 +46,7 @@ function ImportDialogBody({ onClose, onImportComplete, initialTab }: Omit<Import
   const [visited, setVisited] = useState<Set<ImportTab>>(new Set());
   const [selectedServer, setSelectedServer] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const tabRefs = useRef<Record<ImportTab, HTMLButtonElement | null>>({ mcp: null, github: null, local: null, graph: null });
+  const tabRefs = useRef<Record<ImportTab, HTMLButtonElement | null>>({ mcp: null, github: null, local: null, graph: null, notebook: null });
 
   const openTab = useCallback((next: ImportTab) => {
     setTab(next);
@@ -115,6 +116,7 @@ function ImportDialogBody({ onClose, onImportComplete, initialTab }: Omit<Import
     github: { label: t.impTabGithub, Icon: GitBranch },
     local: { label: t.impTabLocal, Icon: FileText },
     graph: { label: notesText(locale).tab, Icon: Network },
+    notebook: { label: "Gemini Notebook", Icon: FileText },
   };
   const enabledCount = servers?.filter((s) => s.enabled).length ?? 0;
 
@@ -221,6 +223,12 @@ function ImportDialogBody({ onClose, onImportComplete, initialTab }: Omit<Import
                   <McpItemsBrowser key={server.name} server={server} onImported={handleImported} />
                 )}
               />
+            </div>
+          )}
+
+          {visited.has("notebook") && (
+            <div id="import-panel-notebook" role="tabpanel" aria-labelledby="import-tab-notebook" hidden={tab !== "notebook"} className="flex-1 min-h-0 overflow-y-auto">
+              <NotebookConnector onImported={handleImported} />
             </div>
           )}
 

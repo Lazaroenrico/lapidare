@@ -68,7 +68,7 @@ export function ComposerField({
 /** Row below the field: mode · dictation (flexes) · model · effort. */
 export function ComposerControls({ mode, mic, model }: { mode: React.ReactNode; mic: React.ReactNode; model: React.ReactNode }) {
   return (
-    <div className="w-full flex items-center gap-2 flex-wrap sm:flex-nowrap">
+    <div className="w-full flex items-center gap-2 flex-wrap">
       {mode}
       {mic ?? <div className="flex-1" />}
       {model}

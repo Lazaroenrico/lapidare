@@ -52,6 +52,10 @@ class AppState:
                 SseEventType.CONFIG_UPDATED, {"kind": "mcp_oauth", "server": name}
             )
         )
+        from learnharness.services.notebook import NotebookService
+        self.notebook = NotebookService(lambda: self.sse_hub.broadcast(
+            SseEventType.CONFIG_UPDATED, {"kind": "notebook"}
+        ))
         from learnharness.services.graph import GraphService
         from learnharness.services.jobs import JobManager
         from learnharness.services.leveling import LevelingService
@@ -172,6 +176,7 @@ class AppState:
 
     async def close(self):
         from learnharness.engines import close_engine_processes
+        await self.notebook.stop()
         await self.sessions.close()
         await self.jobs.close()
         await close_engine_processes()

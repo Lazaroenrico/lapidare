@@ -19,6 +19,7 @@ from learnharness.api.routes.graph import graph_router
 from learnharness.api.routes.import_content import import_router
 from learnharness.api.routes.import_github import import_github_router
 from learnharness.api.routes.jobs import jobs_router
+from learnharness.api.routes.notebook import notebook_router
 from learnharness.api.routes.prompts import prompts_router
 from learnharness.api.routes.settings_agent import settings_agent_router
 from learnharness.api.routes.setup import setup_router
@@ -200,6 +201,7 @@ def create_app(vault_path: Path | None = None, state: AppState | None = None) ->
     app.include_router(graph_router)
     app.include_router(chats_router)
     app.include_router(import_router)
+    app.include_router(notebook_router)
     app.include_router(import_github_router)
     app.include_router(drawings_router)
     app.include_router(jobs_router)

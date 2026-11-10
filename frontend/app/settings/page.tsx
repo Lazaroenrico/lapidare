@@ -31,6 +31,7 @@ import type {
   ModelSlots,
 } from "@/lib/types";
 import { completeSetup, getHealthVersion, getSetupStatus } from "@/lib/api";
+import { NotebookConnector } from "@/components/notebook-connector";
 import { McpServerManager } from "@/components/mcp-server-manager";
 import { AgyPermissionCard } from "@/components/agy-permission-card";
 import { ConnectorStateBadge, ModelSlotsEditor } from "@/components/slot-editor";
@@ -54,7 +55,7 @@ import { settingsText } from "@/lib/settings-i18n";
 import { tracksText } from "@/lib/tracks-i18n";
 
 const DEFAULT_VAULT_PATH = "~/Documents/StudyVault";
-const SECTIONS = ["connectors", "tracks", "agent", "graph", "appearance", "keyboard", "general"] as const;
+const SECTIONS = ["general", "connectors", "tracks", "agent", "graph", "appearance", "keyboard"] as const;
 type SettingsSection = (typeof SECTIONS)[number];
 
 const SECTION_ICONS: Record<SettingsSection, React.ComponentType<{ className?: string }>> = {
@@ -283,6 +284,7 @@ export default function SettingsPage() {
         </nav>
 
         <div className="flex-1 min-w-0 space-y-6">
+          {showSetupSave && <p className="font-ui text-xs text-muted-foreground">{s.saveSectionHint}</p>}
           {showSetupSave && statusMessage && (
             <div
               className={`p-3 rounded border text-xs font-ui flex items-center gap-2 ${
@@ -394,7 +396,7 @@ export default function SettingsPage() {
 
               {/* Model Slot Configuration */}
               <div className="p-4 bg-card border border-border rounded space-y-3">
-                <span className="font-ui text-xs font-semibold text-foreground block uppercase tracking-wider">
+                <span className="font-ui text-xs font-semibold text-foreground block">
                   {t.slotsHeading}
                 </span>
                 <ModelSlotsEditor
@@ -415,6 +417,7 @@ export default function SettingsPage() {
                 />
               </div>
 
+              <div className="bg-card border border-border rounded"><NotebookConnector settings /></div>
               <DictationSection />
             </div>
           )}

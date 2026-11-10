@@ -220,3 +220,7 @@ Quando o usuário seleciona `◇ PRACTICE` na Home ou na Sidebar:
    - `Fontes/**`: estritamente **somente-leitura** para a plataforma (nunca editado após importado).
    - `Aulas/**/*.md` e `Conceitos/*.md`: o parser de Markdown (`markdown_ast.py`) identifica as seções geradas pelo Harness e faz *merge* cirúrgico apenas nelas; qualquer bloco, callout ou seção livre criada pelo usuário no Obsidian é 100% preservada.
    - `watchfiles` no backend monitora a pasta do Vault: se você editar e salvar um `.md` ou `.excalidraw.md` no Obsidian, o backend emite um evento SSE (`vault:changed`) em milissegundos e a UI Next.js reflete a mudança na hora sem precisar dar F5.
+
+### Fontes do Gemini Notebook
+
+No importador, o aluno pode conectar sua conta e escolher fontes de um notebook para importar e estudar em TEACH. A conexão usa uma biblioteca não oficial, exclusivamente para leitura; o login pode precisar ser renovado. Cada fonte importada torna-se uma nota imutável no vault, e fontes sem texto recuperável são informadas individualmente. Uma sessão TEACH usa uma fonte por vez.
