@@ -21,6 +21,7 @@ dependencies = [
     "pypdf>=6.21.2",
     "pypdfium2>=5.14.0",
     "httpx>=0.28.1",
+    "notebooklm-py[browser]==0.8.6",
 ]
 
 [dependency-groups]

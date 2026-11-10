@@ -2,9 +2,10 @@
 
 > O produto se chama **Lapidare** (decisão do usuário, 2026-10-27). Identificadores técnicos continuam com o nome antigo por compatibilidade: pacote Python `learnharness`, variáveis `LEARNHARNESS_*`, pasta `.harness/` no vault, `~/.config/learnharness/`, servidor MCP `harness` e a regra do agy `mcp(harness/*)`. Em texto visível ao usuário, use sempre **Lapidare**.
 
-Leia **[`docs/CONTEXT_AND_BEHAVIOR.md`](docs/CONTEXT_AND_BEHAVIOR.md)** e **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** antes de alterar contratos, prompts, componentes de UI ou rotas do servidor.
+Leia [**`docs/CONTEXT_AND_BEHAVIOR.md`**](docs/CONTEXT_AND_BEHAVIOR.md) e [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md) antes de alterar contratos, prompts, componentes de UI ou rotas do servidor.
 
 ## 1. Visão em Uma Frase
+
 O **Lapidare** é um *learning harness* local-first, bilíngue (`PT-BR` / `EN`), com **frontend em Next.js** (seguindo o Design System `#1a1430` + `CMU Serif` + `Source Sans 3` + `JetBrains Mono`) e **backend em Python (`FastAPI` + `FastMCP` + `LangGraph`)**, que roda sobre a **assinatura Google** do usuário (`gemini` CLI / `agy` CLI / `google-genai`) e mantém **persistência bidirecional (`UI ⇄ Vault Markdown/Obsidian`)**.
 
 ## 2. Invariantes de Produto e Comportamento (NUNCA VIOLE)
@@ -29,12 +30,15 @@ O **Lapidare** é um *learning harness* local-first, bilíngue (`PT-BR` / `EN`),
    - Escala modular em múltiplos de `4px`; zero `outline` nativo do navegador (`*:focus { outline: none }`).
 6. **Fronteiras Arquiteturais Limpas:**
    - `backend/core/` contém apenas tipos `Pydantic` e funções puras (zero chamadas de rede, subprocessos, sistema de arquivos ou `langgraph`).
-   - A UI mantém **um único canal SSE (`EventSource("/api/events")`)** por janela seguindo o padrão *notify $\rightarrow$ fetch* (nunca crie loops de polling `setInterval`).
+   - A UI mantém **um único canal SSE (`EventSource("/api/events")`)** por janela seguindo o padrão *notify* $\rightarrow$ *fetch* (nunca crie loops de polling `setInterval`).
    - Apenas caminhos oficiais e sancionados do Google (`gemini --acp` / `stream-json`, `agy --input-format stream-json --output-format stream-json`, `google-genai` SDK).
-   - Exceção única (decisão do usuário, 2026-10-27): o ditado por voz usa o STT do Deepgram com chave própria do usuário. Não é LLM. O áudio vai direto do renderer ao Deepgram; o backend só emite token curto (`/api/dictation/token`).
+   - Exceção (decisão do usuário, 2026-10-27): o ditado por voz usa o STT do Deepgram com chave própria do usuário. Não é LLM. O áudio vai direto do renderer ao Deepgram; o backend só emite token curto (`/api/dictation/token`).
+   - Exceção (decisão do usuário, 2026-11-10): `notebooklm-py` pode acessar o Gemini Notebook somente para listar notebooks e ler fontes selecionadas. É uma API não oficial, isolada do fluxo de inferência; credenciais ficam fora do Vault e do renderer.
    - Todo subprocesso do backend parte de `child_env()` (`learnharness/child_env.py`). O segredo do desktop (`LEARNHARNESS_DESKTOP_SECRET`) nunca chega ao renderer nem aos processos filhos.
 
 
 
-
-Antes de terminar qualquer tarefa, remova as coisas temporárias que a tarefa criou, e só elas. Nunca delete o que você não criou ou não consegue atribuir à tarefa. Na dúvida, liste pro dono
+Antes de terminar qualquer tarefa, remova as coisas temporárias que a tarefa criou, e só elas. Nunca delete o que você não criou ou não consegue atribuir à tarefa. Na dúvida, liste pro dono.  
+Não colocar em comentários de PR's feature ou descrições isso abaixo:  
+  
+Co-Authored-By: Claude Opus 5.5 &lt;[noreply@anthropic.com](mailto:noreply@anthropic.com)&gt;

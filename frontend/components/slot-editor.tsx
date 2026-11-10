@@ -207,16 +207,12 @@ export function SlotEditor({
         verified ? "border-success/40" : "border-border"
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-foreground">{title}</span>
-        {verified ? (
-          <span className="flex items-center gap-1 text-[10px] text-success">
-            <CheckCircle2 className="w-3 h-3" />
-            {t.slotVerified}
-          </span>
-        ) : (
-          <span className="text-[10px] text-muted-foreground truncate">{role}</span>
-        )}
+      <div className="space-y-1 min-h-16">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-foreground">{title}</span>
+          {verified && <span className="flex items-center gap-1 text-[10px] text-success"><CheckCircle2 className="w-3 h-3" />{t.slotVerified}</span>}
+        </div>
+        <p className="text-[11px] leading-4 text-muted-foreground">{role}</p>
       </div>
 
       <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
@@ -290,9 +286,9 @@ export function SlotEditor({
             onChange={(e) => onChange({ ...slot, effort: e.target.value as EffortLevel })}
             className="bg-card border border-border rounded px-1.5 py-0.5 text-[11px] text-foreground"
           >
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
+            <option value="low">{t.effortName("low")}</option>
+            <option value="medium">{t.effortName("medium")}</option>
+            <option value="high">{t.effortName("high")}</option>
           </select>
         </label>
       )}

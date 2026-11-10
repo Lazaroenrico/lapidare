@@ -8,13 +8,14 @@ import { routeParam } from "@/lib/route-param";
 import {
   AlertTriangle,
   ArrowLeft,
-  ChevronRight,
   Compass,
   Edit3,
   FileText,
   Loader2,
   RotateCcw,
   Sparkles,
+  Wrench,
+  Info,
 } from "lucide-react";
 import type { EffortLevel, ModelSlotConfig, SessionMode, SessionRecord, SseEventType } from "@/lib/types";
 import { buildTranscript, normalizePhase } from "@/lib/session-wire";
@@ -81,6 +82,7 @@ import { SourceCitationPane } from "@/components/source-citation-pane";
 import { DismissProblemDialog, PracticeDock, PracticeTranscript } from "@/components/practice-session";
 import { DemoIframe } from "@/components/demo-iframe";
 import { ExtractionRing } from "@/components/extraction-ring";
+import { ringState } from "@/lib/coverage-ring";
 import { SessionUsageChip } from "@/components/session-usage-chip";
 import { JobCard, LearnerSteerBadge } from "@/components/job-cards";
 
@@ -713,6 +715,54 @@ export function ChatView() {
         disabled={modelBusy}
         onChange={(effort) => void handleModelChange({ ...modelValue, effort })}
       />
+      {!isPractice && <details className="relative shrink-0">
+        <summary className="list-none flex items-center gap-2 px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer font-ui text-xs focus-visible:ring-2 focus-visible:ring-foreground"><Wrench className="w-3.5 h-3.5" />{locale === "pt-BR" ? "Ferramentas" : "Tools"}</summary>
+        <div className="absolute bottom-full right-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-3 shadow-xl z-40 flex flex-col items-start gap-2 font-ui text-xs">
+
+          {ringState(session.coverage, locale).visible && <div className="flex items-center gap-2"><ExtractionRing coverage={session.coverage} busy={extracting} onExtract={() => void handleExtract()} /><button type="button" disabled={extracting} onClick={() => void handleExtract()} className="text-left disabled:opacity-60">{locale === "pt-BR" ? "Extrair para o grafo" : "Extract to graph"}</button></div>}
+
+          <button
+            type="button"
+            onClick={handleSpawnDemo}
+            disabled={isSpawningDemo}
+            className="w-full flex items-center gap-2 p-2 rounded hover:bg-accent text-foreground text-xs font-ui text-left cursor-pointer disabled:opacity-60"
+            title={t.demoButtonTitle}
+          >
+            {isSpawningDemo ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            <span >{isSpawningDemo ? t.demoGenerating : t.demoButton}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOpenDrawing}
+            disabled={isCreatingDrawing}
+            className="w-full flex items-center gap-2 p-2 rounded hover:bg-accent text-foreground text-xs font-ui text-left cursor-pointer disabled:opacity-60"
+            title={t.drawFromMemoryTitle}
+          >
+            {isCreatingDrawing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Edit3 className="w-3.5 h-3.5" />
+            )}
+            <span >{t.drawFromMemory}</span>
+          </button>
+        </div>
+      </details>}
+      <details className="relative shrink-0">
+        <summary className="list-none flex items-center gap-2 px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-card cursor-pointer font-ui text-xs focus-visible:ring-2 focus-visible:ring-foreground"><Info className="w-3.5 h-3.5" />{locale === "pt-BR" ? "Sessão" : "Session"}</summary>
+        <div className="absolute bottom-full right-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-3 shadow-xl z-40 font-ui text-xs text-muted-foreground space-y-3 break-words">
+          <div className="flex flex-wrap items-center gap-2">{renderContextBadge()}{teachPhase && (isLevelingSession(session) ? <LevelingPhaseChip completed={teachPhase === "completed"} /> : <PhaseChip phase={teachPhase} />)}</div>
+          <p>{t.vaultLabel} <code>{t.lessonsFolder}/{vaultNoteName}.md</code></p>
+          {session.source_file && <p>{t.sourceLabel} <code>{t.sourcesFolder}/{session.source_file}</code></p>}
+          {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip sessionId={session.id} usage={session.usage} />}
+        </div>
+      </details>
+      <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
+      {extractNotice && <span role="status" className="font-ui text-xs text-success">{extractNotice}</span>}
     </>
   );
 
@@ -786,91 +836,10 @@ export function ChatView() {
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-background relative">
-      {/* 1. Top Classroom Bar */}
-      <header className="px-5 py-3 border-b border-border bg-background shrink-0 flex flex-wrap items-center justify-between gap-3 z-20">
-        <div className="flex items-center gap-3 min-w-0">
-          <NavDrawerButton />
-          <Link
-            href="/"
-            className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-card"
-            title={t.backHome}
-            aria-label={t.backHome}
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <SessionTitle
-                title={session.title || session.topic}
-                onRename={handleRename}
-                onEditingChange={setRenaming}
-              />
-              {renderContextBadge()}
-              {teachPhase && isLevelingSession(session) ? (
-                <LevelingPhaseChip completed={teachPhase === "completed"} />
-              ) : (
-                teachPhase && <PhaseChip phase={teachPhase} />
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 text-[11px] font-ui text-muted-foreground mt-0.5 max-sm:hidden">
-              <span>{t.vaultLabel} <code>{t.lessonsFolder}/{vaultNoteName}.md</code></span>
-              {session.source_file && (
-                <>
-                  <span>·</span>
-                  <span className="truncate">{t.sourceLabel} <code>{t.sourcesFolder}/{session.source_file}</code></span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Session usage, then Simulador Interativo & Desenhar de Memória (model · effort live under the composer) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="sr-only" aria-live="polite">{effortAnnouncement}</span>
-          {session.usage && session.usage.total_tokens > 0 && <SessionUsageChip sessionId={session.id} usage={session.usage} />}
-          {!isPractice && (
-          <>
-          <ExtractionRing coverage={session.coverage} busy={extracting} onExtract={() => void handleExtract()} />
-
-          <button
-            type="button"
-            onClick={handleSpawnDemo}
-            disabled={isSpawningDemo}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
-            title={t.demoButtonTitle}
-          >
-            {isSpawningDemo ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 text-success" />
-            )}
-            <span className="max-sm:sr-only">{isSpawningDemo ? t.demoGenerating : t.demoButton}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleOpenDrawing}
-            disabled={isCreatingDrawing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-card hover:bg-accent border border-border hover:border-muted-foreground text-foreground text-[11.5px] font-ui font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
-            title={t.drawFromMemoryTitle}
-          >
-            {isCreatingDrawing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Edit3 className="w-3.5 h-3.5 text-warning" />
-            )}
-            <span className="max-sm:sr-only">{t.drawFromMemory}</span>
-          </button>
-          </>
-          )}
-        </div>
-        {extractNotice && (
-          <p role="status" aria-live="polite" className="basis-full font-ui text-[11px] text-success">
-            {extractNotice}
-          </p>
-        )}
+      <header className="px-4 py-2 shrink-0 flex items-center gap-3 z-20">
+        <NavDrawerButton />
+        <Link href="/" className="p-1 text-muted-foreground hover:text-foreground rounded hover:bg-card" title={t.backHome} aria-label={t.backHome}><ArrowLeft className="w-4 h-4" /></Link>
+        <div className="min-w-0"><SessionTitle title={session.title || session.topic} onRename={handleRename} onEditingChange={setRenaming} /></div>
       </header>
 
       {/* ⌘F find bar, floating over the top of the transcript */}
@@ -886,7 +855,7 @@ export function ChatView() {
       </div>
 
       {/* 2. Main Lesson Prose Stream (TEACH and PRACTICE share the prose rendering) */}
-      <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
+      <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 py-6 max-w-[calc(56rem+2rem)] mx-auto w-full flex flex-col gap-6">
         {isPractice ? (
           <PracticeTranscript
             items={practiceItems}

@@ -1065,3 +1065,7 @@ As fases 1 a 7 (Ondas 1 e 2: fundação, Setup/Vault, Home, sala de aula TEACH, 
 | 23 | [`fase-23-fechamento.md`](specs/fase-23-fechamento.md) | Fechamento: uso por turno (`GET /api/usage/sessions/{id}`, jobs marcados com a sessão) e seção Turnos do popover, `LEARNHARNESS_CHROMIUM=off` no release, janelas de contexto conferidas, docs das fases 19 a 22 |
 
 Depois da Fase 14 vieram ainda a paleta roxa escura (`149ba9d`), o seletor de modelo redesenhado (`5b8580a`) e a renomeação do produto para Lapidare (`4ac8746`).
+
+### Integração Gemini Notebook (somente leitura)
+
+O adaptador `services/notebook.py` usa `notebooklm-py` para listar notebooks e recuperar texto das fontes escolhidas; esta é uma exceção limitada à regra de caminhos Google oficiais, não um conector de inferência. A biblioteca usa endpoints não documentados sujeitos a mudanças. O login abre navegador por um subprocesso iniciado com `child_env()`; sua sessão fica em `~/.config/learnharness/notebooklm/`, fora do vault. Desconectar remove apenas o perfil dedicado do conector. A importação preserva fontes anteriores e cria versões imutáveis, com IDs de origem e âncoras no vault. O texto recuperado é o conteúdo indexado pelo Gemini Notebook e pode não reproduzir integralmente o arquivo original.
